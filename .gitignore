@@ -1,0 +1,35 @@
+# Secrets & config
+config.yaml
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Runtime outputs
+logs/
+reports/
+test_files/
+
+# Old output copies
+mnt/
+
+# Duplicate root index
+/index.html
+
+# OS
+Thumbs.db

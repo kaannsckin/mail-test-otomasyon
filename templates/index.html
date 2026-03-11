@@ -1,0 +1,1671 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mail Test Otomasyon</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0a0e17;--surface:#111827;--panel:#1a2236;--border:#1e3a5f;
+  --accent:#00d4ff;--accent2:#00ff94;--warn:#ffb800;--danger:#ff4560;
+  --text:#e2e8f0;--muted:#4a6580;
+  --mono:'JetBrains Mono',monospace;--sans:'Syne',sans-serif;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--sans);overflow:hidden}
+
+/* LAYOUT */
+.shell{display:flex;height:100vh}
+.sidebar{width:220px;flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column}
+.logo{padding:24px 20px 20px;border-bottom:1px solid var(--border)}
+.logo-icon{font-size:28px}
+.logo-title{font-size:14px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-top:8px;line-height:1.2}
+.logo-sub{font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:3px}
+nav{flex:1;padding:12px 0}
+.nav-item{display:flex;align-items:center;gap:10px;padding:11px 20px;cursor:pointer;font-size:13px;font-weight:600;color:var(--muted);border-left:3px solid transparent;transition:all .2s;user-select:none}
+.nav-item:hover{color:var(--text);background:rgba(0,212,255,.05)}
+.nav-item.active{color:var(--accent);border-left-color:var(--accent);background:rgba(0,212,255,.08)}
+.nav-icon{font-size:16px;width:20px;text-align:center}
+.sidebar-footer{padding:16px 20px;border-top:1px solid var(--border);font-family:var(--mono);font-size:10px;color:var(--muted)}
+.status-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--muted);margin-right:6px;transition:background .3s}
+.status-dot.running{background:var(--accent2);animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* MAIN */
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.topbar{height:56px;flex-shrink:0;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 28px}
+.topbar-title{font-size:16px;font-weight:700}
+.topbar-breadcrumb{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.content{flex:1;overflow-y:auto;padding:28px}
+.page{display:none}
+.page.active{display:block;animation:fadeIn .25s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+/* CARDS */
+.card{background:var(--panel);border:1px solid var(--border);border-radius:12px;margin-bottom:20px;overflow:hidden}
+.card-header{padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.card-title{font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--accent)}
+.card-body{padding:20px}
+
+/* FORMS */
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.form-grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+.form-group{display:flex;flex-direction:column;gap:5px}
+.form-group.full{grid-column:1/-1}
+label{font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.06em;text-transform:uppercase}
+input,select,textarea{background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:8px 12px;font-size:13px;font-family:var(--mono);width:100%;outline:none;transition:border-color .2s,box-shadow .2s}
+input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,212,255,.12)}
+input[type=checkbox]{width:auto;accent-color:var(--accent)}
+.toggle-row{display:flex;align-items:center;gap:10px;padding:4px 0}
+.toggle-row span{font-size:13px}
+input.has-value{border-color:rgba(0,255,148,.4)}
+
+/* BUTTONS */
+.btn{display:inline-flex;align-items:center;gap:7px;padding:9px 18px;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer;border:none;font-family:var(--sans);transition:all .15s;white-space:nowrap}
+.btn-primary{background:var(--accent);color:#000}
+.btn-primary:hover{background:#33deff;transform:translateY(-1px)}
+.btn-success{background:var(--accent2);color:#000}
+.btn-success:hover{background:#33ffaa}
+.btn-danger{background:var(--danger);color:#fff}
+.btn-warn{background:var(--warn);color:#000}
+.btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border)}
+.btn-ghost:hover{border-color:var(--accent);color:var(--accent)}
+.btn:disabled{opacity:.4;cursor:not-allowed;transform:none!important}
+.btn-sm{padding:6px 12px;font-size:12px}
+.btn-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+
+/* AUTH METHOD TABS */
+.srv-tabs{display:flex;gap:4px;margin-bottom:16px}
+.srv-tab{padding:7px 16px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700;background:transparent;border:1px solid var(--border);color:var(--muted);transition:all .15s}
+.srv-tab.active{background:var(--border);color:var(--accent);border-color:var(--accent)}
+.srv-panel{display:none}
+.srv-panel.active{display:block}
+
+/* AUTH METHOD SELECTOR */
+.auth-method-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px}
+.auth-card{border:2px solid var(--border);border-radius:10px;padding:12px;cursor:pointer;transition:all .2s;text-align:center}
+.auth-card:hover{border-color:var(--muted)}
+.auth-card.selected{border-color:var(--accent);background:rgba(0,212,255,.08)}
+.auth-card .auth-icon{font-size:22px;margin-bottom:6px}
+.auth-card .auth-label{font-size:11px;font-weight:700;color:var(--text)}
+.auth-card .auth-desc{font-size:10px;color:var(--muted);margin-top:2px;line-height:1.4}
+
+/* SECURITY BADGE */
+.sec-badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;font-family:var(--mono)}
+.sec-badge.green{background:rgba(0,255,148,.12);color:var(--accent2)}
+.sec-badge.yellow{background:rgba(255,184,0,.12);color:var(--warn)}
+.sec-badge.red{background:rgba(255,69,96,.12);color:var(--danger)}
+.sec-badge.gray{background:rgba(74,101,128,.2);color:var(--muted)}
+
+/* 2FA MODAL */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(4px);z-index:1000;display:none;align-items:center;justify-content:center}
+.modal-overlay.visible{display:flex;animation:fadeIn .2s ease}
+.modal-box{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:32px;min-width:380px;max-width:440px;box-shadow:0 24px 64px rgba(0,0,0,.6)}
+.modal-title{font-size:18px;font-weight:800;margin-bottom:6px}
+.modal-subtitle{font-size:13px;color:var(--muted);margin-bottom:24px;line-height:1.5}
+.mfa-icon{font-size:48px;text-align:center;margin-bottom:16px}
+.mfa-server-label{text-align:center;font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);margin-bottom:4px}
+.mfa-prompt{text-align:center;font-size:13px;color:var(--muted);margin-bottom:20px}
+.mfa-code-input{font-size:28px;font-weight:800;letter-spacing:.25em;text-align:center;padding:14px;font-family:var(--mono)}
+.mfa-timer{text-align:center;font-family:var(--mono);font-size:12px;color:var(--muted);margin-top:8px}
+.mfa-timer span{color:var(--warn)}
+
+/* TOTP PREVIEW BOX */
+.totp-preview{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;margin-top:10px;display:none}
+.totp-preview .code{font-family:var(--mono);font-size:24px;font-weight:800;color:var(--accent2);letter-spacing:.2em;text-align:center}
+.totp-preview .meta{text-align:center;font-size:11px;color:var(--muted);margin-top:4px}
+
+/* COMBO GRID */
+.combo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.combo-card{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px;cursor:pointer;transition:all .2s;position:relative}
+.combo-card:hover{border-color:var(--accent);background:rgba(0,212,255,.04)}
+.combo-card.selected{border-color:var(--accent);background:rgba(0,212,255,.08)}
+.combo-card.selected::after{content:'✓';position:absolute;top:10px;right:12px;color:var(--accent2);font-weight:800}
+.combo-label{font-size:12px;font-weight:700;margin-bottom:6px}
+.combo-meta{font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.8}
+.combo-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;font-family:var(--mono);background:rgba(0,212,255,.1);color:var(--accent);margin-top:6px}
+
+/* PILLS */
+.scenario-pills{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.pill{padding:6px 14px;border-radius:999px;cursor:pointer;font-size:12px;font-weight:600;border:1px solid var(--border);color:var(--muted);transition:all .15s}
+.pill:hover{border-color:var(--accent2);color:var(--text)}
+.pill.selected{background:rgba(0,255,148,.12);border-color:var(--accent2);color:var(--accent2)}
+.pill.disabled{opacity:.4;cursor:not-allowed;text-decoration:line-through}
+
+/* TERMINAL */
+.terminal{background:#050a10;border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.terminal-bar{background:var(--panel);padding:10px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)}
+.terminal-dots{display:flex;gap:6px}
+.terminal-dots span{width:10px;height:10px;border-radius:50%}
+.dot-r{background:#ff5f57}.dot-y{background:#febc2e}.dot-g{background:#28c840}
+.terminal-label{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.terminal-body{padding:14px 16px;height:360px;overflow-y:auto;font-family:var(--mono);font-size:12px;line-height:1.7}
+.log-line{white-space:pre-wrap;word-break:break-all}
+.log-line.ok{color:var(--accent2)}.log-line.error{color:var(--danger)}.log-line.warn{color:var(--warn)}.log-line.info{color:#a0c4ff}.log-line.dim{color:var(--muted)}
+
+/* RESULTS */
+.results-table{width:100%;border-collapse:collapse;font-size:13px}
+.results-table th{text-align:left;padding:10px 14px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border)}
+.results-table td{padding:11px 14px;border-bottom:1px solid rgba(30,58,95,.5)}
+.results-table tr:hover td{background:rgba(0,212,255,.03)}
+.badge-pass{background:rgba(0,255,148,.15);color:var(--accent2);padding:3px 10px;border-radius:5px;font-size:11px;font-weight:700;font-family:var(--mono)}
+.badge-fail{background:rgba(255,69,96,.15);color:var(--danger);padding:3px 10px;border-radius:5px;font-size:11px;font-weight:700;font-family:var(--mono)}
+
+/* STATS */
+.stats-row{display:flex;gap:16px;margin-bottom:20px;flex-wrap:wrap}
+.stat-box{flex:1;min-width:120px;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px 20px}
+.stat-val{font-size:36px;font-weight:800;line-height:1}
+.stat-lbl{font-size:11px;color:var(--muted);font-weight:600;letter-spacing:.06em;text-transform:uppercase;margin-top:6px}
+.stat-val.green{color:var(--accent2)}.stat-val.red{color:var(--danger)}.stat-val.blue{color:var(--accent)}.stat-val.yellow{color:var(--warn)}
+
+/* PROGRESS */
+.progress-bar-bg{background:var(--bg);border-radius:999px;height:6px;overflow:hidden;margin-top:8px}
+.progress-bar-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .5s ease}
+
+/* TOASTS */
+.toast-container{position:fixed;bottom:24px;right:24px;z-index:1500;display:flex;flex-direction:column;gap:8px}
+.toast{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px 18px;font-size:13px;max-width:340px;animation:fadeIn .25s ease;display:flex;align-items:center;gap:10px}
+.toast.ok{border-left:3px solid var(--accent2)}.toast.err{border-left:3px solid var(--danger)}.toast.info{border-left:3px solid var(--accent)}.toast.warn{border-left:3px solid var(--warn)}
+
+/* REPORTS */
+.report-list{display:flex;flex-direction:column;gap:8px}
+.report-item{display:flex;align-items:center;justify-content:space-between;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px 16px;transition:border-color .15s}
+.report-item:hover{border-color:var(--accent)}
+.report-name{color:var(--accent);font-weight:500;font-family:var(--mono);font-size:13px}
+.report-meta{color:var(--muted);font-size:10px;margin-top:2px;font-family:var(--mono)}
+.report-frame{width:100%;height:calc(100vh - 220px);border:1px solid var(--border);border-radius:10px;background:white}
+
+/* DIVIDER */
+.divider{height:1px;background:var(--border);margin:16px 0}
+.section-label{font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
+
+/* GUIDE */
+.guide-toc{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-bottom:24px}
+.guide-toc-item{display:flex;align-items:center;gap:10px;padding:12px 16px;background:var(--bg);border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:all .15s;font-size:13px;font-weight:600;color:var(--muted)}
+.guide-toc-item:hover{border-color:var(--accent);color:var(--accent);background:rgba(0,212,255,.04)}
+.guide-toc-icon{font-size:20px;flex-shrink:0}
+.guide-section{margin-bottom:32px;scroll-margin-top:20px}
+.guide-section h3{font-size:15px;font-weight:800;color:var(--accent);margin-bottom:14px;display:flex;align-items:center;gap:10px;letter-spacing:.02em}
+.guide-section h4{font-size:13px;font-weight:700;color:var(--text);margin:16px 0 8px;padding-left:4px;border-left:3px solid var(--accent);padding-left:10px}
+.guide-section p,.guide-section li{font-size:13px;color:var(--muted);line-height:1.8}
+.guide-section p{margin-bottom:10px}
+.guide-section ul,.guide-section ol{padding-left:20px;margin-bottom:12px}
+.guide-section li{margin-bottom:4px}
+.guide-section strong{color:var(--text)}
+.guide-section code{background:rgba(0,212,255,.08);color:var(--accent);padding:1px 6px;border-radius:4px;font-family:var(--mono);font-size:12px}
+.guide-table{width:100%;border-collapse:collapse;margin:12px 0 16px;font-size:12px}
+.guide-table th{text-align:left;padding:10px 12px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);background:var(--bg);border-bottom:2px solid var(--border)}
+.guide-table td{padding:10px 12px;border-bottom:1px solid rgba(30,58,95,.4);color:var(--muted);vertical-align:top}
+.guide-table tr:hover td{background:rgba(0,212,255,.03)}
+.guide-table td:first-child{color:var(--text);font-weight:600;white-space:nowrap}
+.guide-box{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin:12px 0 16px;font-size:12px;line-height:1.8;color:var(--muted)}
+.guide-box.info{border-left:3px solid var(--accent)}
+.guide-box.warn{border-left:3px solid var(--warn)}
+.guide-box.success{border-left:3px solid var(--accent2)}
+.guide-box b{color:var(--text)}
+.guide-flow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0 16px;font-family:var(--mono);font-size:12px}
+.guide-flow-step{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 14px;color:var(--text);text-align:center;min-width:100px}
+.guide-flow-arrow{color:var(--accent);font-size:18px;font-weight:800}
+.guide-cmd{background:#050a10;border:1px solid var(--border);border-radius:8px;padding:12px 16px;font-family:var(--mono);font-size:12px;color:var(--accent2);line-height:1.8;margin:8px 0 16px;overflow-x:auto;white-space:pre}
+.guide-subject{background:#050a10;border:1px solid var(--border);border-radius:8px;padding:12px 16px;font-family:var(--mono);font-size:11px;color:var(--text);line-height:2;margin:8px 0 12px;overflow-x:auto;white-space:nowrap}
+.guide-subject .hl-prefix{color:var(--warn)}
+.guide-subject .hl-id{color:var(--muted)}
+.guide-subject .hl-scenario{color:var(--accent)}
+.guide-subject .hl-attach{color:var(--accent2)}
+.guide-subject .hl-len{color:#c084fc}
+.guide-subject .hl-combo{color:var(--text)}
+
+/* SCROLLBAR */
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<!-- ── SIDEBAR ── -->
+<aside class="sidebar">
+  <div class="logo">
+    <div class="logo-icon">📧</div>
+    <div class="logo-title">Mail<br>Otomasyon</div>
+    <div class="logo-sub">v2.0 · Claude API</div>
+  </div>
+  <nav>
+    <div class="nav-item active" data-page="dashboard"><span class="nav-icon">⬡</span>Dashboard</div>
+    <div class="nav-item" data-page="config"><span class="nav-icon">⚙</span>Konfigürasyon</div>
+    <div class="nav-item" data-page="security"><span class="nav-icon">🔐</span>Güvenlik & 2FA</div>
+    <div class="nav-item" data-page="runner"><span class="nav-icon">▶</span>Test Çalıştır</div>
+    <div class="nav-item" data-page="logs"><span class="nav-icon">≡</span>Canlı Loglar</div>
+    <div class="nav-item" data-page="results"><span class="nav-icon">◈</span>Sonuçlar</div>
+    <div class="nav-item" data-page="reports"><span class="nav-icon">⬖</span>Raporlar</div>
+    <div class="nav-item" data-page="guide"><span class="nav-icon">📖</span>Bilgilendirme</div>
+  </nav>
+  <div class="sidebar-footer">
+    <span class="status-dot" id="sidebarDot"></span>
+    <span id="sidebarStatus">Beklemede</span>
+  </div>
+</aside>
+
+<!-- ── MAIN ── -->
+<div class="main">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title" id="topbarTitle">Dashboard</div>
+      <div class="topbar-breadcrumb" id="topbarBread">mail-otomasyon / genel bakış</div>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center">
+      <button class="btn btn-ghost btn-sm" onclick="refreshAll()">↻ Yenile</button>
+      <button class="btn btn-success btn-sm" id="quickRunBtn" onclick="quickRun()">▶ Hızlı Başlat</button>
+      <button class="btn btn-danger btn-sm" id="topStopBtn" style="display:none" onclick="stopRun()">■ Durdur</button>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- DASHBOARD -->
+    <div class="page active" id="page-dashboard">
+      <div class="stats-row">
+        <div class="stat-box"><div class="stat-val blue" id="st-total">—</div><div class="stat-lbl">Toplam Senaryo</div></div>
+        <div class="stat-box"><div class="stat-val green" id="st-pass">—</div><div class="stat-lbl">✅ Başarılı</div></div>
+        <div class="stat-box"><div class="stat-val red" id="st-fail">—</div><div class="stat-lbl">❌ Başarısız</div></div>
+        <div class="stat-box"><div class="stat-val yellow" id="st-rate">—</div><div class="stat-lbl">Başarı Oranı</div></div>
+        <div class="stat-box"><div class="stat-val blue" id="st-combos">—</div><div class="stat-lbl">Kombinasyon</div></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">📋 Test Matrisi</span><button class="btn btn-ghost btn-sm" onclick="loadCombinations()">↻</button></div>
+        <div class="card-body"><div id="dashCombosTable" style="color:var(--muted);font-size:13px">Yükleniyor...</div></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">📊 Son Sonuçlar</span></div>
+        <div class="card-body" id="dashResults"><span style="color:var(--muted);font-size:13px">Henüz sonuç yok.</span></div>
+      </div>
+    </div>
+
+    <!-- CONFIG -->
+    <div class="page" id="page-config">
+      <div class="card">
+        <div class="card-header"><span class="card-title">🖥 Sunucu Bağlantı Ayarları</span></div>
+        <div class="card-body">
+          <div class="srv-tabs">
+            <div class="srv-tab active" onclick="switchSrv('ems',this)">EMS (On-Prem)</div>
+            <div class="srv-tab" onclick="switchSrv('gmail',this)">Gmail</div>
+            <div class="srv-tab" onclick="switchSrv('outlook',this)">Outlook / O365</div>
+          </div>
+          <!-- EMS -->
+          <div class="srv-panel active" id="srv-ems">
+            <div class="form-grid">
+              <div class="form-group"><label>SMTP Host</label><input id="ems_smtp_host" placeholder="ems.sirket.local"></div>
+              <div class="form-group"><label>SMTP Port</label><input id="ems_smtp_port" type="number" placeholder="587"></div>
+              <div class="form-group"><label>IMAP Host</label><input id="ems_imap_host" placeholder="ems.sirket.local"></div>
+              <div class="form-group"><label>IMAP Port</label><input id="ems_imap_port" type="number" placeholder="993"></div>
+              <div class="form-group"><label>Kullanıcı Adı</label><input id="ems_username" placeholder="test@sirket.local"></div>
+              <div class="form-group"><label>Şifre</label><input id="ems_password" type="password" placeholder="••••••••"></div>
+              <div class="form-group full"><label>Test Adresi (Alıcı)</label><input id="ems_test_address" placeholder="test@sirket.local"></div>
+              <div class="form-group"><label>Sunucu Etiketi</label><input id="ems_label" placeholder="EMS On-Prem"></div>
+              <div class="form-group">
+                <label>Güvenlik</label>
+                <div class="toggle-row"><input id="ems_smtp_use_tls" type="checkbox" checked><span>SMTP StartTLS</span></div>
+                <div class="toggle-row"><input id="ems_imap_use_ssl" type="checkbox" checked><span>IMAP SSL</span></div>
+              </div>
+            </div>
+            <div class="btn-row"><button class="btn btn-ghost btn-sm" onclick="testConn('ems')">🔌 Bağlantı Test Et</button></div>
+          </div>
+          <!-- Gmail -->
+          <div class="srv-panel" id="srv-gmail">
+            <div class="form-grid">
+              <div class="form-group"><label>SMTP Host</label><input id="gmail_smtp_host" value="smtp.gmail.com"></div>
+              <div class="form-group"><label>SMTP Port</label><input id="gmail_smtp_port" type="number" value="587"></div>
+              <div class="form-group"><label>IMAP Host</label><input id="gmail_imap_host" value="imap.gmail.com"></div>
+              <div class="form-group"><label>IMAP Port</label><input id="gmail_imap_port" type="number" value="993"></div>
+              <div class="form-group"><label>Gmail Adresi</label><input id="gmail_username" placeholder="test@gmail.com"></div>
+              <div class="form-group"><label>App Password</label><input id="gmail_password" type="password" placeholder="xxxx xxxx xxxx xxxx"></div>
+              <div class="form-group full"><label>Test Adresi</label><input id="gmail_test_address" placeholder="test@gmail.com"></div>
+            </div>
+            <div class="btn-row"><button class="btn btn-ghost btn-sm" onclick="testConn('gmail')">🔌 Bağlantı Test Et</button></div>
+          </div>
+          <!-- Outlook -->
+          <div class="srv-panel" id="srv-outlook">
+            <div class="form-grid">
+              <div class="form-group"><label>SMTP Host</label><input id="outlook_smtp_host" value="smtp.office365.com"></div>
+              <div class="form-group"><label>SMTP Port</label><input id="outlook_smtp_port" type="number" value="587"></div>
+              <div class="form-group"><label>IMAP Host</label><input id="outlook_imap_host" value="outlook.office365.com"></div>
+              <div class="form-group"><label>IMAP Port</label><input id="outlook_imap_port" type="number" value="993"></div>
+              <div class="form-group"><label>Kullanıcı Adı</label><input id="outlook_username" placeholder="test@sirket.onmicrosoft.com"></div>
+              <div class="form-group"><label>Şifre</label><input id="outlook_password" type="password" placeholder="••••••••"></div>
+              <div class="form-group full"><label>Test Adresi</label><input id="outlook_test_address"></div>
+            </div>
+            <div class="btn-row"><button class="btn btn-ghost btn-sm" onclick="testConn('outlook')">🔌 Bağlantı Test Et</button></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">🤖 Claude API</span></div>
+        <div class="card-body">
+          <div class="form-grid">
+            <div class="form-group full"><label>API Key</label><input id="anthropic_api_key" type="password" placeholder="sk-ant-api03-..."></div>
+            <div class="form-group"><label>Model</label>
+              <select id="anthropic_model">
+                <option value="claude-sonnet-4-20250514">claude-sonnet-4 (Önerilen)</option>
+                <option value="claude-opus-4-20250514">claude-opus-4 (Güçlü)</option>
+                <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 (Hızlı)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">⚗ Test Parametreleri</span></div>
+        <div class="card-body">
+          <div class="form-grid-3">
+            <div class="form-group"><label>Bekleme Süresi (sn)</label><input id="test_wait_seconds" type="number" value="15"></div>
+            <div class="form-group"><label>Max Deneme</label><input id="test_max_retries" type="number" value="3"></div>
+            <div class="form-group"><label>Deneme Aralığı (sn)</label><input id="test_retry_interval" type="number" value="5"></div>
+            <div class="form-group"><label>Subject Prefix</label><input id="test_subject_prefix" value="[AUTO-TEST]"></div>
+            <div class="form-group"><label>Test Ek Dosyası</label><input id="test_attachment_path" value="test_files/test_document.pdf"></div>
+            <div class="form-group"><label>Test Resmi</label><input id="test_image_path" value="test_files/test_image.png"></div>
+            <div class="form-group full"><label>CSV Dosyası</label><input id="test_csv_input" value="mail_test_checklist.csv"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-primary" onclick="saveConfig()">💾 Kaydet</button>
+        <button class="btn btn-ghost" onclick="loadConfig()">↺ Yenile</button>
+      </div>
+    </div>
+
+    <!-- SECURITY & 2FA PAGE -->
+    <div class="page" id="page-security">
+      <div class="card">
+        <div class="card-header"><span class="card-title">🔐 Kimlik Doğrulama Yöntemi</span></div>
+        <div class="card-body">
+          <div class="srv-tabs">
+            <div class="srv-tab active" onclick="switchSecSrv('ems',this)">EMS</div>
+            <div class="srv-tab" onclick="switchSecSrv('gmail',this)">Gmail</div>
+            <div class="srv-tab" onclick="switchSecSrv('outlook',this)">Outlook</div>
+          </div>
+
+          <!-- EMS security panel -->
+          <div class="srv-panel active" id="sec-ems">
+            <div class="section-label">Kimlik Doğrulama Yöntemi Seç</div>
+            <div class="auth-method-grid" id="authGrid-ems">
+              <div class="auth-card selected" data-method="password" onclick="selectAuth('ems','password',this)">
+                <div class="auth-icon">🔑</div>
+                <div class="auth-label">Şifre</div>
+                <div class="auth-desc">Standart kullanıcı adı + şifre</div>
+              </div>
+              <div class="auth-card" data-method="app_password" onclick="selectAuth('ems','app_password',this)">
+                <div class="auth-icon">📱</div>
+                <div class="auth-label">App Password</div>
+                <div class="auth-desc">Uygulama özel şifresi</div>
+              </div>
+              <div class="auth-card" data-method="totp_password" onclick="selectAuth('ems','totp_password',this)">
+                <div class="auth-icon">🔐</div>
+                <div class="auth-label">Şifre + OTP</div>
+                <div class="auth-desc">2FA aktif: şifre + TOTP/SMS kodu</div>
+              </div>
+              <div class="auth-card" data-method="otp_only" onclick="selectAuth('ems','otp_only',this)">
+                <div class="auth-icon">💬</div>
+                <div class="auth-label">Sadece OTP</div>
+                <div class="auth-desc">Şifresiz, yalnızca tek kullanımlık kod</div>
+              </div>
+            </div>
+
+            <!-- 2FA details (shown when totp/otp selected) -->
+            <div id="mfaDetails-ems" style="display:none">
+              <div class="divider"></div>
+              <div class="section-label">2FA Yöntemi</div>
+              <div class="form-grid" style="margin-bottom:16px">
+                <div class="form-group">
+                  <label>OTP Tipi</label>
+                  <select id="ems_mfa_method" onchange="onMfaMethodChange('ems')">
+                    <option value="totp">TOTP (Google Auth / Authy)</option>
+                    <option value="sms">SMS Kodu</option>
+                    <option value="email_otp">E-posta OTP</option>
+                    <option value="push">Push Bildirimi</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- TOTP secret setup -->
+              <div id="totpSetup-ems">
+                <div class="section-label">TOTP Otomatik Üretim (Opsiyonel)</div>
+                <p style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+                  Authenticator uygulamanızdaki secret'ı buraya girerseniz, her test çalışmasında kod otomatik üretilir — sizi durdurmaz.<br>
+                  <span style="color:var(--warn)">⚠ Secret kaydetmek istemiyorsanız boş bırakın.</span> Her çalışmada manuel kod girersiniz.
+                </p>
+                <div class="form-grid">
+                  <div class="form-group">
+                    <label>TOTP Secret (Base32)</label>
+                    <input id="ems_totp_secret" type="password" placeholder="JBSWY3DPEHPK3PXP...">
+                  </div>
+                  <div class="form-group" style="justify-content:flex-end">
+                    <label>&nbsp;</label>
+                    <button class="btn btn-ghost btn-sm" onclick="previewTotp('ems')">👁 Kodu Önizle</button>
+                  </div>
+                </div>
+                <div class="totp-preview" id="totpPreview-ems">
+                  <div class="code" id="totpCode-ems">———</div>
+                  <div class="meta" id="totpMeta-ems">— saniye geçerli</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Security badges -->
+            <div class="divider"></div>
+            <div class="section-label">Bağlantı Güvenliği</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap" id="secBadges-ems">
+              <span class="sec-badge gray">TLS: Kontrol edilmedi</span>
+            </div>
+            <div class="btn-row">
+              <button class="btn btn-ghost btn-sm" onclick="checkSecurity('ems')">🛡 Güvenlik Testi</button>
+              <button class="btn btn-ghost btn-sm" onclick="testConnMFA('ems')">🔌 2FA ile Test Et</button>
+            </div>
+          </div>
+
+          <!-- Gmail security panel -->
+          <div class="srv-panel" id="sec-gmail">
+            <div class="section-label">Kimlik Doğrulama Yöntemi Seç</div>
+            <div class="auth-method-grid" id="authGrid-gmail">
+              <div class="auth-card" data-method="password" onclick="selectAuth('gmail','password',this)">
+                <div class="auth-icon">🔑</div>
+                <div class="auth-label">Şifre</div>
+                <div class="auth-desc">Standart (2FA kapalıysa)</div>
+              </div>
+              <div class="auth-card selected" data-method="app_password" onclick="selectAuth('gmail','app_password',this)">
+                <div class="auth-icon">📱</div>
+                <div class="auth-label">App Password</div>
+                <div class="auth-desc">Google App Password (önerilen)</div>
+              </div>
+              <div class="auth-card" data-method="totp_password" onclick="selectAuth('gmail','totp_password',this)">
+                <div class="auth-icon">🔐</div>
+                <div class="auth-label">Şifre + OTP</div>
+                <div class="auth-desc">2FA aktif hesap</div>
+              </div>
+              <div class="auth-card" data-method="otp_only" onclick="selectAuth('gmail','otp_only',this)">
+                <div class="auth-icon">💬</div>
+                <div class="auth-label">Sadece OTP</div>
+                <div class="auth-desc">SMS / Authenticator</div>
+              </div>
+            </div>
+            <div id="mfaDetails-gmail" style="display:none">
+              <div class="divider"></div>
+              <div class="form-grid" style="margin-bottom:16px">
+                <div class="form-group">
+                  <label>OTP Tipi</label>
+                  <select id="gmail_mfa_method" onchange="onMfaMethodChange('gmail')">
+                    <option value="totp">TOTP</option>
+                    <option value="sms">SMS</option>
+                    <option value="email_otp">E-posta OTP</option>
+                  </select>
+                </div>
+              </div>
+              <div id="totpSetup-gmail">
+                <div class="form-grid">
+                  <div class="form-group">
+                    <label>TOTP Secret</label>
+                    <input id="gmail_totp_secret" type="password" placeholder="Base32 secret...">
+                  </div>
+                  <div class="form-group" style="justify-content:flex-end"><label>&nbsp;</label>
+                    <button class="btn btn-ghost btn-sm" onclick="previewTotp('gmail')">👁 Önizle</button>
+                  </div>
+                </div>
+                <div class="totp-preview" id="totpPreview-gmail">
+                  <div class="code" id="totpCode-gmail">———</div>
+                  <div class="meta" id="totpMeta-gmail">— saniye geçerli</div>
+                </div>
+              </div>
+            </div>
+            <div class="divider"></div>
+            <div style="background:rgba(0,212,255,.06);border:1px solid rgba(0,212,255,.2);border-radius:8px;padding:14px;font-size:12px;color:var(--muted);line-height:1.7">
+              💡 <b style="color:var(--text)">Gmail Önerisi:</b> Google hesabınızda 2FA aktifse
+              <b style="color:var(--accent)">App Password</b> kullanın.
+              Google Hesabı → Güvenlik → 2 Adımlı Doğrulama → Uygulama Şifreleri adımını izleyin.
+              App Password ile SMTP/IMAP erişimi sorunsuz çalışır.
+            </div>
+            <div class="btn-row">
+              <button class="btn btn-ghost btn-sm" onclick="checkSecurity('gmail')">🛡 Güvenlik Testi</button>
+              <button class="btn btn-ghost btn-sm" onclick="testConnMFA('gmail')">🔌 Test Et</button>
+            </div>
+          </div>
+
+          <!-- Outlook security panel -->
+          <div class="srv-panel" id="sec-outlook">
+            <div class="section-label">Kimlik Doğrulama Yöntemi Seç</div>
+            <div class="auth-method-grid" id="authGrid-outlook">
+              <div class="auth-card selected" data-method="password" onclick="selectAuth('outlook','password',this)">
+                <div class="auth-icon">🔑</div><div class="auth-label">Şifre</div>
+                <div class="auth-desc">Standart</div>
+              </div>
+              <div class="auth-card" data-method="app_password" onclick="selectAuth('outlook','app_password',this)">
+                <div class="auth-icon">📱</div><div class="auth-label">App Password</div>
+                <div class="auth-desc">Microsoft App Password</div>
+              </div>
+              <div class="auth-card" data-method="totp_password" onclick="selectAuth('outlook','totp_password',this)">
+                <div class="auth-icon">🔐</div><div class="auth-label">Şifre + OTP</div>
+                <div class="auth-desc">MFA aktif hesap</div>
+              </div>
+              <div class="auth-card" data-method="otp_only" onclick="selectAuth('outlook','otp_only',this)">
+                <div class="auth-icon">💬</div><div class="auth-label">Sadece OTP</div>
+                <div class="auth-desc">SMS / Authenticator</div>
+              </div>
+            </div>
+            <div id="mfaDetails-outlook" style="display:none">
+              <div class="divider"></div>
+              <div class="form-grid" style="margin-bottom:16px">
+                <div class="form-group">
+                  <label>OTP Tipi</label>
+                  <select id="outlook_mfa_method" onchange="onMfaMethodChange('outlook')">
+                    <option value="totp">Microsoft Authenticator TOTP</option>
+                    <option value="sms">SMS</option>
+                    <option value="push">Microsoft Authenticator Push</option>
+                  </select>
+                </div>
+              </div>
+              <div id="totpSetup-outlook">
+                <div class="form-grid">
+                  <div class="form-group">
+                    <label>TOTP Secret</label>
+                    <input id="outlook_totp_secret" type="password" placeholder="Base32 secret...">
+                  </div>
+                  <div class="form-group" style="justify-content:flex-end"><label>&nbsp;</label>
+                    <button class="btn btn-ghost btn-sm" onclick="previewTotp('outlook')">👁 Önizle</button>
+                  </div>
+                </div>
+                <div class="totp-preview" id="totpPreview-outlook">
+                  <div class="code" id="totpCode-outlook">———</div>
+                  <div class="meta" id="totpMeta-outlook">— saniye geçerli</div>
+                </div>
+              </div>
+            </div>
+            <div class="btn-row">
+              <button class="btn btn-ghost btn-sm" onclick="checkSecurity('outlook')">🛡 Güvenlik Testi</button>
+              <button class="btn btn-ghost btn-sm" onclick="testConnMFA('outlook')">🔌 Test Et</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-primary" onclick="saveSecurityConfig()">💾 Güvenlik Ayarlarını Kaydet</button>
+      </div>
+    </div>
+
+    <!-- RUNNER -->
+    <div class="page" id="page-runner">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">🔀 Kombinasyon Seçimi</span>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost btn-sm" onclick="selectAllCombos()">Tümünü Seç</button>
+            <button class="btn btn-ghost btn-sm" onclick="clearCombos()">Temizle</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="combo-grid" id="comboGrid"><div style="color:var(--muted);font-size:13px">Yükleniyor...</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">🧪 Senaryo Tipi</span></div>
+        <div class="card-body">
+          <div class="scenario-pills">
+            <div class="pill selected" data-sc="all">Tümü</div>
+            <div class="pill" data-sc="plain_text">Plain Text</div>
+            <div class="pill" data-sc="attachment">Eklentili</div>
+            <div class="pill" data-sc="inline_image">Inline Resim</div>
+            <div class="pill disabled" data-sc="smime" title="Altyapıda yok">İmzalı (Devre Dışı)</div>
+            <div class="pill" data-sc="reply_chain">Reply Chain</div>
+          </div>
+          <p style="font-size:12px;color:var(--muted)">ℹ️ S/MIME altyapıda aktif değil. Kurumsal metin imzası plain_text senaryolarında test edilir.</p>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">🚀 Çalıştır</span></div>
+        <div class="card-body">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Mod</label>
+              <select id="runMode">
+                <option value="normal">Normal (Mail Gönder + Analiz Et)</option>
+                <option value="dry_run">Dry Run (Sadece Bağlantı Testi)</option>
+              </select>
+            </div>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-success" id="runBtn" onclick="startRun()">▶ Testi Başlat</button>
+            <button class="btn btn-danger" id="stopBtn2" style="display:none" onclick="stopRun()">■ Durdur</button>
+          </div>
+          <div id="runProgress" style="display:none;margin-top:16px">
+            <div style="font-size:12px;color:var(--muted);margin-bottom:6px" id="runProgressLabel">Çalışıyor...</div>
+            <div class="progress-bar-bg"><div class="progress-bar-fill" id="progressFill" style="width:0%"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- LOGS -->
+    <div class="page" id="page-logs">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">📟 Canlı Log Akışı</span>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost btn-sm" onclick="clearLogs()">Temizle</button>
+            <button class="btn btn-ghost btn-sm" onclick="toggleAutoScroll()">⬇ Oto-Kaydır: <span id="autoScrollState">ON</span></button>
+          </div>
+        </div>
+        <div class="card-body" style="padding:0">
+          <div class="terminal">
+            <div class="terminal-bar">
+              <div class="terminal-dots"><span class="dot-r"></span><span class="dot-y"></span><span class="dot-g"></span></div>
+              <div class="terminal-label">mail-otomasyon · python main.py</div>
+              <div class="terminal-label" id="logCount">0 satır</div>
+            </div>
+            <div class="terminal-body" id="terminalBody">
+              <div class="log-line dim">// Canlı log akışı burada görünecek...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RESULTS -->
+    <div class="page" id="page-results">
+      <div class="stats-row" id="resultStats" style="display:none">
+        <div class="stat-box"><div class="stat-val blue" id="rs-total">0</div><div class="stat-lbl">Toplam</div></div>
+        <div class="stat-box"><div class="stat-val green" id="rs-pass">0</div><div class="stat-lbl">✅ PASS</div></div>
+        <div class="stat-box"><div class="stat-val red" id="rs-fail">0</div><div class="stat-lbl">❌ FAIL</div></div>
+        <div class="stat-box"><div class="stat-val yellow" id="rs-rate">0%</div><div class="stat-lbl">Başarı</div></div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">📈 Test Sonuçları</span>
+          <button class="btn btn-ghost btn-sm" onclick="loadResults()">↻ Yenile</button>
+        </div>
+        <div class="card-body" style="padding:0">
+          <div style="overflow-x:auto">
+            <table class="results-table">
+              <thead><tr><th>Durum</th><th>Kombinasyon</th><th>Senaryo</th><th>Güven</th><th>Özet</th><th>Zaman</th></tr></thead>
+              <tbody id="resultsBody"><tr><td colspan="6" style="text-align:center;color:var(--muted);padding:32px">Henüz sonuç yok.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- REPORTS -->
+    <div class="page" id="page-reports">
+      <div class="card">
+        <div class="card-header"><span class="card-title">📁 Rapor Dosyaları</span><button class="btn btn-ghost btn-sm" onclick="loadReports()">↻</button></div>
+        <div class="card-body"><div class="report-list" id="reportList"><div style="color:var(--muted);font-size:13px">Yükleniyor...</div></div></div>
+      </div>
+      <div id="reportViewer" style="display:none">
+        <div class="card">
+          <div class="card-header"><span class="card-title" id="reportViewerTitle">Rapor</span><button class="btn btn-ghost btn-sm" onclick="closeReport()">✕</button></div>
+          <div class="card-body" style="padding:0"><iframe class="report-frame" id="reportFrame" src=""></iframe></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- GUIDE / BİLGİLENDİRME -->
+    <div class="page" id="page-guide">
+
+      <!-- İçindekiler -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">📖 Kullanım Kılavuzu — İçindekiler</span></div>
+        <div class="card-body">
+          <div class="guide-toc">
+            <div class="guide-toc-item" onclick="document.getElementById('g-overview').scrollIntoView({behavior:'smooth'})"><span class="guide-toc-icon">🏗</span>Sistem Genel Bakış</div>
+            <div class="guide-toc-item" onclick="document.getElementById('g-quickstart').scrollIntoView({behavior:'smooth'})"><span class="guide-toc-icon">🚀</span>Hızlı Başlangıç</div>
+            <div class="guide-toc-item" onclick="document.getElementById('g-config').scrollIntoView({behavior:'smooth'})"><span class="guide-toc-icon">⚙</span>Sunucu Konfigürasyonu</div>
+            <div class="guide-toc-item" onclick="document.getElementById('g-2fa').scrollIntoView({behavior:'smooth'})"><span class="guide-toc-icon">🔐</span>2FA / TOTP Kurulumu</div>
+            <div class="guide-toc-item" onclick="document.getElementById('g-scenarios').scrollIntoView({behavior:'smooth'})"><span class="guide-toc-icon">🧪</span>Test Senaryoları</div>
+            <div class="guide-toc-item" onclick="document.getElementById('g-templates').scrollIntoView({behavior:'smooth'})"><span class="guide-toc-icon">📝</span>Mesaj Şablonları</div>
+            <div class="guide-toc-item" onclick="document.getElementById('g-attachments').scrollIntoView({behavior:'smooth'})"><span class="guide-toc-icon">📎</span>Ek Dosyalar</div>
+            <div class="guide-toc-item" onclick="document.getElementById('g-subject').scrollIntoView({behavior:'smooth'})"><span class="guide-toc-icon">✉</span>Subject Format Yapısı</div>
+            <div class="guide-toc-item" onclick="document.getElementById('g-flow').scrollIntoView({behavior:'smooth'})"><span class="guide-toc-icon">🔄</span>Test Akış Mimarisi</div>
+            <div class="guide-toc-item" onclick="document.getElementById('g-run').scrollIntoView({behavior:'smooth'})"><span class="guide-toc-icon">▶</span>Test Çalıştırma</div>
+            <div class="guide-toc-item" onclick="document.getElementById('g-results').scrollIntoView({behavior:'smooth'})"><span class="guide-toc-icon">📊</span>Sonuç & Raporlar</div>
+            <div class="guide-toc-item" onclick="document.getElementById('g-cli').scrollIntoView({behavior:'smooth'})"><span class="guide-toc-icon">⌨</span>CLI Kullanımı</div>
+            <div class="guide-toc-item" onclick="document.getElementById('g-trouble').scrollIntoView({behavior:'smooth'})"><span class="guide-toc-icon">🔧</span>Sorun Giderme</div>
+            <div class="guide-toc-item" onclick="document.getElementById('g-faq').scrollIntoView({behavior:'smooth'})"><span class="guide-toc-icon">❓</span>Sıkça Sorulan Sorular</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 1. Sistem Genel Bakış -->
+      <div class="card">
+        <div class="card-body">
+          <div class="guide-section" id="g-overview">
+            <h3>🏗 Sistem Genel Bakış</h3>
+            <p>Mail Otomasyon Test Sistemi, <strong>Safir Posta sunucu geçiş projesi</strong> kapsamında farklı mail sunucuları (EMS, Gmail, Outlook) ve istemciler (iOS, Android, Outlook Desktop) arasındaki mesaj iletim kalitesini otomatik olarak test eden bir araçtır.</p>
+            <p>Sistem şu bileşenlerden oluşur:</p>
+            <table class="guide-table">
+              <tr><th>Bileşen</th><th>Dosya</th><th>Açıklama</th></tr>
+              <tr><td>Web Arayüzü</td><td><code>app.py</code></td><td>Flask tabanlı kontrol paneli (bu ekran). Konfigürasyon, test başlatma, canlı log izleme ve raporlama.</td></tr>
+              <tr><td>Orkestratör</td><td><code>main.py</code></td><td>Test senaryolarını CSV'den okur, sırasıyla çalıştırır. Gönderim → Alım → Analiz akışını yönetir.</td></tr>
+              <tr><td>Gönderici</td><td><code>sender.py</code></td><td>SMTP üzerinden 5 farklı senaryo tipinde mesaj gönderir. Çoklu ek dosya desteği.</td></tr>
+              <tr><td>Alıcı</td><td><code>receiver.py</code></td><td>IMAP polling ile gönderilen mesajı bulur, MIME yapısını ayrıştırır.</td></tr>
+              <tr><td>Analizci</td><td><code>analyzer.py</code></td><td>Claude API ile gönderilen/alınan mesajları karşılaştırır, PASS/FAIL kararı verir.</td></tr>
+              <tr><td>Mesaj Şablonları</td><td><code>message_templates.py</code></td><td>Senaryo bazlı kısa/orta/uzun Türkçe mesaj taslakları.</td></tr>
+              <tr><td>CSV Parser</td><td><code>csv_parser.py</code></td><td>Test checklist CSV'sini okuyarak kombinasyon ve senaryo yapısını oluşturur.</td></tr>
+              <tr><td>Raporlayıcı</td><td><code>reporter.py</code></td><td>HTML görsel rapor ve CSV sonuç dosyası üretir.</td></tr>
+              <tr><td>2FA Yöneticisi</td><td><code>auth_manager.py</code></td><td>TOTP otomatik üretim ve interaktif MFA kod girişi akışı.</td></tr>
+            </table>
+          </div>
+
+          <!-- 2. Hızlı Başlangıç -->
+          <div class="guide-section" id="g-quickstart">
+            <h3>🚀 Hızlı Başlangıç (5 Adım)</h3>
+            <div class="guide-box info">
+              <b>Ön Koşullar:</b> Python 3.10+, pip, internet bağlantısı (Claude API için) ve en az bir mail hesabı (EMS, Gmail veya Outlook).
+            </div>
+            <ol>
+              <li><strong>Bağımlılıkları kur:</strong> <code>pip install -r requirements.txt</code></li>
+              <li><strong>Config dosyasını oluştur:</strong> <code>cp config.yaml.example config.yaml</code></li>
+              <li><strong>Web arayüzünü başlat:</strong> <code>python app.py</code> → Tarayıcıda <code>http://localhost:5000</code> aç</li>
+              <li><strong>Konfigürasyon sekmesinden</strong> sunucu bilgilerini ve Claude API key'ini gir, <strong>Kaydet</strong>'e bas</li>
+              <li><strong>Test Çalıştır sekmesinden</strong> kombinasyon seç ve <strong>▶ Testi Başlat</strong>'a tıkla</li>
+            </ol>
+            <div class="guide-box success">
+              <b>İpucu:</b> Hızlı test için sağ üstteki <b>"▶ Hızlı Başlat"</b> butonu tüm kombinasyonları tek tıkla çalıştırır.
+            </div>
+          </div>
+
+          <!-- 3. Sunucu Konfigürasyonu -->
+          <div class="guide-section" id="g-config">
+            <h3>⚙ Sunucu Konfigürasyonu</h3>
+            <p><strong>Konfigürasyon</strong> sekmesinden 3 sunucu yapılandırılır. Her sunucu için SMTP (gönderim) ve IMAP (alım) bilgileri girilir:</p>
+            <table class="guide-table">
+              <tr><th>Sunucu</th><th>SMTP Host</th><th>SMTP Port</th><th>IMAP Host</th><th>IMAP Port</th><th>Notlar</th></tr>
+              <tr><td>EMS (On-Prem)</td><td>ems.sirket.local</td><td>587</td><td>ems.sirket.local</td><td>993</td><td>Kurum içi posta sunucusu. TLS/SSL aktif olmalı.</td></tr>
+              <tr><td>Gmail</td><td>smtp.gmail.com</td><td>587</td><td>imap.gmail.com</td><td>993</td><td>2FA aktifse <strong>App Password</strong> kullanın.</td></tr>
+              <tr><td>Outlook / O365</td><td>smtp.office365.com</td><td>587</td><td>outlook.office365.com</td><td>993</td><td>Kurumsal hesaplarda MFA gerekebilir.</td></tr>
+            </table>
+
+            <h4>Gmail App Password Nasıl Alınır?</h4>
+            <ol>
+              <li><strong>Google Hesabı</strong> → Güvenlik → 2 Adımlı Doğrulama'yı etkinleştir</li>
+              <li>Güvenlik → 2 Adımlı Doğrulama → sayfanın altında <strong>"Uygulama Şifreleri"</strong> bölümü</li>
+              <li>Uygulama: <em>Posta</em>, Cihaz: <em>Diğer</em> → "Mail Otomasyon" yaz → <strong>Oluştur</strong></li>
+              <li>Verilen 16 haneli şifreyi <strong>Konfigürasyon → Gmail → App Password</strong> alanına yapıştır</li>
+            </ol>
+
+            <h4>Claude API Key Nasıl Alınır?</h4>
+            <ol>
+              <li><strong>console.anthropic.com</strong> adresine giriş yap</li>
+              <li>API Keys → <strong>Create Key</strong> → İsim ver → Kopyala</li>
+              <li>Konfigürasyon sekmesinde <strong>Claude API → API Key</strong> alanına yapıştır</li>
+            </ol>
+            <div class="guide-box warn">
+              <b>Güvenlik:</b> <code>config.yaml</code> dosyası <code>.gitignore</code>'da tanımlıdır. Şifreler ve API key'ler repoya gitmez. Yalnızca <code>config.yaml.example</code> commit edilir.
+            </div>
+          </div>
+
+          <!-- 4. 2FA / TOTP -->
+          <div class="guide-section" id="g-2fa">
+            <h3>🔐 2FA / TOTP Kurulumu</h3>
+            <p>Her sunucu için 4 farklı kimlik doğrulama yöntemi desteklenir:</p>
+            <table class="guide-table">
+              <tr><th>Yöntem</th><th>Nasıl Çalışır</th><th>Kimler İçin</th></tr>
+              <tr><td>Şifre</td><td>Standart kullanıcı adı + şifre</td><td>2FA kapalı hesaplar</td></tr>
+              <tr><td>App Password</td><td>Uygulama özel şifresi (16 hane)</td><td>Gmail / Microsoft 2FA aktif hesaplar</td></tr>
+              <tr><td>Şifre + OTP</td><td>Şifre girildikten sonra TOTP/SMS kodu eklenir</td><td>EMS / kurumsal 2FA zorunlu sunucular</td></tr>
+              <tr><td>Sadece OTP</td><td>Şifresiz, yalnızca tek kullanımlık kod</td><td>SMS veya authenticator tabanlı giriş</td></tr>
+            </table>
+
+            <h4>TOTP Otomatik Üretim (Önerilen)</h4>
+            <p>Authenticator uygulamanızdaki <strong>Base32 secret</strong> değerini <strong>Güvenlik & 2FA</strong> sekmesine kaydettiğinizde, her test çalışmasında 6 haneli kod otomatik üretilir — test duraklamaz.</p>
+            <div class="guide-box info">
+              <b>Secret'ı nereden bulurum?</b> Google Authenticator / Authy'ye hesap eklerken QR kod yerine "Manuel giriş" seçeneğini seçin. Gösterilen Base32 metin (ör. <code>JBSWY3DPEHPK3PXP</code>) secret'tır. Bunu kopyalayıp yapıştırın.
+            </div>
+
+            <h4>Manuel Kod Girişi</h4>
+            <p>TOTP secret kaydetmezseniz, test çalışırken 2FA gereken sunucuda ekranınıza <strong>modal pencere</strong> açılır. Authenticator uygulamanızdaki kodu girin → test devam eder.</p>
+          </div>
+
+          <!-- 5. Test Senaryoları -->
+          <div class="guide-section" id="g-scenarios">
+            <h3>🧪 Test Senaryoları (5 Tip)</h3>
+            <p>Her kombinasyon için 5 farklı senaryo çalıştırılır. Her biri farklı bir iletim özelliğini test eder:</p>
+            <table class="guide-table">
+              <tr><th>Senaryo</th><th>Kod Adı</th><th>Ne Test Eder</th><th>Kontrol Noktaları</th></tr>
+              <tr>
+                <td>Plain Text</td><td><code>plain_text</code></td>
+                <td>UTF-8 encoding, header bütünlüğü, Türkçe karakter (ğüşıöçĞÜŞİÖÇ)</td>
+                <td>• Mesaj ulaştı mı?<br>• İçerik bozulmadı mı?<br>• Encoding doğru mu?<br>• From/To/Subject tam mı?</td>
+              </tr>
+              <tr>
+                <td>Ek Dosya</td><td><code>attachment</code></td>
+                <td>MIME type, dosya adı/boyutu, base64 encoding, çoklu ek</td>
+                <td>• Ek iletildi mi?<br>• Boyut ve ad korundu mu?<br>• MIME type doğru mu?<br>• Dosya açılıyor mu?<br>• Türkçe dosya adı bozuldu mu?</td>
+              </tr>
+              <tr>
+                <td>Inline Görsel</td><td><code>inline_image</code></td>
+                <td>CID referansı, HTML yapısı, resim bütünlüğü</td>
+                <td>• Görsel gövdede göründü mü?<br>• CID çözümlendi mi?<br>• Çözünürlük korundu mu?<br>• HTML yapısı sağlam mı?</td>
+              </tr>
+              <tr>
+                <td>S/MIME İmza</td><td><code>smime</code></td>
+                <td>Dijital imza, sertifika zinciri</td>
+                <td><em>Altyapıda aktif değil — otomatik atlanır. Manuel test gerektirir.</em></td>
+              </tr>
+              <tr>
+                <td>Reply Chain</td><td><code>reply_chain</code></td>
+                <td>In-Reply-To / References headers, alıntı yapısı, thread zinciri</td>
+                <td>• Thread korundu mu?<br>• Alıntı (quote) bozuldu mu?<br>• Encoding kayması var mı?<br>• Çoklu istemci sonrası stabil mi?</td>
+              </tr>
+            </table>
+            <div class="guide-box info">
+              <b>S/MIME Notu:</b> Dijital imza altyapısı kurumda aktif olmadığından bu senaryo otomatik atlanır. Kurumsal <em>metin imzası</em> (e-posta altı imza) plain_text ve reply_chain senaryolarında gövde içeriğinden test edilir.
+            </div>
+          </div>
+
+          <!-- 6. Mesaj Şablonları -->
+          <div class="guide-section" id="g-templates">
+            <h3>📝 Mesaj Şablonları (Kısa / Orta / Uzun)</h3>
+            <p>Her senaryo için <strong>3 farklı uzunlukta</strong> gerçekçi Türkçe iş yazışması şablonu tanımlıdır. Kombinasyon indeksine göre <strong>otomatik rotasyon</strong> yapılır:</p>
+            <ul>
+              <li><strong>Kombinasyon 0</strong> → Kısa mesaj (1-2 satır, hızlı bilgilendirme)</li>
+              <li><strong>Kombinasyon 1</strong> → Orta mesaj (1 paragraf + maddeler)</li>
+              <li><strong>Kombinasyon 2</strong> → Uzun mesaj (çok bölümlü teknik rapor)</li>
+              <li><strong>Kombinasyon 3</strong> → Tekrar kısa... (döngüsel)</li>
+            </ul>
+            <table class="guide-table">
+              <tr><th>Senaryo</th><th>Kısa</th><th>Orta</th><th>Uzun</th></tr>
+              <tr><td>Plain Text</td><td>Tek satır bilgilendirme</td><td>Haftalık durum, 4 madde</td><td>4 bölümlü teknik rapor</td></tr>
+              <tr><td>Ek Dosya</td><td>"Ekte bulunur" notu</td><td>Broşür + gereksinim açıklaması</td><td>Dosya listesi + MIME kontrol detayı</td></tr>
+              <tr><td>Inline Görsel</td><td>Ekran görüntüsü</td><td>Dashboard önizleme + 3 kontrol</td><td>HTML tablo + 5 kontrol noktası</td></tr>
+              <tr><td>Reply Chain</td><td>"Teşekkürler, not aldım"</td><td>3 maddelik geri bildirim</td><td>4 başlıklı detaylı thread analizi</td></tr>
+            </table>
+            <div class="guide-box info">
+              <b>Neden farklı uzunluklar?</b> Kısa mesajlarda header oranı yüksektir (encoding testi), uzun mesajlarda gövde bütünlüğü ve karakter korunması test edilir. Bu kombinasyon gerçek dünya kullanımını simüle eder.
+            </div>
+            <p>Tüm şablonlarda <strong>Türkçe özel karakter doğrulama satırı</strong> bulunur: <code>ğüşıöçĞÜŞİÖÇ</code>. Ayrıca her mesaj sonuna standart <strong>kurumsal imza bloğu</strong> (Bilgi Teknolojileri Müdürlüğü) eklenir.</p>
+          </div>
+
+          <!-- 7. Ek Dosyalar -->
+          <div class="guide-section" id="g-attachments">
+            <h3>📎 Ek Dosyalar (Attachments)</h3>
+            <p><strong>Ek Dosya (attachment)</strong> senaryosunda <code>attachments/</code> klasöründeki gerçek dosyalar kullanılır. Her test çalışmasında 3 dosya birlikte eklenir:</p>
+            <table class="guide-table">
+              <tr><th>#</th><th>Dosya Adı</th><th>Format</th><th>Test Amacı</th></tr>
+              <tr>
+                <td>1</td>
+                <td><code>Ticket_Talep_Sistemi_Bilgilendirme_Brosuru_v3.pdf</code></td>
+                <td>PDF</td>
+                <td>Binary dosya iletimi, application/pdf MIME type, dosya açılabilirliği</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td><code>SAFİR POSTA (Destek Bilgem) 2026-01-28T12_02_14+0300.csv</code></td>
+                <td>CSV</td>
+                <td>Dosya adında <strong>Türkçe karakter</strong> (İ), <strong>boşluk</strong>, <strong>parantez</strong> ve <strong>özel semboller</strong> (T, +, :). Content-Disposition encoding testi.</td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td><code>requirements_dashboard.txt</code></td>
+                <td>TXT</td>
+                <td>Düz metin dosyası, text/plain MIME type, UTF-8 encoding bütünlüğü</td>
+              </tr>
+            </table>
+            <div class="guide-box warn">
+              <b>Neden bu dosyalar?</b> PDF binary encoding, CSV Türkçe dosya adı ve TXT düz metin — üç farklı MIME type ve encoding senaryosunu kapsar. Özellikle <code>SAFİR</code> dosya adındaki <strong>İ</strong> harfi ve parantezler, RFC 5987 uyumlu <code>filename*</code> parametresinin doğru çalışıp çalışmadığını test eder.
+            </div>
+          </div>
+
+          <!-- 8. Subject Format Yapısı -->
+          <div class="guide-section" id="g-subject">
+            <h3>✉ E-posta Başlık (Subject) Format Yapısı</h3>
+            <p>Her test mesajının subject satırı, bir bakışta <strong>senaryo tipi</strong>, <strong>ek durumu</strong>, <strong>mesaj uzunluğu</strong> ve <strong>kombinasyon</strong> bilgisini gösterir:</p>
+
+            <div class="guide-subject">
+<span class="hl-prefix">[AUTO-TEST]</span> <span class="hl-id">#a1b2c3d4</span> | <span class="hl-scenario">Senaryo: Plain Text</span> (<span class="hl-attach">Eksiz</span>) | <span class="hl-len">Kısa</span> | <span class="hl-combo">EMS/iOS ← Gmail/Android</span>
+<span class="hl-prefix">[AUTO-TEST]</span> <span class="hl-id">#b2c3d4e5</span> | <span class="hl-scenario">Senaryo: Ek Dosya</span> (<span class="hl-attach">3 Ek: PDF+CSV+TXT, 1.0MB</span>) | <span class="hl-len">Orta</span> | <span class="hl-combo">EMS/iOS ← Gmail/Android</span>
+<span class="hl-prefix">[AUTO-TEST]</span> <span class="hl-id">#c3d4e5f6</span> | <span class="hl-scenario">Senaryo: Inline Görsel</span> (<span class="hl-attach">Gömülü PNG, 69B</span>) | <span class="hl-len">Uzun</span> | <span class="hl-combo">EMS/iOS ← Gmail/Android</span>
+<span class="hl-prefix">[AUTO-TEST]</span> <span class="hl-id">#d4e5f6g7</span> | <span class="hl-scenario">Senaryo: Reply Chain</span> (<span class="hl-attach">Eksiz, Thread Testi</span>) | <span class="hl-len">Kısa</span> | <span class="hl-combo">EMS/iOS ← Gmail/Android</span>
+<span class="hl-prefix">[AUTO-TEST]</span> <span class="hl-id">#e5f6g7h8</span> | <span class="hl-scenario">Senaryo: S/MIME İmza</span> (<span class="hl-attach">Dijital İmzalı</span>) | <span class="hl-len">Orta</span> | <span class="hl-combo">EMS/iOS ← Gmail/Android</span>
+            </div>
+
+            <table class="guide-table">
+              <tr><th>Bölüm</th><th>Renk</th><th>Açıklama</th></tr>
+              <tr><td><code>[AUTO-TEST]</code></td><td style="color:var(--warn)">Sarı</td><td>Yapılandırılabilir prefix. IMAP filtreleme ve arama için kullanılır.</td></tr>
+              <tr><td><code>#a1b2c3d4</code></td><td style="color:var(--muted)">Gri</td><td>8 haneli benzersiz Run ID. Her mesajı tekil olarak izlemeye yarar.</td></tr>
+              <tr><td><code>Senaryo: ...</code></td><td style="color:var(--accent)">Mavi</td><td>Test edilen senaryo tipi (Plain Text / Ek Dosya / Inline Görsel / Reply Chain / S/MIME).</td></tr>
+              <tr><td><code>(3 Ek: PDF+CSV+TXT, 1.0MB)</code></td><td style="color:var(--accent2)">Yeşil</td><td>Ek durumu: dosya sayısı, formatlar ve toplam boyut. Eksiz senaryolarda "Eksiz" yazar.</td></tr>
+              <tr><td><code>Kısa / Orta / Uzun</code></td><td style="color:#c084fc">Mor</td><td>Mesaj gövdesinin uzunluk kategorisi (template rotasyonu).</td></tr>
+              <tr><td><code>EMS/iOS ← Gmail/Android</code></td><td style="color:var(--text)">Beyaz</td><td>Alıcı sunucu/istemci ← Gönderen sunucu/istemci kombinasyonu.</td></tr>
+            </table>
+          </div>
+
+          <!-- 9. Test Akış Mimarisi -->
+          <div class="guide-section" id="g-flow">
+            <h3>🔄 Test Akış Mimarisi</h3>
+            <p>Her test senaryosu şu sırayla çalışır:</p>
+
+            <div class="guide-flow">
+              <div class="guide-flow-step">📄 CSV<br><small>Senaryo Oku</small></div>
+              <div class="guide-flow-arrow">→</div>
+              <div class="guide-flow-step">📝 Şablon<br><small>Mesaj Oluştur</small></div>
+              <div class="guide-flow-arrow">→</div>
+              <div class="guide-flow-step">📤 SMTP<br><small>Gönder</small></div>
+              <div class="guide-flow-arrow">→</div>
+              <div class="guide-flow-step">⏳ Bekleme<br><small>15sn polling</small></div>
+              <div class="guide-flow-arrow">→</div>
+              <div class="guide-flow-step">📥 IMAP<br><small>Al & Parse</small></div>
+              <div class="guide-flow-arrow">→</div>
+              <div class="guide-flow-step">🤖 Claude AI<br><small>Analiz</small></div>
+              <div class="guide-flow-arrow">→</div>
+              <div class="guide-flow-step">📊 Rapor<br><small>HTML + CSV</small></div>
+            </div>
+
+            <h4>Detaylı Akış</h4>
+            <ol>
+              <li><strong>CSV Parse:</strong> <code>mail_test_checklist.csv</code> dosyasından kombinasyon ve senaryo bilgileri okunur</li>
+              <li><strong>Şablon Seçimi:</strong> Kombinasyon indeksine göre kısa/orta/uzun mesaj şablonu seçilir</li>
+              <li><strong>SMTP Gönderim:</strong> Senaryo tipine uygun MIME yapısı oluşturulur (plain, multipart/mixed, multipart/related, vb.) ve gönderilir</li>
+              <li><strong>IMAP Polling:</strong> Alıcı sunucuda mesajın ulaşması beklenir (varsayılan 15sn, 3 deneme, 5sn aralıkla)</li>
+              <li><strong>MIME Ayrıştırma:</strong> Alınan mesajın headers, parts, attachments ve inline_images bilgileri parse edilir</li>
+              <li><strong>Claude Analizi:</strong> Gönderilen metadata + alınan içerik Claude API'ye gönderilerek senaryo tipine özel kontrol noktaları değerlendirilir</li>
+              <li><strong>Raporlama:</strong> JSON sonuçlar HTML rapor ve CSV dosyasına dönüştürülür</li>
+            </ol>
+          </div>
+
+          <!-- 10. Test Çalıştırma -->
+          <div class="guide-section" id="g-run">
+            <h3>▶ Test Çalıştırma Adımları</h3>
+
+            <h4>Web Arayüzünden (Önerilen)</h4>
+            <ol>
+              <li><strong>Test Çalıştır</strong> sekmesine git</li>
+              <li><strong>Kombinasyon Seçimi:</strong> Test etmek istediğin kombinasyon kartlarına tıkla (birden fazla seçilebilir). "Tümünü Seç" butonu hepsini seçer.</li>
+              <li><strong>Senaryo Tipi:</strong> Hepsini test etmek için "Tümü" seçili kalsın. Belirli bir senaryo için ilgili pill'e tıkla.</li>
+              <li><strong>Mod Seçimi:</strong>
+                <ul>
+                  <li><strong>Normal:</strong> Mail gönderir, alır, analiz eder — tam test</li>
+                  <li><strong>Dry Run:</strong> Sadece SMTP bağlantısını test eder, mail göndermez</li>
+                </ul>
+              </li>
+              <li><strong>▶ Testi Başlat</strong>'a tıkla — otomatik olarak <strong>Canlı Loglar</strong> sekmesine geçilir</li>
+              <li>Test tamamlanınca sonuçlar <strong>Sonuçlar</strong> ve <strong>Raporlar</strong> sekmelerinde görünür</li>
+            </ol>
+
+            <h4>Çalışma Sırasında 2FA Gerekirse</h4>
+            <p>Test çalışırken TOTP secret kayıtlı değilse, ekranınıza otomatik modal açılır. Authenticator uygulamanızdaki kodu girin → test devam eder. Tüm süreç canlı log ekranından izlenebilir.</p>
+          </div>
+
+          <!-- 11. Sonuç & Raporlar -->
+          <div class="guide-section" id="g-results">
+            <h3>📊 Sonuç & Rapor Okuma</h3>
+
+            <h4>Sonuçlar Sekmesi</h4>
+            <p>Her test satırı şu bilgileri içerir:</p>
+            <table class="guide-table">
+              <tr><th>Sütun</th><th>Açıklama</th></tr>
+              <tr><td>Durum</td><td><span style="color:var(--accent2)">PASS</span> veya <span style="color:var(--danger)">FAIL</span> — Claude API'nin verdiği nihai karar</td></tr>
+              <tr><td>Kombinasyon</td><td>Hangi sunucu/istemci çifti (ör. EMS/iOS ← Gmail/Android)</td></tr>
+              <tr><td>Senaryo</td><td>Test edilen senaryo tipi</td></tr>
+              <tr><td>Güven</td><td><strong>HIGH</strong> = kesin sonuç, <strong>MEDIUM</strong> = kısmi doğrulama, <strong>LOW</strong> = belirsiz</td></tr>
+              <tr><td>Özet</td><td>Claude'un tek cümlelik analiz özeti</td></tr>
+              <tr><td>Zaman</td><td>Test çalıştırılma zamanı</td></tr>
+            </table>
+
+            <h4>Raporlar Sekmesi</h4>
+            <p>Her test çalışmasının ardından iki dosya üretilir:</p>
+            <ul>
+              <li><strong>test_report.html</strong> — Görsel rapor. Tarayıcıda "Görüntüle" butonu ile arayüz içinden açılabilir.</li>
+              <li><strong>test_results.csv</strong> — Google Sheets veya Excel'e aktarılabilir sonuç tablosu. "İndir" butonu ile indirilir.</li>
+            </ul>
+          </div>
+
+          <!-- 12. CLI Kullanımı -->
+          <div class="guide-section" id="g-cli">
+            <h3>⌨ CLI Kullanımı (Arayüz Olmadan)</h3>
+            <p>Web arayüzü olmadan doğrudan terminal'den çalıştırılabilir:</p>
+            <div class="guide-cmd">python main.py                          # Tüm testleri çalıştır
+python main.py --combo 0               # Sadece 0. kombinasyonu çalıştır
+python main.py --scenario plain_text   # Sadece plain_text senaryosu
+python main.py --combo 2 --scenario attachment   # Belirli kombo + senaryo
+python main.py --dry-run               # Bağlantı testi (mail göndermez)
+python main.py --csv /yol/baska.csv    # Farklı CSV dosyası kullan</div>
+            <div class="guide-box info">
+              <b>Not:</b> CLI çalıştırıldığında loglar hem <code>logs/automation.log</code> dosyasına hem de terminale yazılır. Raporlar <code>reports/</code> klasörüne kaydedilir.
+            </div>
+          </div>
+
+          <!-- 13. Sorun Giderme -->
+          <div class="guide-section" id="g-trouble">
+            <h3>🔧 Sorun Giderme</h3>
+            <table class="guide-table">
+              <tr><th>Hata / Belirti</th><th>Olası Neden</th><th>Çözüm</th></tr>
+              <tr><td>SMTP auth hatası</td><td>Yanlış şifre veya auth_method</td><td>Güvenlik sekmesinden auth yöntemini kontrol et. Gmail için <strong>App Password</strong> kullan.</td></tr>
+              <tr><td>IMAP timeout / mesaj bulunamıyor</td><td>Mesaj henüz ulaşmadı veya filtre uyumsuz</td><td><code>wait_seconds</code> değerini artır (ör. 30). <code>subject_prefix</code>'in spam filtresine takılmadığını kontrol et.</td></tr>
+              <tr><td>Claude API 401 Unauthorized</td><td>Geçersiz veya eksik API key</td><td>Konfigürasyon → Claude API Key'i güncelle. console.anthropic.com'dan yeni key al.</td></tr>
+              <tr><td>2FA modal açılmıyor</td><td>Popup engelleyici veya polling hatası</td><td>Tarayıcı popup engelleyicisini kapat. Sayfayı yenile.</td></tr>
+              <tr><td>TOTP kodu geçersiz</td><td>Secret yanlış veya saat farkı</td><td>Secret <strong>Base32</strong> formatında olmalı, boşluk içermemeli. Cihaz saati senkron olmalı.</td></tr>
+              <tr><td>Flask bulunamadı</td><td>Bağımlılıklar kurulu değil</td><td><code>pip install -r requirements.txt</code> çalıştır</td></tr>
+              <tr><td>Port 5000 meşgul</td><td>Başka uygulama dinliyor (macOS AirPlay vb.)</td><td><code>PORT=5050 python app.py</code> ile farklı port kullan veya AirPlay Receiver'ı kapat</td></tr>
+              <tr><td>CSV okunamadı</td><td>Dosya yolu veya format hatası</td><td>Konfigürasyon'daki <code>CSV Dosyası</code> alanını kontrol et. Dosyanın UTF-8 olduğundan emin ol.</td></tr>
+              <tr><td>Ek dosya adı bozuk</td><td>Türkçe karakter encoding sorunu</td><td>Alıcı istemcinin RFC 5987 desteğini kontrol et. Bu bilinen bir uyumluluk farkıdır.</td></tr>
+              <tr><td>Inline görsel görünmüyor</td><td>CID referansı çözümlenememiş</td><td>Alıcı istemcinin HTML mail desteğini kontrol et. Bazı istemciler CID'yi engelleyebilir.</td></tr>
+            </table>
+          </div>
+
+          <!-- 14. SSS -->
+          <div class="guide-section" id="g-faq">
+            <h3>❓ Sıkça Sorulan Sorular</h3>
+
+            <h4>Bu sistem ne işe yarar?</h4>
+            <p>EMS'ten Safir Posta'ya geçiş sürecinde, farklı mail sunucuları ve istemciler arasındaki mesaj iletim kalitesini <strong>otomatik</strong> olarak test eder. Manuel test yerine her kombinasyonu saniyeler içinde doğrular.</p>
+
+            <h4>Claude API zorunlu mu?</h4>
+            <p>Evet, analiz motoru Claude API kullanır. API key olmadan testler çalışır ama analiz/değerlendirme (PASS/FAIL kararı) yapılamaz. Key almak ücretsiz deneme ile başlar: <code>console.anthropic.com</code></p>
+
+            <h4>Gerçek mail mi gönderiliyor?</h4>
+            <p><strong>Normal modda evet</strong> — gerçek SMTP üzerinden gerçek mesajlar gönderilir. <strong>Dry Run modunda hayır</strong> — sadece bağlantı testi yapılır, mail gönderilmez.</p>
+
+            <h4>Kaç kombinasyon var?</h4>
+            <p>CSV dosyasında tanımlanan sayı kadar. Varsayılan checklist'te <strong>10 kombinasyon × 5 senaryo = 50 test</strong> bulunur. Ek kombinasyonlar CSV'ye satır ekleyerek oluşturulabilir.</p>
+
+            <h4>S/MIME neden devre dışı?</h4>
+            <p>Kurumda dijital imza altyapısı (PKI/CA) henüz aktif olmadığından S/MIME senaryosu otomatik atlanır. Altyapı hazır olduğunda <code>config.yaml</code>'a <code>smime_cert_path</code> ve <code>smime_key_path</code> eklenerek aktif edilir.</p>
+
+            <h4>Testler ne kadar sürer?</h4>
+            <p>Tek bir senaryo ortalama <strong>20-30 saniye</strong> (gönderim + bekleme + analiz). Tam bir kombinasyon (5 senaryo) ~2-3 dakika. Tüm 10 kombinasyon ~20-30 dakika sürer.</p>
+
+            <h4>Rapor dosyaları nerede?</h4>
+            <p><code>reports/</code> klasöründe. Her çalışma <code>test_report.html</code> ve <code>test_results.csv</code> üretir. Web arayüzünden "Raporlar" sekmesinde görüntülenip indirilebilir.</p>
+
+            <h4>Loglara nereden bakılır?</h4>
+            <p>Üç yoldan: (1) Web arayüzü → Canlı Loglar sekmesi (gerçek zamanlı), (2) <code>logs/automation.log</code> dosyası, (3) CLI'da terminal stdout çıktısı.</p>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /main -->
+</div><!-- /shell -->
+
+<!-- ── 2FA MODAL ── -->
+<div class="modal-overlay" id="mfaModal">
+  <div class="modal-box">
+    <div class="mfa-icon" id="mfaIcon">🔐</div>
+    <div class="mfa-server-label" id="mfaServerLabel">SUNUCU</div>
+    <div class="modal-title" style="text-align:center">İki Faktörlü Doğrulama</div>
+    <div class="mfa-prompt" id="mfaPrompt">Doğrulama kodunuzu girin.</div>
+    <input class="mfa-code-input" id="mfaCodeInput" type="text" maxlength="8" placeholder="000000"
+           oninput="this.value=this.value.replace(/\D/g,'')"
+           onkeydown="if(event.key==='Enter')submitMFA()">
+    <div class="mfa-timer" id="mfaTimer" style="display:none">
+      Kod <span id="mfaTimerSec">—</span> saniye içinde geçersiz olacak
+    </div>
+    <div class="btn-row" style="justify-content:center;margin-top:20px">
+      <button class="btn btn-primary" onclick="submitMFA()">✓ Onayla</button>
+      <button class="btn btn-ghost" onclick="cancelMFA()">İptal</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── CONN MFA MODAL (bağlantı testi için) ── -->
+<div class="modal-overlay" id="connMfaModal">
+  <div class="modal-box">
+    <div class="mfa-icon">🔌</div>
+    <div class="mfa-server-label" id="connMfaLabel">SUNUCU</div>
+    <div class="modal-title" style="text-align:center">Bağlantı Testi — 2FA</div>
+    <div class="mfa-prompt" id="connMfaPrompt">Bağlantı testi için 2FA kodunuzu girin.</div>
+    <input class="mfa-code-input" id="connMfaCode" type="text" maxlength="8" placeholder="000000"
+           oninput="this.value=this.value.replace(/\D/g,'')"
+           onkeydown="if(event.key==='Enter')submitConnMFA()">
+    <div class="btn-row" style="justify-content:center;margin-top:20px">
+      <button class="btn btn-primary" onclick="submitConnMFA()">Bağlan</button>
+      <button class="btn btn-ghost" onclick="closeConnMfaModal()">İptal</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast-container" id="toasts"></div>
+
+<script>
+// ── STATE ──────────────────────────────────────────────────────────
+let selectedCombos = new Set();
+let selectedScenario = 'all';
+let autoScroll = true;
+let logLineCount = 0;
+let sseSource = null;
+let pollInterval = null;
+let mfaPollInterval = null;
+let mfaTimerInterval = null;
+let connMfaServer = null; // pending conn test server
+let authMethods = { ems: 'password', gmail: 'app_password', outlook: 'password' };
+
+const PAGE_META = {
+  dashboard:  ['Dashboard', 'genel bakış'],
+  config:     ['Konfigürasyon', 'sunucu · api · parametreler'],
+  security:   ['Güvenlik & 2FA', 'kimlik doğrulama · otp · totp'],
+  runner:     ['Test Çalıştır', 'kombinasyon seç · çalıştır'],
+  logs:       ['Canlı Loglar', 'stdout akışı'],
+  results:    ['Sonuçlar', 'son test sonuçları'],
+  reports:    ['Raporlar', 'html · csv dosyaları'],
+  guide:      ['Bilgilendirme', 'kullanım kılavuzu · know-how · sss'],
+};
+
+// ── NAV ────────────────────────────────────────────────────────────
+document.querySelectorAll('.nav-item').forEach(el => {
+  el.addEventListener('click', () => {
+    const pg = el.dataset.page;
+    document.querySelectorAll('.nav-item').forEach(e => e.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(e => e.classList.remove('active'));
+    el.classList.add('active');
+    document.getElementById('page-' + pg).classList.add('active');
+    const [title, bread] = PAGE_META[pg];
+    document.getElementById('topbarTitle').textContent = title;
+    document.getElementById('topbarBread').textContent = 'mail-otomasyon / ' + bread;
+    if (pg === 'dashboard') loadDashboard();
+    if (pg === 'runner')    loadCombinations();
+    if (pg === 'results')   loadResults();
+    if (pg === 'reports')   loadReports();
+  });
+});
+
+// ── CONFIG ─────────────────────────────────────────────────────────
+async function loadConfig() {
+  const res = await fetch('/api/config').then(r => r.json());
+  if (!res.ok) { toast('Config yüklenemedi', 'err'); return; }
+  const c = res.config;
+  const set = (id, v) => { const el = document.getElementById(id); if (!el) return; el.type === 'checkbox' ? el.checked = !!v : el.value = v ?? ''; };
+  for (const s of ['ems','gmail','outlook']) {
+    const d = c[s] || {};
+    set(`${s}_smtp_host`, d.smtp_host); set(`${s}_smtp_port`, d.smtp_port);
+    set(`${s}_imap_host`, d.imap_host); set(`${s}_imap_port`, d.imap_port);
+    set(`${s}_username`, d.username);
+    set(`${s}_password`, d.password ? '••••••••' : '');
+    set(`${s}_test_address`, d.test_address); set(`${s}_label`, d.label);
+    if (s === 'ems') { set('ems_smtp_use_tls', d.smtp_use_tls); set('ems_imap_use_ssl', d.imap_use_ssl); }
+    // Auth method
+    if (d.auth_method) {
+      authMethods[s] = d.auth_method;
+      const card = document.querySelector(`#authGrid-${s} [data-method="${d.auth_method}"]`);
+      if (card) { document.querySelectorAll(`#authGrid-${s} .auth-card`).forEach(c => c.classList.remove('selected')); card.classList.add('selected'); }
+      updateMfaDetailsVisibility(s, d.auth_method);
+    }
+    if (d.mfa_method) set(`${s}_mfa_method`, d.mfa_method);
+    if (d.totp_secret) { const el = document.getElementById(`${s}_totp_secret`); if (el) el.placeholder = '(kayıtlı — değiştirmek için girin)'; }
+  }
+  const a = c.anthropic || {};
+  set('anthropic_api_key', a.api_key ? '••••••••••••' : ''); set('anthropic_model', a.model);
+  const t = c.test || {};
+  set('test_wait_seconds', t.wait_seconds); set('test_max_retries', t.max_retries);
+  set('test_retry_interval', t.retry_interval); set('test_subject_prefix', t.subject_prefix);
+  set('test_attachment_path', t.test_attachment_path); set('test_image_path', t.test_image_path);
+  set('test_csv_input', t.csv_input);
+}
+
+function buildConfig() {
+  const g = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+  const gb = id => { const el = document.getElementById(id); return el ? el.checked : false; };
+  const isPh = v => !v || v.startsWith('•');
+  const cfg = {};
+  for (const s of ['ems','gmail','outlook']) {
+    cfg[s] = {
+      smtp_host: g(`${s}_smtp_host`), smtp_port: +g(`${s}_smtp_port`),
+      smtp_use_tls: s === 'ems' ? gb('ems_smtp_use_tls') : true,
+      imap_host: g(`${s}_imap_host`), imap_port: +g(`${s}_imap_port`),
+      imap_use_ssl: s === 'ems' ? gb('ems_imap_use_ssl') : true,
+      username: g(`${s}_username`),
+      password: isPh(g(`${s}_password`)) ? '' : g(`${s}_password`),
+      test_address: g(`${s}_test_address`),
+      label: g(`${s}_label`) || s.toUpperCase(),
+      auth_method: authMethods[s] || 'password',
+      mfa_method: g(`${s}_mfa_method`) || 'totp',
+      totp_secret: isPh(g(`${s}_totp_secret`)) ? '' : g(`${s}_totp_secret`),
+    };
+  }
+  cfg.anthropic = {
+    api_key: isPh(g('anthropic_api_key')) ? '' : g('anthropic_api_key'),
+    model: g('anthropic_model'),
+  };
+  cfg.test = {
+    wait_seconds: +g('test_wait_seconds'), max_retries: +g('test_max_retries'),
+    retry_interval: +g('test_retry_interval'), subject_prefix: g('test_subject_prefix'),
+    test_attachment_path: g('test_attachment_path'), test_image_path: g('test_image_path'),
+    csv_input: g('test_csv_input'),
+    report_output: 'reports/test_report.html', results_csv: 'reports/test_results.csv',
+  };
+  cfg.logging = { level: 'INFO', file: 'logs/automation.log' };
+  return cfg;
+}
+
+async function saveConfig() {
+  const res = await fetch('/api/config', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({config: buildConfig()}),
+  }).then(r => r.json());
+  res.ok ? toast('✅ Konfigürasyon kaydedildi','ok') : toast('Kayıt hatası: '+res.error,'err');
+}
+
+async function saveSecurityConfig() {
+  await saveConfig();
+  toast('🔐 Güvenlik ayarları kaydedildi','ok');
+}
+
+function switchSrv(key, el) {
+  el.closest('.card-body').querySelectorAll('.srv-tab').forEach(t => t.classList.remove('active'));
+  el.closest('.card-body').querySelectorAll('.srv-panel').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('srv-' + key).classList.add('active');
+}
+
+function switchSecSrv(key, el) {
+  el.closest('.card-body').querySelectorAll('.srv-tab').forEach(t => t.classList.remove('active'));
+  el.closest('.card-body').querySelectorAll('.srv-panel').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('sec-' + key).classList.add('active');
+}
+
+// ── AUTH METHOD ────────────────────────────────────────────────────
+function selectAuth(srv, method, el) {
+  document.querySelectorAll(`#authGrid-${srv} .auth-card`).forEach(c => c.classList.remove('selected'));
+  el.classList.add('selected');
+  authMethods[srv] = method;
+  updateMfaDetailsVisibility(srv, method);
+}
+
+function updateMfaDetailsVisibility(srv, method) {
+  const det = document.getElementById(`mfaDetails-${srv}`);
+  if (det) det.style.display = ['totp_password','otp_only'].includes(method) ? 'block' : 'none';
+}
+
+function onMfaMethodChange(srv) {
+  const method = document.getElementById(`${srv}_mfa_method`)?.value;
+  const totpSetup = document.getElementById(`totpSetup-${srv}`);
+  if (totpSetup) totpSetup.style.display = method === 'totp' ? 'block' : 'none';
+}
+
+async function previewTotp(srv) {
+  const secret = document.getElementById(`${srv}_totp_secret`)?.value;
+  if (!secret) { toast('Secret girin','warn'); return; }
+  const res = await fetch('/api/mfa/totp-preview', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({secret}),
+  }).then(r => r.json());
+  const preview = document.getElementById(`totpPreview-${srv}`);
+  if (res.ok) {
+    preview.style.display = 'block';
+    document.getElementById(`totpCode-${srv}`).textContent = res.code;
+    document.getElementById(`totpMeta-${srv}`).textContent = `${res.remaining} saniye geçerli`;
+    setTimeout(() => preview.style.display = 'none', 30000);
+  } else {
+    toast('TOTP hatası: ' + res.error, 'err');
+  }
+}
+
+async function checkSecurity(srv) {
+  toast(`🛡 ${srv.toUpperCase()} güvenlik testi...`, 'info');
+  const res = await fetch('/api/config/test-connection', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({server: srv}),
+  }).then(r => r.json());
+  const badges = document.getElementById(`secBadges-${srv}`);
+  if (res.ok) {
+    badges.innerHTML = `
+      <span class="sec-badge green">✅ SMTP TLS: Aktif</span>
+      <span class="sec-badge green">✅ Kimlik Doğrulama: Başarılı</span>
+      <span class="sec-badge green">✅ Bağlantı: Güvenli</span>`;
+    toast(res.message, 'ok');
+  } else if (res.needs_mfa) {
+    badges.innerHTML = `<span class="sec-badge yellow">⚠ 2FA Gerekli</span>`;
+    openConnMfaModal(srv, res);
+  } else {
+    badges.innerHTML = `<span class="sec-badge red">❌ Bağlantı Başarısız</span>`;
+    toast('❌ ' + res.error, 'err');
+  }
+}
+
+async function testConn(srv) {
+  toast(`🔌 ${srv.toUpperCase()} test ediliyor...`, 'info');
+  const res = await fetch('/api/config/test-connection', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({server: srv}),
+  }).then(r => r.json());
+  if (res.ok) toast(res.message, 'ok');
+  else if (res.needs_mfa) openConnMfaModal(srv, res);
+  else toast('❌ ' + res.error, 'err');
+}
+
+async function testConnMFA(srv) { await testConn(srv); }
+
+// ── CONN MFA MODAL ─────────────────────────────────────────────────
+function openConnMfaModal(srv, res) {
+  connMfaServer = srv;
+  document.getElementById('connMfaLabel').textContent = (res.server_label || srv.toUpperCase());
+  document.getElementById('connMfaPrompt').textContent = res.error || '2FA kodu girin';
+  document.getElementById('connMfaCode').value = '';
+  document.getElementById('connMfaModal').classList.add('visible');
+  setTimeout(() => document.getElementById('connMfaCode').focus(), 100);
+}
+
+function closeConnMfaModal() {
+  document.getElementById('connMfaModal').classList.remove('visible');
+  connMfaServer = null;
+}
+
+async function submitConnMFA() {
+  const code = document.getElementById('connMfaCode').value.trim();
+  if (!code || !connMfaServer) return;
+  closeConnMfaModal();
+  toast(`🔌 ${connMfaServer.toUpperCase()} 2FA ile test ediliyor...`, 'info');
+  const res = await fetch('/api/config/test-connection', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({server: connMfaServer, mfa_code: code}),
+  }).then(r => r.json());
+  res.ok ? toast(res.message, 'ok') : toast('❌ ' + res.error, 'err');
+}
+
+// ── 2FA MODAL (test çalışırken) ────────────────────────────────────
+const MFA_ICONS = { totp:'🔐', sms:'💬', email_otp:'📧', push:'📲' };
+
+function openMFAModal(challenge) {
+  document.getElementById('mfaIcon').textContent = MFA_ICONS[challenge.method] || '🔐';
+  document.getElementById('mfaServerLabel').textContent = challenge.server_label || challenge.server_key;
+  document.getElementById('mfaPrompt').textContent = challenge.prompt;
+  document.getElementById('mfaCodeInput').value = '';
+  document.getElementById('mfaModal').classList.add('visible');
+
+  // Timer sadece TOTP için göster
+  if (challenge.method === 'totp') {
+    document.getElementById('mfaTimer').style.display = 'block';
+    let sec = 30;
+    clearInterval(mfaTimerInterval);
+    mfaTimerInterval = setInterval(() => {
+      sec--;
+      document.getElementById('mfaTimerSec').textContent = sec;
+      if (sec <= 0) { clearInterval(mfaTimerInterval); }
+    }, 1000);
+  } else {
+    document.getElementById('mfaTimer').style.display = 'none';
+  }
+  setTimeout(() => document.getElementById('mfaCodeInput').focus(), 100);
+}
+
+function closeMFAModal() {
+  document.getElementById('mfaModal').classList.remove('visible');
+  clearInterval(mfaTimerInterval);
+}
+
+async function submitMFA() {
+  const code = document.getElementById('mfaCodeInput').value.trim();
+  if (!code) { toast('Kod boş olamaz', 'warn'); return; }
+  const res = await fetch('/api/mfa/submit', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({code}),
+  }).then(r => r.json());
+  if (res.ok) { closeMFAModal(); toast('✅ Kod gönderildi, devam ediliyor...', 'ok'); }
+  else toast('❌ ' + (res.error || 'Hata'), 'err');
+}
+
+async function cancelMFA() {
+  await fetch('/api/mfa/cancel', {method:'POST'});
+  closeMFAModal();
+  toast('2FA iptal edildi — test durabilir', 'warn');
+}
+
+// MFA polling — test çalışırken 2FA bekleniyor mu?
+function startMFAPoll() {
+  clearInterval(mfaPollInterval);
+  mfaPollInterval = setInterval(async () => {
+    const res = await fetch('/api/mfa/status').then(r => r.json());
+    if (res.pending && !document.getElementById('mfaModal').classList.contains('visible')) {
+      openMFAModal(res.challenge);
+    }
+    if (!res.pending && document.getElementById('mfaModal').classList.contains('visible')) {
+      closeMFAModal();
+    }
+  }, 1500);
+}
+
+function stopMFAPoll() { clearInterval(mfaPollInterval); closeMFAModal(); }
+
+// ── COMBINATIONS ───────────────────────────────────────────────────
+let allCombinations = [];
+
+async function loadCombinations() {
+  const res = await fetch('/api/combinations').then(r => r.json());
+  if (!res.ok) { toast(res.error, 'err'); return; }
+  allCombinations = res.combinations;
+  renderComboGrid(allCombinations);
+  renderDashCombos(allCombinations);
+}
+
+function renderComboGrid(combos) {
+  document.getElementById('comboGrid').innerHTML = combos.map(c => `
+    <div class="combo-card ${selectedCombos.has(c.index)||selectedCombos.has('all')?'selected':''}"
+         onclick="toggleCombo(${c.index},this)">
+      <div class="combo-label">🔀 ${c.label}</div>
+      <div class="combo-meta">Alan: <b>${c.receiver_server}</b>/${c.receiver_client}<br>Gönderen: <b>${c.sender_server}</b>/${c.sender_client}</div>
+      <span class="combo-badge">${c.step_count} adım</span>
+    </div>`).join('');
+}
+
+function renderDashCombos(combos) {
+  const el = document.getElementById('dashCombosTable');
+  if (!combos.length) { el.textContent = 'CSV yüklenemedi.'; return; }
+  el.innerHTML = `<table class="results-table">
+    <thead><tr><th>#</th><th>Kombinasyon</th><th>Alan</th><th>Gönderen</th><th>Adım</th></tr></thead>
+    <tbody>${combos.map(c => `<tr>
+      <td style="color:var(--muted);font-family:var(--mono)">${c.index+1}</td>
+      <td>${c.label}</td>
+      <td style="font-family:var(--mono);font-size:12px">${c.receiver_server}/${c.receiver_client}</td>
+      <td style="font-family:var(--mono);font-size:12px">${c.sender_server}/${c.sender_client}</td>
+      <td style="font-family:var(--mono);color:var(--accent)">${c.step_count}</td>
+    </tr>`).join('')}</tbody></table>`;
+  document.getElementById('st-combos').textContent = combos.length;
+}
+
+function toggleCombo(idx, el) { selectedCombos.has(idx) ? selectedCombos.delete(idx) : selectedCombos.add(idx); el.classList.toggle('selected'); }
+function selectAllCombos() { selectedCombos.clear(); selectedCombos.add('all'); document.querySelectorAll('.combo-card').forEach(e => e.classList.add('selected')); }
+function clearCombos() { selectedCombos.clear(); document.querySelectorAll('.combo-card').forEach(e => e.classList.remove('selected')); }
+
+document.querySelectorAll('.pill:not(.disabled)').forEach(p => {
+  p.addEventListener('click', () => {
+    document.querySelectorAll('.pill').forEach(x => x.classList.remove('selected'));
+    p.classList.add('selected'); selectedScenario = p.dataset.sc;
+  });
+});
+
+// ── RUNNER ─────────────────────────────────────────────────────────
+async function startRun() {
+  const body = { dry_run: document.getElementById('runMode').value === 'dry_run' };
+  if (!selectedCombos.has('all') && selectedCombos.size > 0) body.combo = [...selectedCombos][0];
+  if (selectedScenario !== 'all') body.scenario = selectedScenario;
+  const res = await fetch('/api/run/start', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body),
+  }).then(r => r.json());
+  if (!res.ok) { toast('❌ '+res.error,'err'); return; }
+  toast('▶ Test başlatıldı', 'ok');
+  setRunningUI(true);
+  startLogStream();
+  startStatusPoll();
+  startMFAPoll();
+  document.querySelector('[data-page="logs"]').click();
+}
+
+async function stopRun() {
+  await fetch('/api/run/stop', {method:'POST'});
+  toast('■ Durduruldu', 'info');
+  setRunningUI(false); stopMFAPoll();
+}
+
+async function quickRun() {
+  const res = await fetch('/api/run/start', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:'{}',
+  }).then(r => r.json());
+  if (!res.ok) { toast('❌ '+res.error,'err'); return; }
+  toast('▶ Tüm testler başlatıldı', 'ok');
+  setRunningUI(true); startLogStream(); startStatusPoll(); startMFAPoll();
+  document.querySelector('[data-page="logs"]').click();
+}
+
+function setRunningUI(running) {
+  document.getElementById('runBtn').disabled = running;
+  document.getElementById('stopBtn2').style.display = running ? 'inline-flex' : 'none';
+  document.getElementById('topStopBtn').style.display = running ? 'inline-flex' : 'none';
+  document.getElementById('quickRunBtn').style.display = running ? 'none' : 'inline-flex';
+  document.getElementById('runProgress').style.display = running ? 'block' : 'none';
+  const dot = document.getElementById('sidebarDot');
+  dot.className = 'status-dot' + (running ? ' running' : '');
+  document.getElementById('sidebarStatus').textContent = running ? 'Çalışıyor...' : 'Beklemede';
+  if (running) animateProgress();
+}
+
+let progressAnim = null;
+function animateProgress() {
+  let pct = 0; clearInterval(progressAnim);
+  progressAnim = setInterval(() => {
+    pct = Math.min(pct + Math.random()*2, 90);
+    document.getElementById('progressFill').style.width = pct+'%';
+    document.getElementById('runProgressLabel').textContent = `Çalışıyor... (${Math.round(pct)}%)`;
+  }, 800);
+}
+
+function finishProgress(ok) {
+  clearInterval(progressAnim);
+  const fill = document.getElementById('progressFill');
+  fill.style.width='100%'; fill.style.background = ok ? 'var(--accent2)' : 'var(--danger)';
+  document.getElementById('runProgressLabel').textContent = ok ? '✅ Tamamlandı' : '❌ Hata ile sonlandı';
+}
+
+// ── LOGS ───────────────────────────────────────────────────────────
+function startLogStream() {
+  if (sseSource) sseSource.close();
+  document.getElementById('terminalBody').innerHTML = ''; logLineCount = 0;
+  sseSource = new EventSource('/api/run/logs');
+  sseSource.onmessage = e => {
+    const d = JSON.parse(e.data);
+    if (d.type === 'ping') return;
+    if (d.type === 'done') { sseSource.close(); return; }
+    appendLog(d.text);
+  };
+}
+
+function appendLog(line) {
+  const body = document.getElementById('terminalBody');
+  const div = document.createElement('div');
+  div.className = 'log-line ' + classifyLog(line);
+  div.textContent = line;
+  body.appendChild(div); logLineCount++;
+  document.getElementById('logCount').textContent = logLineCount + ' satır';
+  if (autoScroll) body.scrollTop = body.scrollHeight;
+}
+
+function classifyLog(l) {
+  if (/✅|PASS|başarılı/i.test(l)) return 'ok';
+  if (/❌|ERROR|FAIL|hata/i.test(l)) return 'error';
+  if (/WARN|⚠|MFA|2FA/i.test(l)) return 'warn';
+  if (/DEBUG/i.test(l)) return 'dim';
+  return 'info';
+}
+
+function clearLogs() { document.getElementById('terminalBody').innerHTML='<div class="log-line dim">// Temizlendi</div>'; logLineCount=0; document.getElementById('logCount').textContent='0 satır'; }
+function toggleAutoScroll() { autoScroll=!autoScroll; document.getElementById('autoScrollState').textContent = autoScroll?'ON':'OFF'; }
+
+// ── STATUS POLL ────────────────────────────────────────────────────
+function startStatusPoll() {
+  clearInterval(pollInterval);
+  pollInterval = setInterval(async () => {
+    const res = await fetch('/api/run/status').then(r => r.json());
+    if (!res.running) {
+      clearInterval(pollInterval); setRunningUI(false); stopMFAPoll();
+      finishProgress(res.exit_code === 0);
+      res.exit_code === 0 ? toast('✅ Test tamamlandı','ok') : toast(`⚠️ Test bitti (kod: ${res.exit_code})`,'err');
+      loadResults();
+    }
+  }, 2000);
+}
+
+// ── RESULTS ────────────────────────────────────────────────────────
+async function loadResults() {
+  const res = await fetch('/api/results/latest').then(r => r.json());
+  const tbody = document.getElementById('resultsBody');
+  if (!res.ok) { tbody.innerHTML='<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:32px">Henüz sonuç yok.</td></tr>'; return; }
+  const rows=res.results, total=rows.length, pass=rows.filter(r=>r['Sonuç']==='PASS').length;
+  const fail=total-pass, rate=total?Math.round(pass/total*100):0;
+  document.getElementById('resultStats').style.display='flex';
+  ['rs-total','rs-pass','rs-fail','rs-rate'].forEach((id,i)=>{
+    document.getElementById(id).textContent = [total,pass,fail,rate+'%'][i];
+  });
+  ['st-total','st-pass','st-fail','st-rate'].forEach((id,i)=>{
+    document.getElementById(id).textContent = [total,pass,fail,rate+'%'][i];
+  });
+  tbody.innerHTML = rows.map(r => {
+    const ok = r['Sonuç']==='PASS';
+    const conf = r['Güven Seviyesi']||'';
+    const confColor = conf==='HIGH'?'accent2':conf==='MEDIUM'?'warn':'danger';
+    return `<tr>
+      <td>${ok?'<span class="badge-pass">PASS</span>':'<span class="badge-fail">FAIL</span>'}</td>
+      <td style="font-size:12px;font-family:var(--mono)">${r['Kombinasyon']||''}</td>
+      <td>${r['Senaryo Tipi']||''}</td>
+      <td><span style="font-family:var(--mono);font-size:11px;color:var(--${confColor})">${conf}</span></td>
+      <td style="font-size:12px;color:var(--muted)">${(r['Özet']||'').slice(0,80)}</td>
+      <td style="font-size:11px;font-family:var(--mono);color:var(--muted)">${r['Test Zamanı']||''}</td>
+    </tr>`;
+  }).join('');
+  renderDashResults(rows.slice(0,5));
+}
+
+function renderDashResults(rows) {
+  if (!rows.length) return;
+  document.getElementById('dashResults').innerHTML = `<table class="results-table">
+    <thead><tr><th>Sonuç</th><th>Kombinasyon</th><th>Senaryo</th><th>Özet</th></tr></thead>
+    <tbody>${rows.map(r=>`<tr>
+      <td>${r['Sonuç']==='PASS'?'<span class="badge-pass">PASS</span>':'<span class="badge-fail">FAIL</span>'}</td>
+      <td style="font-size:12px;font-family:var(--mono)">${r['Kombinasyon']||''}</td>
+      <td style="font-size:12px">${r['Senaryo Tipi']||''}</td>
+      <td style="font-size:12px;color:var(--muted)">${(r['Özet']||'').slice(0,60)}</td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+// ── REPORTS ────────────────────────────────────────────────────────
+async function loadReports() {
+  const res = await fetch('/api/reports').then(r=>r.json());
+  const list = document.getElementById('reportList');
+  if (!res.reports.length) { list.innerHTML='<div style="color:var(--muted);font-size:13px">Henüz rapor yok.</div>'; return; }
+  list.innerHTML = res.reports.map(r=>`<div class="report-item">
+    <div><div class="report-name">${r.name}</div><div class="report-meta">${r.mtime} · ${(r.size/1024).toFixed(1)} KB · ${r.type.toUpperCase()}</div></div>
+    <div style="display:flex;gap:8px">
+      ${r.type==='html'?`<button class="btn btn-ghost btn-sm" onclick="openReport('${r.name}')">👁 Görüntüle</button>`:''}
+      <a class="btn btn-ghost btn-sm" href="/api/reports/${r.name}" download>⬇ İndir</a>
+    </div>
+  </div>`).join('');
+}
+
+function openReport(name) {
+  document.getElementById('reportViewer').style.display='block';
+  document.getElementById('reportViewerTitle').textContent=name;
+  document.getElementById('reportFrame').src='/api/reports/'+name;
+  document.getElementById('reportViewer').scrollIntoView({behavior:'smooth'});
+}
+function closeReport() { document.getElementById('reportViewer').style.display='none'; document.getElementById('reportFrame').src=''; }
+
+// ── TOAST ──────────────────────────────────────────────────────────
+function toast(msg, type='info') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`; el.innerHTML = `<span>${msg}</span>`;
+  document.getElementById('toasts').appendChild(el);
+  setTimeout(()=>el.remove(), 4500);
+}
+
+// ── DASHBOARD ──────────────────────────────────────────────────────
+async function loadDashboard() { await loadCombinations(); await loadResults(); }
+function refreshAll() { loadConfig(); loadDashboard(); toast('↻ Yenilendi','info'); }
+
+// ── INIT ───────────────────────────────────────────────────────────
+loadConfig();
+loadDashboard();
+</script>
+</body>
+</html>
