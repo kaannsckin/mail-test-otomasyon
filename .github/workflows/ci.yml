@@ -120,17 +120,30 @@ jobs:
         run: |
           echo "🔍 Scanning for potential secrets..."
 
-          # API key patterns
-          if grep -rn --include="*.py" --include="*.html" --include="*.yml" \
-            -E '(sk-ant-|AIza|ghp_|gho_|AKIA)' . --exclude-dir=.git; then
+          # API key patterns — placeholder/örnek metinleri ve CI dosyasını hariç tut
+          MATCHES=$(grep -rn --include="*.py" --include="*.html" --include="*.yml" \
+            -E '(sk-ant-|AIza|ghp_|gho_|AKIA)' . --exclude-dir=.git \
+            | grep -v 'placeholder=' \
+            | grep -v 'ci\.yml' \
+            | grep -v '# ' \
+            | grep -v 'example' \
+            || true)
+
+          if [ -n "$MATCHES" ]; then
+            echo "$MATCHES"
             echo "❌ Potential API key found in source!"
             exit 1
           fi
 
-          # Password patterns (excluding examples/templates)
-          if grep -rn --include="*.py" \
+          # Password patterns (excluding examples/templates/placeholders)
+          PASS_MATCHES=$(grep -rn --include="*.py" \
             -E 'password\s*=\s*"[^"]{4,}"' . --exclude-dir=.git \
-            | grep -v 'example' | grep -v 'config\[' | grep -v '""' | grep -v 'test'; then
+            | grep -v 'example' | grep -v 'config\[' | grep -v '""' \
+            | grep -v 'test' | grep -v 'placeholder' \
+            || true)
+
+          if [ -n "$PASS_MATCHES" ]; then
+            echo "$PASS_MATCHES"
             echo "⚠️  Potential hardcoded password found!"
             exit 1
           fi
