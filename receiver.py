@@ -4,6 +4,7 @@ receiver.py — IMAP üzerinden mesajı polling ile bekler ve ham içeriği dön
 
 import imaplib
 import email
+import ssl
 import time
 import logging
 from email.header import decode_header
@@ -21,9 +22,18 @@ class MailReceiver:
         self.username = server_config["username"]
         self.password = server_config["password"]
 
-    def _connect(self) -> imaplib.IMAP4_SSL:
+    def _make_ssl_ctx(self) -> ssl.SSLContext:
+        """Self-signed / internal cert desteği. imap_verify_ssl: false → doğrulama atla."""
+        verify = self.config.get("imap_verify_ssl", False)
+        ctx = ssl.create_default_context()
+        if not verify:
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+
+    def _connect(self):
         if self.use_ssl:
-            imap = imaplib.IMAP4_SSL(self.host, self.port)
+            imap = imaplib.IMAP4_SSL(self.host, self.port, ssl_context=self._make_ssl_ctx())
         else:
             imap = imaplib.IMAP4(self.host, self.port)
         imap.login(self.username, self.password)
@@ -111,7 +121,7 @@ class MailReceiver:
                 "transfer_encoding": part.get("Content-Transfer-Encoding", ""),
             }
 
-            if "attachment" in disposition:
+            if "attachment" in disposition.lower():
                 filename = part.get_filename() or ""
                 payload = part.get_payload(decode=True)
                 result["attachments"].append({
@@ -120,7 +130,14 @@ class MailReceiver:
                     "size": len(payload) if payload else 0,
                     "payload_sample": payload[:64] if payload else None,
                 })
-            elif content_id and "inline" in disposition:
+            elif content_id and (
+                # Content-ID + inline disposition (ideal case)
+                "inline" in disposition.lower()
+                # Content-ID + image type but server stripped Content-Disposition (Gmail etc.)
+                or content_type.startswith("image/")
+                # Content-ID with no disposition set at all
+                or (not disposition and content_id)
+            ):
                 payload = part.get_payload(decode=True)
                 result["inline_images"].append({
                     **part_info,

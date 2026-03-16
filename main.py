@@ -25,6 +25,7 @@ from csv_parser import parse_csv, TestCombination
 from sender import MailSender
 from receiver import MailReceiver
 from analyzer import MailAnalyzer
+from llm_provider import create_provider
 from reporter import generate_html_report, generate_csv_results
 from message_templates import (
     get_template,
@@ -466,6 +467,8 @@ def main():
     parser.add_argument("--scenario", default=None,
                         help="Sadece belirtilen senaryo tipini çalıştır "
                              "(plain_text|attachment|inline_image|smime|reply_chain)")
+    parser.add_argument("--mode", default=None, choices=["active", "passive"],
+                        help="Analyzer modu: active (otomatik LLM) veya passive (manuel doğrulama)")
     parser.add_argument("--dry-run", action="store_true", help="Bağlantı testi, mail gönderme")
     args = parser.parse_args()
 
@@ -501,55 +504,151 @@ def main():
 
     # Dry-run
     if args.dry_run:
+        import imaplib, ssl as _ssl
         logger.info("DRY RUN — Bağlantı testleri:")
+        logger.info("-" * 50)
+        tested = set()
         for combo in combinations:
             for server_name in {combo.sender_server, combo.receiver_server}:
+                if server_name in tested:
+                    continue
+                tested.add(server_name)
                 try:
                     sc = get_server_config(config, server_name)
-                    sender = MailSender(sc)
-                    conn = sender._connect()
+                except ValueError as e:
+                    logger.error(f"  ❌ CONFIG: {server_name} — {e}")
+                    continue
+
+                # SMTP testi
+                smtp_host = sc.get("smtp_host","?")
+                smtp_port = sc.get("smtp_port","?")
+                smtp_mode = "SSL" if sc.get("smtp_use_ssl") else ("STARTTLS" if sc.get("smtp_use_tls", True) else "PLAIN")
+                try:
+                    sender_obj = MailSender(sc)
+                    conn = sender_obj._connect()
                     conn.quit()
-                    logger.info(f"  ✅ SMTP OK: {server_name} ({sc['smtp_host']})")
+                    logger.info(f"  ✅ SMTP  OK : {server_name} ({smtp_host}:{smtp_port} {smtp_mode})")
                 except Exception as e:
-                    logger.error(f"  ❌ SMTP FAIL: {server_name} — {e}")
+                    logger.error(f"  ❌ SMTP FAIL: {server_name} ({smtp_host}:{smtp_port} {smtp_mode}) — {e}")
+
+                # IMAP testi
+                imap_host = sc.get("imap_host","?")
+                imap_port = sc.get("imap_port","?")
+                imap_ssl  = sc.get("imap_use_ssl", True)
+                try:
+                    ssl_ctx = _ssl.create_default_context()
+                    if not sc.get("imap_verify_ssl", False):
+                        ssl_ctx.check_hostname = False
+                        ssl_ctx.verify_mode = _ssl.CERT_NONE
+                    if imap_ssl:
+                        imap = imaplib.IMAP4_SSL(imap_host, imap_port, ssl_context=ssl_ctx)
+                    else:
+                        imap = imaplib.IMAP4(imap_host, imap_port)
+                    imap.login(sc["username"], sc["password"])
+                    imap.logout()
+                    logger.info(f"  ✅ IMAP  OK : {server_name} ({imap_host}:{imap_port} {'SSL' if imap_ssl else 'PLAIN'})")
+                except Exception as e:
+                    logger.error(f"  ❌ IMAP FAIL: {server_name} ({imap_host}:{imap_port}) — {e}")
+
+        logger.info("-" * 50)
         return
 
-    # Analiz için Claude
-    anthropic_cfg = config.get("anthropic", {})
-    analyzer = MailAnalyzer(api_key=anthropic_cfg.get("api_key", ""))
+    # Analyzer mode (aktif/pasif)
+    analyzer_mode = args.mode or config.get("test", {}).get("analyzer_mode", "active")
+
+    if analyzer_mode == "passive":
+        # Pasif modda LLM provider gereksiz — API key istemeden devam et
+        analyzer = MailAnalyzer(provider=None, mode="passive")
+        logger.info("⚙️  Analyzer Mode: PASİF (Manuel Doğrulama)")
+        logger.info("    → CLI'da interactive input veya App üzerinden onay beklenir")
+    else:
+        # Aktif modda LLM Provider setup (Claude veya Google Gemini)
+        llm_cfg = config.get("llm", {})
+        provider_type = llm_cfg.get("provider", "google").lower()
+
+        if provider_type == "claude":
+            provider_cfg = llm_cfg.get("anthropic", {})
+            api_key = provider_cfg.get("api_key", "")
+            model = provider_cfg.get("model", "claude-sonnet-4-20250514")
+            if not api_key:
+                logger.error("Anthropic API key eksik. config.yaml'ı kontrol edin.")
+                sys.exit(1)
+        elif provider_type == "google":
+            provider_cfg = llm_cfg.get("google", {})
+            api_key = provider_cfg.get("api_key", "")
+            model = provider_cfg.get("model", "gemini-2.0-flash")
+            if not api_key:
+                logger.error("Google API key eksik. config.yaml'ı kontrol edin.")
+                sys.exit(1)
+        else:
+            logger.error(f"Bilinmeyen provider: {provider_type}")
+            sys.exit(1)
+
+        try:
+            provider = create_provider(provider_type, api_key, model)
+            analyzer = MailAnalyzer(provider, mode="active")
+            logger.info(f"✅ LLM Provider: {provider_type.upper()} ({model})")
+        except Exception as e:
+            logger.error(f"LLM Provider başlatma hatası: {e}")
+            sys.exit(1)
 
     all_results = []
     Path("reports").mkdir(exist_ok=True)
 
     for combo_idx, combo in enumerate(combinations):
         logger.info(f"\n{'='*60}")
-        logger.info(f"Kombinasyon [{combo_idx+1}/{len(combinations)}]: {combo.label}")
+        logger.info(f"KOMBİNASYON [{combo_idx+1}/{len(combinations)}]: {combo.label}")
+        logger.info(f"  Gönderici : {combo.sender_server} / {combo.sender_client}")
+        logger.info(f"  Alıcı     : {combo.receiver_server} / {combo.receiver_client}")
+        logger.info(f"  Senaryo   : {len(combo.scenarios)} senaryo")
         logger.info(f"{'='*60}")
 
         # Sender/Receiver kurulumu
         try:
-            sender_config = get_server_config(config, combo.sender_server)
+            sender_config   = get_server_config(config, combo.sender_server)
             receiver_config = get_server_config(config, combo.receiver_server)
         except ValueError as e:
             logger.error(f"Config hatası: {e} — kombinasyon atlanıyor.")
             continue
 
-        sender = MailSender(sender_config)
+        logger.info(f"  SMTP → {sender_config.get('smtp_host')}:{sender_config.get('smtp_port')}"
+                    f"  (ssl={sender_config.get('smtp_use_ssl', False)}, tls={sender_config.get('smtp_use_tls', True)})")
+        logger.info(f"  IMAP → {receiver_config.get('imap_host')}:{receiver_config.get('imap_port')}")
+
+        sender   = MailSender(sender_config)
         receiver = MailReceiver(receiver_config)
 
         scenarios_to_run = list(combo.scenarios.keys())
         if args.scenario:
             scenarios_to_run = [s for s in scenarios_to_run if s == args.scenario]
 
-        for sc_key in scenarios_to_run:
+        sc_total = len(scenarios_to_run)
+        for sc_idx, sc_key in enumerate(scenarios_to_run):
+            logger.info(f"\n  ── Senaryo [{sc_idx+1}/{sc_total}]: {sc_key} ──")
+            t_sc_start = time.time()
             try:
                 result = run_scenario(
                     sc_key, combo, combo_idx, sender, receiver, analyzer, test_config,
                 )
                 all_results.append(result)
+                elapsed = time.time() - t_sc_start
+                status  = "✅ PASS" if result.get("analysis", {}).get("passed") else \
+                          ("⏭ SKIP" if result.get("skipped") else "❌ FAIL")
+                logger.info(f"  {status} — {sc_key} ({elapsed:.1f}s)")
+
+                # Detaylı kontrol listesi
+                checks = result.get("analysis", {}).get("checks", [])
+                for chk in checks:
+                    chk_icon = "  ✓" if chk.get("passed") else "  ✗"
+                    logger.info(f"    {chk_icon} {chk.get('name','?')}: {chk.get('detail','')[:120]}")
+
+                issues = result.get("analysis", {}).get("issues", [])
+                for issue in issues:
+                    logger.warning(f"    ⚠ {issue}")
+
                 time.sleep(3)
             except Exception as e:
-                logger.error(f"Beklenmeyen hata ({sc_key}): {e}", exc_info=True)
+                logger.error(f"  Beklenmeyen hata ({sc_key}): {e}", exc_info=True)
 
     # Raporla
     if all_results:
