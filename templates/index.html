@@ -126,6 +126,16 @@ input.has-value{border-color:rgba(0,255,148,.4)}
 .combo-meta{font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.8}
 .combo-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;font-family:var(--mono);background:rgba(0,212,255,.1);color:var(--accent);margin-top:6px}
 
+/* VERIFICATION CARD */
+.verify-item{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:12px;animation:fadeIn .25s ease}
+.verify-item-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.verify-item-title{font-size:13px;font-weight:700;color:var(--text)}
+.verify-item-scenario{font-size:11px;font-family:var(--mono);padding:2px 8px;border-radius:4px;background:rgba(0,212,255,.1);color:var(--accent)}
+.verify-meta{font-size:11px;font-family:var(--mono);color:var(--muted);line-height:1.8;margin-bottom:12px}
+.verify-actions{display:flex;gap:8px;align-items:center}
+.verify-actions .btn{min-width:100px;justify-content:center}
+.verify-issue-input{margin-top:8px;display:none}
+
 /* PILLS */
 .scenario-pills{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
 .pill{padding:6px 14px;border-radius:999px;cursor:pointer;font-size:12px;font-weight:600;border:1px solid var(--border);color:var(--muted);transition:all .15s}
@@ -315,10 +325,10 @@ input.has-value{border-color:rgba(0,255,148,.4)}
           <!-- Gmail -->
           <div class="srv-panel" id="srv-gmail">
             <div class="form-grid">
-              <div class="form-group"><label>SMTP Host</label><input id="gmail_smtp_host" value="smtp.gmail.com"></div>
-              <div class="form-group"><label>SMTP Port</label><input id="gmail_smtp_port" type="number" value="587"></div>
-              <div class="form-group"><label>IMAP Host</label><input id="gmail_imap_host" value="imap.gmail.com"></div>
-              <div class="form-group"><label>IMAP Port</label><input id="gmail_imap_port" type="number" value="993"></div>
+              <div class="form-group"><label>SMTP Host</label><input id="gmail_smtp_host" placeholder="smtp.gmail.com"></div>
+              <div class="form-group"><label>SMTP Port</label><input id="gmail_smtp_port" type="number" placeholder="587"></div>
+              <div class="form-group"><label>IMAP Host</label><input id="gmail_imap_host" placeholder="imap.gmail.com"></div>
+              <div class="form-group"><label>IMAP Port</label><input id="gmail_imap_port" type="number" placeholder="993"></div>
               <div class="form-group"><label>Gmail Adresi</label><input id="gmail_username" placeholder="test@gmail.com"></div>
               <div class="form-group"><label>App Password</label><input id="gmail_password" type="password" placeholder="xxxx xxxx xxxx xxxx"></div>
               <div class="form-group full"><label>Test Adresi</label><input id="gmail_test_address" placeholder="test@gmail.com"></div>
@@ -328,10 +338,10 @@ input.has-value{border-color:rgba(0,255,148,.4)}
           <!-- Outlook -->
           <div class="srv-panel" id="srv-outlook">
             <div class="form-grid">
-              <div class="form-group"><label>SMTP Host</label><input id="outlook_smtp_host" value="smtp.office365.com"></div>
-              <div class="form-group"><label>SMTP Port</label><input id="outlook_smtp_port" type="number" value="587"></div>
-              <div class="form-group"><label>IMAP Host</label><input id="outlook_imap_host" value="outlook.office365.com"></div>
-              <div class="form-group"><label>IMAP Port</label><input id="outlook_imap_port" type="number" value="993"></div>
+              <div class="form-group"><label>SMTP Host</label><input id="outlook_smtp_host" placeholder="smtp.office365.com"></div>
+              <div class="form-group"><label>SMTP Port</label><input id="outlook_smtp_port" type="number" placeholder="587"></div>
+              <div class="form-group"><label>IMAP Host</label><input id="outlook_imap_host" placeholder="outlook.office365.com"></div>
+              <div class="form-group"><label>IMAP Port</label><input id="outlook_imap_port" type="number" placeholder="993"></div>
               <div class="form-group"><label>Kullanıcı Adı</label><input id="outlook_username" placeholder="test@sirket.onmicrosoft.com"></div>
               <div class="form-group"><label>Şifre</label><input id="outlook_password" type="password" placeholder="••••••••"></div>
               <div class="form-group full"><label>Test Adresi</label><input id="outlook_test_address"></div>
@@ -342,16 +352,50 @@ input.has-value{border-color:rgba(0,255,148,.4)}
       </div>
 
       <div class="card">
-        <div class="card-header"><span class="card-title">🤖 Claude API</span></div>
+        <div class="card-header">
+          <span class="card-title">🤖 LLM Analiz Motoru</span>
+          <span class="sec-badge gray" id="llmProviderBadge">—</span>
+        </div>
         <div class="card-body">
-          <div class="form-grid">
-            <div class="form-group full"><label>API Key</label><input id="anthropic_api_key" type="password" placeholder="sk-ant-api03-..."></div>
-            <div class="form-group"><label>Model</label>
-              <select id="anthropic_model">
-                <option value="claude-sonnet-4-20250514">claude-sonnet-4 (Önerilen)</option>
-                <option value="claude-opus-4-20250514">claude-opus-4 (Güçlü)</option>
-                <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 (Hızlı)</option>
-              </select>
+          <div class="form-group" style="margin-bottom:16px">
+            <label>Provider Seçimi</label>
+            <select id="llm_provider" onchange="onLLMProviderChange()">
+              <option value="google">Google Gemini (Ücretsiz)</option>
+              <option value="claude">Anthropic Claude (Ücretli)</option>
+            </select>
+          </div>
+
+          <!-- Google Gemini Panel -->
+          <div id="llmPanelGoogle">
+            <div style="padding:10px 14px;background:rgba(0,255,148,.08);border:1px solid rgba(0,255,148,.25);border-radius:8px;font-size:12px;color:var(--accent2);margin-bottom:14px">
+              ✨ <b>Ücretsiz:</b> Google AI Studio'dan API key alın → <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--accent);text-decoration:underline">aistudio.google.com/apikey</a>
+            </div>
+            <div class="form-grid">
+              <div class="form-group full"><label>Google API Key</label><input id="google_api_key" type="password" placeholder="AIzaSy..."></div>
+              <div class="form-group"><label>Model</label>
+                <select id="google_model">
+                  <option value="gemini-2.0-flash">gemini-2.0-flash (Hızlı, Ücretsiz)</option>
+                  <option value="gemini-1.5-pro">gemini-1.5-pro (Güçlü)</option>
+                  <option value="gemini-1.5-flash">gemini-1.5-flash (Hafif)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Claude Panel -->
+          <div id="llmPanelClaude" style="display:none">
+            <div style="padding:10px 14px;background:rgba(255,184,0,.08);border:1px solid rgba(255,184,0,.25);border-radius:8px;font-size:12px;color:var(--warn);margin-bottom:14px">
+              💰 <b>Ücretli:</b> Anthropic Console'dan API key alın → <a href="https://console.anthropic.com" target="_blank" style="color:var(--accent);text-decoration:underline">console.anthropic.com</a>
+            </div>
+            <div class="form-grid">
+              <div class="form-group full"><label>Anthropic API Key</label><input id="anthropic_api_key" type="password" placeholder="sk-ant-api03-..."></div>
+              <div class="form-group"><label>Model</label>
+                <select id="anthropic_model">
+                  <option value="claude-sonnet-4-20250514">claude-sonnet-4 (Önerilen)</option>
+                  <option value="claude-opus-4-20250514">claude-opus-4 (Güçlü)</option>
+                  <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 (Hızlı)</option>
+                </select>
+              </div>
             </div>
           </div>
         </div>
@@ -628,12 +672,22 @@ input.has-value{border-color:rgba(0,255,148,.4)}
         <div class="card-body">
           <div class="form-grid">
             <div class="form-group">
-              <label>Mod</label>
+              <label>Çalıştırma Modu</label>
               <select id="runMode">
                 <option value="normal">Normal (Mail Gönder + Analiz Et)</option>
                 <option value="dry_run">Dry Run (Sadece Bağlantı Testi)</option>
               </select>
             </div>
+            <div class="form-group">
+              <label>Analyzer Modu</label>
+              <select id="analyzerMode" onchange="onAnalyzerModeChange()">
+                <option value="active">Aktif (Otomatik LLM Analizi)</option>
+                <option value="passive">Pasif (Manuel Doğrulama)</option>
+              </select>
+            </div>
+          </div>
+          <div id="analyzerModeInfo" style="display:none;margin-top:12px;padding:12px 16px;background:rgba(255,184,0,.08);border:1px solid rgba(255,184,0,.25);border-radius:8px;font-size:12px;color:var(--warn)">
+            ⚡ <b>Pasif Mod:</b> LLM API kullanılmaz. Her test sonucu için app üzerinden manuel onay beklenir. API key gerekmez.
           </div>
           <div class="btn-row">
             <button class="btn btn-success" id="runBtn" onclick="startRun()">▶ Testi Başlat</button>
@@ -643,6 +697,17 @@ input.has-value{border-color:rgba(0,255,148,.4)}
             <div style="font-size:12px;color:var(--muted);margin-bottom:6px" id="runProgressLabel">Çalışıyor...</div>
             <div class="progress-bar-bg"><div class="progress-bar-fill" id="progressFill" style="width:0%"></div></div>
           </div>
+        </div>
+      </div>
+
+      <!-- PASIF MOD: Manuel Doğrulama Paneli -->
+      <div class="card" id="verificationCard" style="display:none">
+        <div class="card-header">
+          <span class="card-title">✋ Manuel Doğrulama Bekliyor</span>
+          <span class="sec-badge yellow" id="verifyBadge">BEKLİYOR</span>
+        </div>
+        <div class="card-body" id="verificationBody">
+          <div style="color:var(--muted);font-size:13px">Henüz doğrulama yok...</div>
         </div>
       </div>
     </div>
@@ -1196,8 +1261,16 @@ async function loadConfig() {
     if (d.mfa_method) set(`${s}_mfa_method`, d.mfa_method);
     if (d.totp_secret) { const el = document.getElementById(`${s}_totp_secret`); if (el) el.placeholder = '(kayıtlı — değiştirmek için girin)'; }
   }
-  const a = c.anthropic || {};
-  set('anthropic_api_key', a.api_key ? '••••••••••••' : ''); set('anthropic_model', a.model);
+  // LLM Provider
+  const llm = c.llm || {};
+  set('llm_provider', llm.provider || 'google');
+  onLLMProviderChange();
+  const anth = llm.anthropic || c.anthropic || {};
+  set('anthropic_api_key', anth.api_key && !anth.api_key.startsWith('BURAYA') ? '••••••••••••' : '');
+  set('anthropic_model', anth.model);
+  const goog = llm.google || {};
+  set('google_api_key', goog.api_key && !goog.api_key.startsWith('BURAYA') ? '••••••••••••' : '');
+  set('google_model', goog.model || 'gemini-2.0-flash');
   const t = c.test || {};
   set('test_wait_seconds', t.wait_seconds); set('test_max_retries', t.max_retries);
   set('test_retry_interval', t.retry_interval); set('test_subject_prefix', t.subject_prefix);
@@ -1208,13 +1281,15 @@ async function loadConfig() {
 function buildConfig() {
   const g = id => { const el = document.getElementById(id); return el ? el.value : ''; };
   const gb = id => { const el = document.getElementById(id); return el ? el.checked : false; };
+  const gport = (id, def) => { const v = +g(id); return v > 0 ? v : def; };
   const isPh = v => !v || v.startsWith('•');
   const cfg = {};
   for (const s of ['ems','gmail','outlook']) {
     cfg[s] = {
-      smtp_host: g(`${s}_smtp_host`), smtp_port: +g(`${s}_smtp_port`),
+      smtp_host: g(`${s}_smtp_host`), smtp_port: gport(`${s}_smtp_port`, 587),
       smtp_use_tls: s === 'ems' ? gb('ems_smtp_use_tls') : true,
-      imap_host: g(`${s}_imap_host`), imap_port: +g(`${s}_imap_port`),
+      smtp_use_ssl: false,
+      imap_host: g(`${s}_imap_host`), imap_port: gport(`${s}_imap_port`, 993),
       imap_use_ssl: s === 'ems' ? gb('ems_imap_use_ssl') : true,
       username: g(`${s}_username`),
       password: isPh(g(`${s}_password`)) ? '' : g(`${s}_password`),
@@ -1225,9 +1300,16 @@ function buildConfig() {
       totp_secret: isPh(g(`${s}_totp_secret`)) ? '' : g(`${s}_totp_secret`),
     };
   }
-  cfg.anthropic = {
-    api_key: isPh(g('anthropic_api_key')) ? '' : g('anthropic_api_key'),
-    model: g('anthropic_model'),
+  cfg.llm = {
+    provider: g('llm_provider'),
+    anthropic: {
+      api_key: isPh(g('anthropic_api_key')) ? '' : g('anthropic_api_key'),
+      model: g('anthropic_model'),
+    },
+    google: {
+      api_key: isPh(g('google_api_key')) ? '' : g('google_api_key'),
+      model: g('google_model'),
+    },
   };
   cfg.test = {
     wait_seconds: +g('test_wait_seconds'), max_retries: +g('test_max_retries'),
@@ -1479,18 +1561,22 @@ document.querySelectorAll('.pill:not(.disabled)').forEach(p => {
 
 // ── RUNNER ─────────────────────────────────────────────────────────
 async function startRun() {
-  const body = { dry_run: document.getElementById('runMode').value === 'dry_run' };
+  const runMode = document.getElementById('runMode').value;
+  const analyzerMode = document.getElementById('analyzerMode').value;
+  const body = { dry_run: runMode === 'dry_run' };
+  if (analyzerMode === 'passive') body.mode = 'passive';
   if (!selectedCombos.has('all') && selectedCombos.size > 0) body.combo = [...selectedCombos][0];
   if (selectedScenario !== 'all') body.scenario = selectedScenario;
   const res = await fetch('/api/run/start', {
     method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body),
   }).then(r => r.json());
   if (!res.ok) { toast('❌ '+res.error,'err'); return; }
-  toast('▶ Test başlatıldı', 'ok');
+  toast('▶ Test başlatıldı' + (analyzerMode==='passive' ? ' (Pasif Mod)' : ''), 'ok');
   setRunningUI(true);
   startLogStream();
   startStatusPoll();
   startMFAPoll();
+  if (analyzerMode === 'passive') startVerificationPoll();
   document.querySelector('[data-page="logs"]').click();
 }
 
@@ -1511,6 +1597,7 @@ async function quickRun() {
 }
 
 function setRunningUI(running) {
+  run_state_is_running = running;
   document.getElementById('runBtn').disabled = running;
   document.getElementById('stopBtn2').style.display = running ? 'inline-flex' : 'none';
   document.getElementById('topStopBtn').style.display = running ? 'inline-flex' : 'none';
@@ -1540,17 +1627,48 @@ function finishProgress(ok) {
 }
 
 // ── LOGS ───────────────────────────────────────────────────────────
-function startLogStream() {
-  if (sseSource) sseSource.close();
-  document.getElementById('terminalBody').innerHTML = ''; logLineCount = 0;
-  sseSource = new EventSource('/api/run/logs');
+function startLogStream(offset) {
+  if (sseSource) { sseSource.close(); sseSource = null; }
+  // offset=undefined → fresh start (clear terminal); offset=N → resume (keep existing lines)
+  const fresh = (offset === undefined || offset === 0);
+  if (fresh) {
+    document.getElementById('terminalBody').innerHTML = '';
+    logLineCount = 0;
+  }
+  const url = '/api/run/logs' + (offset ? `?offset=${offset}` : '');
+  sseSource = new EventSource(url);
+
   sseSource.onmessage = e => {
     const d = JSON.parse(e.data);
     if (d.type === 'ping') return;
-    if (d.type === 'done') { sseSource.close(); return; }
+    if (d.type === 'done') {
+      sseSource.close(); sseSource = null;
+      // Proactively update UI — status poll will also catch this
+      if (run_state["running"] !== false) {
+        // Let status poll finalise in next tick (it runs every 2s)
+      }
+      return;
+    }
     appendLog(d.text);
   };
+
+  sseSource.onerror = () => {
+    if (!sseSource) return; // already closed intentionally
+    const state = sseSource.readyState;
+    if (state === EventSource.CLOSED) {
+      // Closed – try to reconnect once with current offset
+      const currentOffset = logLineCount;
+      sseSource = null;
+      if (run_state_is_running) {
+        setTimeout(() => startLogStream(currentOffset), 2500);
+      }
+    }
+    // If CONNECTING, browser will auto-retry with Last-Event-ID (handled server-side)
+  };
 }
+
+// Track running state for reconnect logic
+let run_state_is_running = false;
 
 function appendLog(line) {
   const body = document.getElementById('terminalBody');
@@ -1580,11 +1698,159 @@ function startStatusPoll() {
     const res = await fetch('/api/run/status').then(r => r.json());
     if (!res.running) {
       clearInterval(pollInterval); setRunningUI(false); stopMFAPoll();
+      stopVerificationPoll();
       finishProgress(res.exit_code === 0);
       res.exit_code === 0 ? toast('✅ Test tamamlandı','ok') : toast(`⚠️ Test bitti (kod: ${res.exit_code})`,'err');
       loadResults();
     }
   }, 2000);
+}
+
+// ── ANALYZER MODE ─────────────────────────────────────────────────
+function onAnalyzerModeChange() {
+  const mode = document.getElementById('analyzerMode').value;
+  document.getElementById('analyzerModeInfo').style.display = mode === 'passive' ? 'block' : 'none';
+}
+
+// ── LLM PROVIDER TOGGLE ──────────────────────────────────────────
+function onLLMProviderChange() {
+  const prov = document.getElementById('llm_provider').value;
+  const gPanel = document.getElementById('llmPanelGoogle');
+  const cPanel = document.getElementById('llmPanelClaude');
+  const badge = document.getElementById('llmProviderBadge');
+  if (gPanel) gPanel.style.display = prov === 'google' ? 'block' : 'none';
+  if (cPanel) cPanel.style.display = prov === 'claude' ? 'block' : 'none';
+  if (badge) {
+    badge.textContent = prov === 'google' ? 'GEMINI (Ücretsiz)' : 'CLAUDE (Ücretli)';
+    badge.className = 'sec-badge ' + (prov === 'google' ? 'green' : 'yellow');
+  }
+}
+
+// ── VERIFICATION POLL (Pasif Mod) ─────────────────────────────────
+let verifyPollInterval = null;
+
+function startVerificationPoll() {
+  document.getElementById('verificationCard').style.display = 'block';
+  clearInterval(verifyPollInterval);
+  verifyPollInterval = setInterval(pollVerifications, 1500);
+}
+
+function stopVerificationPoll() {
+  clearInterval(verifyPollInterval);
+  verifyPollInterval = null;
+  document.getElementById('verificationCard').style.display = 'none';
+}
+
+function renderVerifyItem(v) {
+  return `<div class="verify-item" id="vi-${v.id}">
+    <div class="verify-item-header">
+      <span class="verify-item-title">${v.label || '?'}</span>
+      <span class="verify-item-scenario">${v.scenario || '?'}</span>
+    </div>
+    <div class="verify-meta">
+      Gönderen: ${v.from || '?'}<br>
+      Konu: ${v.subject || '?'}<br>
+      Sunucular: ${v.sender_server || '?'} → ${v.receiver_server || '?'}<br>
+      Ekler: ${v.attachments || 0} dosya · Inline: ${v.inline_images || 0}
+    </div>
+    <div class="verify-actions">
+      <button class="btn btn-success btn-sm" onclick="submitVerification('${v.id}', true)">✓ Onayla (PASS)</button>
+      <button class="btn btn-danger btn-sm" onclick="showRejectInput('${v.id}')">✗ Reddet (FAIL)</button>
+    </div>
+    <div class="verify-issue-input" id="vi-issue-${v.id}">
+      <textarea id="vi-reason-${v.id}" rows="2"
+        placeholder="Sorun açıklaması — ne görüyorsunuz? (opsiyonel)"
+        style="width:100%;resize:vertical;margin-bottom:8px"></textarea>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn btn-danger btn-sm" onclick="submitVerification('${v.id}', false)">✗ Reddet ve Kaydet</button>
+        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('vi-issue-${v.id}').style.display='none'">İptal</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function pollVerifications() {
+  try {
+    const res = await fetch('/api/verification/pending').then(r => r.json());
+    if (!res.ok) return;
+    const body = document.getElementById('verificationBody');
+
+    const pendingIds = new Set((res.pending || []).map(v => v.id));
+    // Remove items that are no longer pending (already responded to)
+    body.querySelectorAll('.verify-item').forEach(el => {
+      const vid = el.id.replace('vi-', '');
+      if (!pendingIds.has(vid)) el.remove();
+    });
+
+    if (res.pending.length === 0) {
+      if (!body.querySelector('.verify-item')) {
+        body.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">Test sonucu bekleniyor...</div>';
+      }
+      document.getElementById('verifyBadge').textContent = 'BEKLİYOR';
+      document.getElementById('verifyBadge').className = 'sec-badge gray';
+      return;
+    }
+
+    document.getElementById('verifyBadge').textContent = res.pending.length + ' ONAY';
+    document.getElementById('verifyBadge').className = 'sec-badge yellow';
+
+    // Get already-rendered IDs (avoid re-rendering items where user may be typing)
+    const renderedIds = new Set([...body.querySelectorAll('.verify-item')].map(el => el.id.replace('vi-', '')));
+
+    for (const v of res.pending) {
+      if (renderedIds.has(v.id)) continue; // already in DOM — don't overwrite user input
+      // Remove stale "waiting" placeholder if present
+      const placeholder = body.querySelector('div:not(.verify-item)');
+      if (placeholder) placeholder.remove();
+      // Append new item
+      const tmp = document.createElement('div');
+      tmp.innerHTML = renderVerifyItem(v);
+      body.appendChild(tmp.firstElementChild);
+    }
+  } catch (e) { /* ignore poll errors */ }
+}
+
+function showRejectInput(id) {
+  const issueDiv = document.getElementById('vi-issue-' + id);
+  if (issueDiv) {
+    issueDiv.style.display = 'block';
+    const ta = document.getElementById('vi-reason-' + id);
+    if (ta) setTimeout(() => ta.focus(), 50);
+  }
+}
+
+async function submitVerification(id, approved) {
+  // If rejecting and no reason textarea shown yet, show it first
+  if (!approved) {
+    const issueDiv = document.getElementById('vi-issue-' + id);
+    if (issueDiv && issueDiv.style.display !== 'block') {
+      showRejectInput(id);
+      return; // wait for user to fill note and click again
+    }
+  }
+  const issues = [];
+  const reasonEl = document.getElementById('vi-reason-' + id);
+  const note = reasonEl ? reasonEl.value.trim() : '';
+  if (note) issues.push(note);
+
+  const res = await fetch('/api/verification/respond', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ id, approved, issues })
+  }).then(r => r.json());
+
+  if (res.ok) {
+    const el = document.getElementById('vi-' + id);
+    if (el) {
+      el.style.borderColor = approved ? 'var(--accent2)' : 'var(--danger)';
+      const noteHtml = (!approved && note) ? `<div style="font-size:11px;color:var(--muted);margin-top:6px;font-family:var(--mono)">Not: ${note}</div>` : '';
+      el.innerHTML = `<div style="text-align:center;padding:12px;font-size:13px;font-weight:700;color:${approved?'var(--accent2)':'var(--danger)'}">${approved ? '✓ Onaylandı' : '✗ Reddedildi'}${noteHtml}</div>`;
+      setTimeout(() => el.remove(), 3000);
+    }
+    toast(approved ? '✅ Test onaylandı' : `❌ Test reddedildi${note ? ': '+note.slice(0,40) : ''}`, approved ? 'ok' : 'err');
+  } else {
+    toast('Hata: ' + (res.error || 'Bilinmeyen'), 'err');
+  }
 }
 
 // ── RESULTS ────────────────────────────────────────────────────────

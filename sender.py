@@ -5,6 +5,7 @@ Her senaryo tipi için ayrı metot: plain, attachment, inline_image, smime, repl
 from __future__ import annotations
 
 import smtplib
+import ssl
 import uuid
 import time
 import os
@@ -32,14 +33,36 @@ class MailSender:
         self.password = server_config["password"]
         self.from_address = server_config["test_address"]
 
+    def _make_ssl_ctx(self) -> ssl.SSLContext:
+        """Self-signed / internal cert desteği. smtp_verify_ssl: false → doğrulama atla."""
+        verify = self.config.get("smtp_verify_ssl", False)
+        ctx = ssl.create_default_context()
+        if not verify:
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+
     def _connect(self) -> smtplib.SMTP:
-        smtp = smtplib.SMTP(self.host, self.port, timeout=30)
-        smtp.ehlo()
-        if self.use_tls:
-            smtp.starttls()
+        # smtp_use_ssl: true  → Implicit SSL (SMTP_SSL) — sadece config'de açıkça belirtilince
+        # smtp_use_ssl: false → STARTTLS veya plain — port 465 bile olsa
+        use_ssl = self.config.get("smtp_use_ssl", False)
+        ssl_ctx = self._make_ssl_ctx()
+
+        if use_ssl:
+            # Implicit SSL (SMTP_SSL) — sunucu direkt TLS bekliyor
+            smtp = smtplib.SMTP_SSL(self.host, self.port, timeout=60, context=ssl_ctx)
             smtp.ehlo()
+        else:
+            # STARTTLS veya plain — port 465 bile olsa
+            smtp = smtplib.SMTP(self.host, self.port, timeout=60)
+            smtp.ehlo()
+            if self.use_tls:
+                smtp.starttls(context=ssl_ctx)
+                smtp.ehlo()
+
         smtp.login(self.username, self.password)
-        logger.debug(f"SMTP bağlantısı kuruldu: {self.host}:{self.port}")
+        logger.debug(f"SMTP bağlantısı kuruldu: {self.host}:{self.port} "
+                     f"({'implicit SSL' if use_ssl else 'STARTTLS' if self.use_tls else 'plain'})")
         return smtp
 
     def _base_headers(self, subject: str, to_address: str, msg_id: Optional[str] = None) -> dict:
@@ -209,11 +232,7 @@ class MailSender:
             signed_content = f.read()
         os.unlink(signed_path)
 
-        with smtplib.SMTP(self.host, self.port, timeout=30) as smtp:
-            smtp.ehlo()
-            if self.use_tls:
-                smtp.starttls()
-            smtp.login(self.username, self.password)
+        with self._connect() as smtp:
             smtp.sendmail(self.from_address, [to_address], signed_content)
 
         sent_at = time.time()
@@ -256,10 +275,27 @@ class MailSender:
     # ------------------------------------------------------------------ #
     #  İç yardımcılar
     # ------------------------------------------------------------------ #
-    def _send(self, msg, to_address: str) -> float:
-        with self._connect() as smtp:
-            smtp.sendmail(self.from_address, [to_address], msg.as_bytes())
-        return time.time()
+    def _send(self, msg, to_address: str, max_retries: int = 2) -> float:
+        """Mesaj gönder; hata olursa max_retries kez yeniden dene."""
+        last_err = None
+        for attempt in range(max_retries + 1):
+            try:
+                with self._connect() as smtp:
+                    smtp.sendmail(self.from_address, [to_address], msg.as_bytes())
+                return time.time()
+            except smtplib.SMTPServerDisconnected as e:
+                last_err = e
+                logger.warning(f"SMTP bağlantısı koptu (deneme {attempt+1}/{max_retries+1}), {2**attempt}s sonra yeniden deneniyor: {e}")
+                time.sleep(2 ** attempt)  # 1s, 2s, ...
+            except smtplib.SMTPException as e:
+                # Auth/reject hataları — yeniden deneme faydasız
+                raise
+            except OSError as e:
+                last_err = e
+                logger.warning(f"Ağ hatası (deneme {attempt+1}/{max_retries+1}): {e}")
+                if attempt < max_retries:
+                    time.sleep(2 ** attempt)
+        raise last_err  # type: ignore
 
     @staticmethod
     def _guess_mime(filename: str) -> str:

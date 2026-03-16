@@ -3,7 +3,7 @@ app.py — Mail Otomasyon Web Arayüzü (Flask)
 Çalıştır: python app.py  →  http://localhost:5000 (boşsa) / otomatik alternatif port
 """
 
-import csv, json, logging, os, queue, socket, subprocess, sys, threading, time
+import csv, json, logging, os, socket, subprocess, sys, threading, time
 from datetime import datetime
 from pathlib import Path
 
@@ -12,16 +12,18 @@ from flask import Flask, Response, jsonify, render_template, request, send_file
 from auth_manager import mfa_manager, generate_totp, totp_remaining_seconds
 
 app = Flask(__name__)
-CONFIG_PATH   = Path("config.yaml")
-REPORTS_DIR   = Path("reports")
-LOGS_DIR      = Path("logs")
+CONFIG_PATH        = Path("config.yaml")
+REPORTS_DIR        = Path("reports")
+LOGS_DIR           = Path("logs")
+VERIFICATION_DIR   = Path(".verifications")
 REPORTS_DIR.mkdir(exist_ok=True)
 LOGS_DIR.mkdir(exist_ok=True)
+VERIFICATION_DIR.mkdir(exist_ok=True)
 
 run_state = {
     "running": False,
     "process": None,
-    "log_queue": queue.Queue(),
+    "log_buffer": [],   # All log lines; "__DONE__" sentinel at end; SSE clients replay from here
     "started_at": None,
     "finished_at": None,
     "exit_code": None,
@@ -128,6 +130,41 @@ def totp_preview():
     code = generate_totp(secret)
     return jsonify({"ok": bool(code), "code": code, "remaining": totp_remaining_seconds()})
 
+# ── PASSIVE VERIFICATION (Dosya-tabanlı IPC) ───────────────────
+@app.route("/api/verification/pending")
+def verification_pending():
+    """Bekleyen manuel doğrulama varsa döndür."""
+    pending = []
+    if VERIFICATION_DIR.exists():
+        for f in sorted(VERIFICATION_DIR.glob("pending_*.json")):
+            try:
+                with open(f, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                pending.append(data)
+            except (json.JSONDecodeError, IOError):
+                continue
+    return jsonify({"ok": True, "pending": pending})
+
+@app.route("/api/verification/respond", methods=["POST"])
+def verification_respond():
+    """Manuel doğrulama yanıtı yaz — analyzer bunu okuyup devam edecek."""
+    body = request.json or {}
+    verify_id = body.get("id", "")
+    approved = body.get("approved", False)
+    issues = body.get("issues", [])
+
+    if not verify_id:
+        return jsonify({"ok": False, "error": "Verification ID eksik"}), 400
+
+    VERIFICATION_DIR.mkdir(exist_ok=True)
+    response_file = VERIFICATION_DIR / f"response_{verify_id}.json"
+    try:
+        with open(response_file, "w", encoding="utf-8") as f:
+            json.dump({"approved": approved, "issues": issues}, f)
+        return jsonify({"ok": True, "id": verify_id, "approved": approved})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 # ── COMBINATIONS ────────────────────────────────────────────────
 @app.route("/api/combinations", methods=["GET"])
 def get_combinations():
@@ -193,21 +230,29 @@ def start_run():
     if body.get("combo") is not None: cmd += ["--combo", str(body["combo"])]
     if body.get("scenario"):          cmd += ["--scenario", body["scenario"]]
     if body.get("dry_run"):           cmd += ["--dry-run"]
-    run_state.update({"log_queue": queue.Queue(), "running": True,
+    if body.get("mode"):              cmd += ["--mode", body["mode"]]
+    run_state.update({"log_buffer": [], "running": True,
                       "started_at": datetime.now().isoformat(),
                       "finished_at": None, "exit_code": None})
     def _run():
         try:
+            env = os.environ.copy()
+            env["MAIL_AUTO_APP_MODE"] = "1"
+            proj_dir = str(Path(__file__).parent)
+            env["PYTHONPATH"] = proj_dir + os.pathsep + env.get("PYTHONPATH", "")
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    text=True, encoding="utf-8", cwd=Path(__file__).parent)
+                                    text=True, encoding="utf-8", cwd=Path(__file__).parent,
+                                    env=env)
             run_state["process"] = proc
-            for line in proc.stdout: run_state["log_queue"].put(line.rstrip())
-            proc.wait(); run_state["exit_code"] = proc.returncode
+            for line in proc.stdout:
+                run_state["log_buffer"].append(line.rstrip())
+            proc.wait()
+            run_state["exit_code"] = proc.returncode
         except Exception as e:
-            run_state["log_queue"].put(f"[HATA] {e}")
+            run_state["log_buffer"].append(f"[HATA] {e}")
         finally:
             run_state.update({"running": False, "finished_at": datetime.now().isoformat()})
-            run_state["log_queue"].put("__DONE__")
+            run_state["log_buffer"].append("__DONE__")
     threading.Thread(target=_run, daemon=True).start()
     return jsonify({"ok": True, "cmd": " ".join(cmd)})
 
@@ -227,17 +272,42 @@ def run_status():
 
 @app.route("/api/run/logs")
 def stream_logs():
+    # Support resuming via Last-Event-ID header (browser auto-sends on reconnect)
+    # or explicit ?offset= query param.
+    last_id = request.headers.get("Last-Event-ID", "")
+    try:
+        offset = int(last_id) if last_id else request.args.get("offset", 0, type=int)
+    except (ValueError, TypeError):
+        offset = 0
+    offset = max(0, offset)
+
     def generate():
+        pos = offset
+        last_ping = time.time()
         while True:
-            try:
-                line = run_state["log_queue"].get(timeout=30)
+            buf = run_state["log_buffer"]
+            # Drain any new lines added since last iteration
+            while pos < len(buf):
+                line = buf[pos]
+                pos += 1
                 if line == "__DONE__":
-                    yield f"data: {json.dumps({'type':'done'})}\n\n"; break
-                yield f"data: {json.dumps({'type':'log','text':line})}\n\n"
-            except queue.Empty:
-                yield f"data: {json.dumps({'type':'ping'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                    return
+                # id = pos lets client resume from here on reconnect
+                yield f"id: {pos}\ndata: {json.dumps({'type': 'log', 'text': line})}\n\n"
+            # No new lines yet — keepalive ping every 15 s
+            now = time.time()
+            if now - last_ping >= 15:
+                yield f"data: {json.dumps({'type': 'ping'})}\n\n"
+                last_ping = now
+            # If run finished and we've sent everything, close gracefully
+            if not run_state["running"] and pos >= len(run_state["log_buffer"]):
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                return
+            time.sleep(0.3)
+
     return Response(generate(), mimetype="text/event-stream",
-                    headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 # ── REPORTS ─────────────────────────────────────────────────────
 @app.route("/api/reports")

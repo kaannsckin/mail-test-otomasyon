@@ -1,33 +1,57 @@
 """
-analyzer.py — Claude API ile MIME içeriğini analiz eder.
+analyzer.py — LLM (Claude API veya Google Gemini) ile MIME içeriğini analiz eder.
 Her senaryo tipi için özelleştirilmiş prompt'lar kullanır.
+
+Mode:
+  active  — Otomatik LLM analizi (API key gerekli)
+  passive — Manuel doğrulama (CLI interactive veya App-driven dosya IPC)
 """
 
 import json
 import logging
+import os
 import re
-import requests
+import sys
+import time
+import uuid
+from pathlib import Path
 from typing import Optional
+
+# Lazy import — sadece aktif modda (LLM gerektiğinde) yüklenir.
+# Pasif / dry-run modda llm_provider modülü import edilmez.
+try:
+    from llm_provider import create_provider, LLMProvider
+except ImportError:
+    create_provider = None   # type: ignore
+    LLMProvider = object     # type: ignore
 
 logger = logging.getLogger(__name__)
 
-CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
-CLAUDE_MODEL = "claude-sonnet-4-20250514"
+VERIFICATION_DIR = Path(".verifications")
 
 
 class MailAnalyzer:
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-        self.headers = {
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        }
+    def __init__(self, provider: Optional[LLMProvider] = None, mode: str = "active"):
+        """
+        Args:
+            provider: LLMProvider instance (aktif modda zorunlu, pasif modda None olabilir)
+            mode: "active" (otomatik analiz) veya "passive" (manuel doğrulama)
+        """
+        self.provider = provider
+        self.mode = mode.lower().strip()
+        if self.mode not in ("active", "passive"):
+            raise ValueError(f"Geçersiz mode: {mode}. 'active' veya 'passive' kullanın.")
+        if self.mode == "active" and provider is None:
+            raise ValueError("Active modda LLM provider zorunludur.")
 
     def analyze(self, scenario_type: str, send_meta: dict,
                 received_msg: Optional[dict], combination: dict) -> dict:
         """
-        Ana analiz metodu. Senaryo tipine göre uygun prompt seçer.
+        Ana analiz metodu. Mode'a göre LLM veya manuel doğrulama yapar.
+
+        Active: LLM'nin analiz sonucu döndürür
+        Passive: Tester manual doğrulama yapar (CLI veya App üzerinden)
+
         Returns: {passed: bool, checks: [...], summary: str, confidence: str}
         """
         if received_msg is None:
@@ -39,9 +63,12 @@ class MailAnalyzer:
                 "confidence": "HIGH",
             }
 
-        prompt = self._build_prompt(scenario_type, send_meta, received_msg, combination)
-        response = self._call_claude(prompt)
-        return self._parse_response(response, scenario_type)
+        if self.mode == "active":
+            prompt = self._build_prompt(scenario_type, send_meta, received_msg, combination)
+            response = self._call_provider(prompt)
+            return self._parse_response(response, scenario_type)
+        else:
+            return self._manual_verify(scenario_type, send_meta, received_msg, combination)
 
     # ------------------------------------------------------------------ #
     #  Prompt Builder
@@ -157,36 +184,158 @@ Aşağıdaki JSON formatında yanıt ver, başka hiçbir şey yazma:
 Sadece JSON döndür, markdown veya açıklama ekleme."""
 
     # ------------------------------------------------------------------ #
-    #  Claude API çağrısı
+    #  LLM Provider çağrısı
     # ------------------------------------------------------------------ #
-    def _call_claude(self, prompt: str) -> str:
-        payload = {
-            "model": CLAUDE_MODEL,
-            "max_tokens": 1000,
-            "messages": [{"role": "user", "content": prompt}],
+    def _call_provider(self, prompt: str) -> str:
+        """LLM provider'ı çağır."""
+        return self.provider.analyze(prompt)
+
+    # ------------------------------------------------------------------ #
+    #  Manuel Doğrulama (Pasif Mode) — Hibrit: CLI + App IPC
+    # ------------------------------------------------------------------ #
+    def _manual_verify(self, scenario_type: str, send_meta: dict,
+                       received_msg: dict, combination: dict) -> dict:
+        """
+        Pasif modda doğrulama.
+        - Terminal (stdin.isatty): CLI interactive input
+        - Subprocess (app-driven): Dosya-tabanlı IPC ile bekleme
+        """
+        headers = received_msg.get("headers", {})
+        subject = headers.get("Subject", "?")
+        from_addr = headers.get("From", "?")
+
+        test_info = {
+            "scenario": scenario_type,
+            "label": combination.get("label", "?"),
+            "from": from_addr,
+            "subject": subject,
+            "date": headers.get("Date", "?"),
+            "sender_server": combination.get("sender_server", "?"),
+            "receiver_server": combination.get("receiver_server", "?"),
+            "attachments": len(received_msg.get("attachments", [])),
+            "inline_images": len(received_msg.get("inline_images", [])),
         }
-        try:
-            resp = requests.post(CLAUDE_API_URL, headers=self.headers, json=payload, timeout=60)
-            resp.raise_for_status()
-            data = resp.json()
-            return data["content"][0]["text"]
-        except requests.RequestException as e:
-            logger.error(f"Claude API hatası: {e}")
-            return json.dumps({
-                "passed": False,
-                "confidence": "LOW",
-                "checks": [],
-                "summary": f"Claude API erişim hatası: {str(e)}",
-                "issues": [str(e)],
-                "recommendations": [],
-            })
+
+        if sys.stdin.isatty():
+            return self._cli_verify(test_info)
+        else:
+            return self._app_verify(test_info)
+
+    def _cli_verify(self, test_info: dict) -> dict:
+        """Terminal'den interaktif yes/no girdi al."""
+        print("\n" + "=" * 70)
+        print("PASIF MOD — Manuel Dogrulama")
+        print("=" * 70)
+        print(f"Senaryo   : {test_info['scenario']}")
+        print(f"Test      : {test_info['label']}")
+        print(f"Gonderen  : {test_info['from']}")
+        print(f"Konu      : {test_info['subject']}")
+        print(f"Alinan    : {test_info['date']}")
+        print(f"Ekler     : {test_info['attachments']} dosya")
+        print("-" * 70)
+
+        passed = False
+        while True:
+            try:
+                response = input("\nTest basarili mi? (y/n): ").strip().lower()
+                if response in ("y", "yes", "evet"):
+                    passed = True
+                    break
+                elif response in ("n", "no", "hayir"):
+                    passed = False
+                    break
+                else:
+                    print("Lutfen 'y' veya 'n' girin.")
+            except (KeyboardInterrupt, EOFError):
+                print("\nIptal edildi.")
+                passed = False
+                break
+
+        issues = []
+        if not passed:
+            try:
+                detail = input("  Sorun nedir? (opsiyonel, Enter ile gecin): ").strip()
+                if detail:
+                    issues.append(detail)
+            except (KeyboardInterrupt, EOFError):
+                pass
+
+        return self._build_manual_result(passed, issues, "cli")
+
+    def _app_verify(self, test_info: dict) -> dict:
+        """
+        App-driven dosya-tabanlı IPC.
+        1. .verifications/pending_<id>.json yaz
+        2. .verifications/response_<id>.json bekle (polling)
+        3. Response'u oku ve döndür
+        """
+        VERIFICATION_DIR.mkdir(exist_ok=True)
+        verify_id = uuid.uuid4().hex[:8]
+
+        pending_file = VERIFICATION_DIR / f"pending_{verify_id}.json"
+        response_file = VERIFICATION_DIR / f"response_{verify_id}.json"
+
+        # Pending yaz — app bu dosyayı okuyup UI'da gösterecek
+        pending_data = {
+            "id": verify_id,
+            "timestamp": time.time(),
+            **test_info,
+        }
+        with open(pending_file, "w", encoding="utf-8") as f:
+            json.dump(pending_data, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"⏳ Manuel doğrulama bekleniyor: {verify_id} ({test_info['label']})")
+
+        # Response bekle (polling) — max 10 dakika timeout
+        timeout = 600
+        start = time.time()
+        while time.time() - start < timeout:
+            if response_file.exists():
+                try:
+                    with open(response_file, "r", encoding="utf-8") as f:
+                        resp = json.load(f)
+                    # Temizle
+                    pending_file.unlink(missing_ok=True)
+                    response_file.unlink(missing_ok=True)
+
+                    passed = resp.get("approved", False)
+                    issues = resp.get("issues", [])
+                    logger.info(f"{'✅' if passed else '❌'} Manuel doğrulama: {verify_id} → {'PASS' if passed else 'FAIL'}")
+                    return self._build_manual_result(passed, issues, "app")
+                except (json.JSONDecodeError, IOError) as e:
+                    logger.warning(f"Response dosyası okunamadı: {e}")
+            time.sleep(1)
+
+        # Timeout
+        pending_file.unlink(missing_ok=True)
+        logger.warning(f"⏰ Manuel doğrulama timeout: {verify_id}")
+        return self._build_manual_result(False, ["Manuel doğrulama zaman aşımına uğradı (10dk)"], "timeout")
+
+    @staticmethod
+    def _build_manual_result(passed: bool, issues: list, source: str) -> dict:
+        """Standart manuel doğrulama sonucu oluştur."""
+        return {
+            "passed": passed,
+            "confidence": "MANUAL",
+            "checks": [
+                {
+                    "name": "Manuel Doğrulama",
+                    "passed": passed,
+                    "detail": f"Tester tarafından kontrol edildi ({source})"
+                }
+            ],
+            "summary": f"Tester tarafından {'onaylandı' if passed else 'reddedildi'} ({source}).",
+            "issues": issues,
+            "recommendations": [],
+            "verification_mode": "manual",
+            "verification_source": source,
+        }
 
     # ------------------------------------------------------------------ #
     #  Response parser
     # ------------------------------------------------------------------ #
     def _parse_response(self, response: str, scenario_type: str) -> dict:
         try:
-            # JSON blok varsa çıkar
             match = re.search(r'\{.*\}', response, re.DOTALL)
             if match:
                 return json.loads(match.group())
