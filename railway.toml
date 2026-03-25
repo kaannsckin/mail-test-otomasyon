@@ -1,0 +1,4 @@
+[deploy]
+startCommand = "python app.py"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3

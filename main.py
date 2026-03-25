@@ -470,6 +470,10 @@ def main():
     args = parser.parse_args()
 
     # Config yükle
+    if not os.path.exists(args.config):
+        print(f"[HATA] Config dosyası bulunamadı: {args.config}")
+        print("Web arayüzünden config.yaml oluşturun veya --config ile dosya belirtin.")
+        sys.exit(1)
     with open(args.config, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
