@@ -1,4 +1,4 @@
 pyyaml>=6.0
 requests>=2.31.0
 flask>=3.0.0
-pyOpenSSL>=23.0.0   # S/MIME testleri için (opsiyonel)
+# pyOpenSSL>=23.0.0  # S/MIME testleri için (opsiyonel, lokal kurulumda ekle)

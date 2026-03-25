@@ -11,10 +11,16 @@ import yaml
 from flask import Flask, Response, jsonify, render_template, request, send_file
 from auth_manager import mfa_manager, generate_totp, totp_remaining_seconds
 
-app = Flask(__name__)
-CONFIG_PATH   = Path("config.yaml")
-REPORTS_DIR   = Path("reports")
-LOGS_DIR      = Path("logs")
+BASE_DIR = Path(__file__).parent
+
+app = Flask(__name__, template_folder=str(BASE_DIR / "templates"))
+
+# Vercel'de sadece /tmp yazılabilir; lokalde de çalışır
+_TMP = Path(os.environ.get("TMPDIR", "/tmp")) / "mail_otomasyon"
+_TMP.mkdir(parents=True, exist_ok=True)
+CONFIG_PATH   = _TMP / "config.yaml"
+REPORTS_DIR   = _TMP / "reports"
+LOGS_DIR      = _TMP / "logs"
 REPORTS_DIR.mkdir(exist_ok=True)
 LOGS_DIR.mkdir(exist_ok=True)
 
@@ -196,15 +202,26 @@ def start_run():
     run_state.update({"log_queue": queue.Queue(), "running": True,
                       "started_at": datetime.now().isoformat(),
                       "finished_at": None, "exit_code": None})
+    log_file = LOGS_DIR / f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    run_state["log_file"] = str(log_file)
+
     def _run():
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    text=True, encoding="utf-8", cwd=Path(__file__).parent)
+                                    text=True, encoding="utf-8", cwd=BASE_DIR)
             run_state["process"] = proc
-            for line in proc.stdout: run_state["log_queue"].put(line.rstrip())
+            with open(log_file, "w", encoding="utf-8") as lf:
+                for line in proc.stdout:
+                    line = line.rstrip()
+                    run_state["log_queue"].put(line)
+                    lf.write(line + "\n")
+                    lf.flush()
             proc.wait(); run_state["exit_code"] = proc.returncode
         except Exception as e:
-            run_state["log_queue"].put(f"[HATA] {e}")
+            err = f"[HATA] {e}"
+            run_state["log_queue"].put(err)
+            with open(log_file, "a", encoding="utf-8") as lf:
+                lf.write(err + "\n")
         finally:
             run_state.update({"running": False, "finished_at": datetime.now().isoformat()})
             run_state["log_queue"].put("__DONE__")
@@ -226,18 +243,22 @@ def run_status():
                     "finished_at": run_state["finished_at"], "exit_code": run_state["exit_code"]})
 
 @app.route("/api/run/logs")
-def stream_logs():
-    def generate():
-        while True:
-            try:
-                line = run_state["log_queue"].get(timeout=30)
-                if line == "__DONE__":
-                    yield f"data: {json.dumps({'type':'done'})}\n\n"; break
-                yield f"data: {json.dumps({'type':'log','text':line})}\n\n"
-            except queue.Empty:
-                yield f"data: {json.dumps({'type':'ping'})}\n\n"
-    return Response(generate(), mimetype="text/event-stream",
-                    headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
+def poll_logs():
+    """Log polling endpoint — SSE yerine kullanılır (Vercel uyumlu)."""
+    offset = int(request.args.get("offset", 0))
+    log_file = run_state.get("log_file")
+    lines = []
+    next_offset = offset
+
+    if log_file and Path(log_file).exists():
+        with open(log_file, "r", encoding="utf-8") as f:
+            all_lines = f.readlines()
+        new_lines = all_lines[offset:]
+        lines = [l.rstrip() for l in new_lines]
+        next_offset = len(all_lines)
+
+    done = (not run_state["running"]) and (next_offset == offset or not run_state.get("log_file"))
+    return jsonify({"lines": lines, "next_offset": next_offset, "done": done})
 
 # ── REPORTS ─────────────────────────────────────────────────────
 @app.route("/api/reports")
