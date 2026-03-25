@@ -195,7 +195,7 @@ def start_run():
     if run_state["running"]:
         return jsonify({"ok": False, "error": "Zaten bir test çalışıyor"}), 400
     body      = request.json or {}
-    cmd       = [sys.executable, "main.py"]
+    cmd       = [sys.executable, str(BASE_DIR / "main.py"), "--config", str(CONFIG_PATH)]
     if body.get("combo") is not None: cmd += ["--combo", str(body["combo"])]
     if body.get("scenario"):          cmd += ["--scenario", body["scenario"]]
     if body.get("dry_run"):           cmd += ["--dry-run"]
