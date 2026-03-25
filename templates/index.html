@@ -1136,7 +1136,8 @@ let selectedCombos = new Set();
 let selectedScenario = 'all';
 let autoScroll = true;
 let logLineCount = 0;
-let sseSource = null;
+let logPollInterval = null;
+let logOffset = 0;
 let pollInterval = null;
 let mfaPollInterval = null;
 let mfaTimerInterval = null;
@@ -1541,15 +1542,22 @@ function finishProgress(ok) {
 
 // ── LOGS ───────────────────────────────────────────────────────────
 function startLogStream() {
-  if (sseSource) sseSource.close();
+  if (logPollInterval) clearInterval(logPollInterval);
   document.getElementById('terminalBody').innerHTML = ''; logLineCount = 0;
-  sseSource = new EventSource('/api/run/logs');
-  sseSource.onmessage = e => {
-    const d = JSON.parse(e.data);
-    if (d.type === 'ping') return;
-    if (d.type === 'done') { sseSource.close(); return; }
-    appendLog(d.text);
-  };
+  logOffset = 0;
+  logPollInterval = setInterval(async () => {
+    try {
+      const res = await fetch(`/api/run/logs?offset=${logOffset}`).then(r => r.json());
+      if (res.lines && res.lines.length > 0) {
+        res.lines.forEach(line => appendLog(line));
+        logOffset = res.next_offset;
+      }
+      if (res.done) {
+        clearInterval(logPollInterval);
+        logPollInterval = null;
+      }
+    } catch(e) {}
+  }, 1500);
 }
 
 function appendLog(line) {
