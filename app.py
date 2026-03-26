@@ -81,8 +81,8 @@ def test_connection():
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
         sc = config.get(server_key, {})
-        if not sc:
-            return jsonify({"ok": False, "error": f"'{server_key}' config'de tanımlı değil"})
+        if not sc or not sc.get("smtp_host"):
+            return jsonify({"ok": False, "error": f"'{server_key}' için SMTP adresi girilmemiş. Önce konfigürasyonu doldurup kaydedin."})
 
         auth_method = sc.get("auth_method", "password")
         totp_secret = sc.get("totp_secret", "")
