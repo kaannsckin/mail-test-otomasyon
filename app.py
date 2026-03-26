@@ -13,11 +13,13 @@ from werkzeug.utils import secure_filename
 from auth_manager import mfa_manager, generate_totp, totp_remaining_seconds
 
 app = Flask(__name__)
-CONFIG_PATH        = Path("config.yaml")
-REPORTS_DIR        = Path("reports")
-LOGS_DIR           = Path("logs")
-VERIFICATION_DIR   = Path(".verifications")
-ATTACHMENTS_DIR    = Path("attachments")
+_BASE_DIR          = Path(os.environ.get("MAIL_AUTO_CONFIG_DIR", "")).resolve() \
+                     if os.environ.get("MAIL_AUTO_CONFIG_DIR") else Path(__file__).parent
+CONFIG_PATH        = _BASE_DIR / "config.yaml"
+REPORTS_DIR        = _BASE_DIR / "reports"
+LOGS_DIR           = _BASE_DIR / "logs"
+VERIFICATION_DIR   = _BASE_DIR / ".verifications"
+ATTACHMENTS_DIR    = _BASE_DIR / "attachments"
 REPORTS_DIR.mkdir(exist_ok=True)
 LOGS_DIR.mkdir(exist_ok=True)
 VERIFICATION_DIR.mkdir(exist_ok=True)
@@ -256,10 +258,10 @@ def start_run():
         try:
             env = os.environ.copy()
             env["MAIL_AUTO_APP_MODE"] = "1"
-            proj_dir = str(Path(__file__).parent)
+            proj_dir = str(_BASE_DIR)
             env["PYTHONPATH"] = proj_dir + os.pathsep + env.get("PYTHONPATH", "")
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    text=True, encoding="utf-8", cwd=Path(__file__).parent,
+                                    text=True, encoding="utf-8", cwd=_BASE_DIR,
                                     env=env)
             run_state["process"] = proc
             for line in proc.stdout:
