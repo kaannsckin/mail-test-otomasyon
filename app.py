@@ -9,6 +9,7 @@ from pathlib import Path
 
 import yaml
 from flask import Flask, Response, jsonify, render_template, request, send_file
+from werkzeug.utils import secure_filename
 from auth_manager import mfa_manager, generate_totp, totp_remaining_seconds
 
 app = Flask(__name__)
@@ -16,6 +17,7 @@ CONFIG_PATH        = Path("config.yaml")
 REPORTS_DIR        = Path("reports")
 LOGS_DIR           = Path("logs")
 VERIFICATION_DIR   = Path(".verifications")
+ATTACHMENTS_DIR    = Path("attachments")
 REPORTS_DIR.mkdir(exist_ok=True)
 LOGS_DIR.mkdir(exist_ok=True)
 VERIFICATION_DIR.mkdir(exist_ok=True)
@@ -34,7 +36,20 @@ run_state = {
 def get_config():
     if CONFIG_PATH.exists():
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f)
+            data = yaml.safe_load(f) or {}
+        # Eski format: test_address varsa mail_addresses'e sentezle (backward compat)
+        if "mail_addresses" not in data:
+            DOMAIN_DEFAULTS = {"ems": "meb.gov.tr", "gmail": "gmail.com", "outlook": "hotmail.com"}
+            ma = {}
+            for srv in ["ems", "gmail", "outlook"]:
+                sc = data.get(srv, {})
+                addr = sc.get("test_address", "")
+                if addr and "@" in addr:
+                    user, domain = addr.rsplit("@", 1)
+                    ma[srv] = {"username": user, "domain": domain, "address": addr}
+                else:
+                    ma[srv] = {"username": "", "domain": DOMAIN_DEFAULTS.get(srv, ""), "address": ""}
+            data["mail_addresses"] = ma
         return jsonify({"ok": True, "config": data})
     return jsonify({"ok": False, "error": "config.yaml bulunamadı"})
 
@@ -333,6 +348,66 @@ def latest_results():
     with open(files[0],"r",encoding="utf-8-sig") as f:
         for row in csv.DictReader(f): rows.append(dict(row))
     return jsonify({"ok":True,"results":rows,"file":files[0].name})
+
+# ── TEMPLATES ───────────────────────────────────────────────────────
+@app.route("/api/templates", methods=["GET"])
+def get_templates():
+    from template_manager import get_all_templates_for_api
+    return jsonify({"ok": True, "data": get_all_templates_for_api()})
+
+@app.route("/api/templates", methods=["POST"])
+def post_templates():
+    from template_manager import save_templates
+    data = request.json or {}
+    try:
+        save_templates(data)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.route("/api/templates/export-defaults", methods=["POST"])
+def export_default_templates():
+    from template_manager import export_defaults_to_yaml
+    try:
+        export_defaults_to_yaml()
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+# ── ATTACHMENTS ─────────────────────────────────────────────────────
+@app.route("/api/attachments", methods=["GET"])
+def list_attachments():
+    ATTACHMENTS_DIR.mkdir(exist_ok=True)
+    files = []
+    for f in sorted(ATTACHMENTS_DIR.iterdir()):
+        if f.is_file():
+            files.append({"name": f.name, "size": f.stat().st_size, "ext": f.suffix.lower()})
+    return jsonify({"ok": True, "files": files})
+
+@app.route("/api/attachments/upload", methods=["POST"])
+def upload_attachment():
+    ATTACHMENTS_DIR.mkdir(exist_ok=True)
+    uploaded = request.files.getlist("files")
+    if not uploaded:
+        return jsonify({"ok": False, "error": "Dosya seçilmedi"}), 400
+    saved = []
+    for f in uploaded:
+        safe_name = secure_filename(f.filename)
+        if not safe_name:
+            continue
+        dest = ATTACHMENTS_DIR / safe_name
+        f.save(str(dest))
+        saved.append(safe_name)
+    return jsonify({"ok": True, "saved": saved})
+
+@app.route("/api/attachments/<filename>", methods=["DELETE"])
+def delete_attachment(filename):
+    safe_name = secure_filename(filename)
+    p = ATTACHMENTS_DIR / safe_name
+    if p.exists() and p.is_file():
+        p.unlink()
+        return jsonify({"ok": True})
+    return jsonify({"ok": False, "error": "Dosya bulunamadı"}), 404
 
 @app.route("/")
 def index():
