@@ -190,16 +190,19 @@ def _resolve_attachment_paths(test_config: dict) -> list[str]:
 
     paths_cfg = test_config.get("test_attachment_paths")
     if paths_cfg and isinstance(paths_cfg, list):
-        raw_list = paths_cfg
+        raw_list = [p for p in paths_cfg if p]  # boş string'leri filtrele
     else:
-        raw_list = [test_config.get("test_attachment_path", "test_files/test_document.pdf")]
+        raw = test_config.get("test_attachment_path") or "test_files/test_document.pdf"
+        raw_list = [raw]
 
     resolved: list[str] = []
     for raw in raw_list:
+        if not raw:
+            continue
         p = Path(raw)
-        if p.exists():
+        if p.is_file():                       # exists() değil: dizinleri hariç tut
             resolved.append(str(p))
-        elif (repo_root / p).exists():
+        elif (repo_root / p).is_file():
             resolved.append(str(repo_root / p))
         else:
             logger.warning(f"Ek dosya bulunamadı: {raw}")
@@ -307,7 +310,7 @@ def run_scenario(
     wait = test_config.get("wait_seconds", 15)
     retries = test_config.get("max_retries", 3)
     retry_int = test_config.get("retry_interval", 5)
-    image_path = test_config.get("test_image_path", "test_files/test_image.png")
+    image_path = test_config.get("test_image_path") or "test_files/test_image.png"
 
     attachment_paths = _resolve_attachment_paths(test_config)
 

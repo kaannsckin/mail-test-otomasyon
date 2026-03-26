@@ -60,6 +60,11 @@ class MailSender:
                 smtp.starttls(context=ssl_ctx)
                 smtp.ehlo()
 
+        # Bazı EMS sunucuları SIZE parametresini EHLO'da ilan edip
+        # MAIL FROM'da reddeder (555 hatası). SIZE'ı kaldırarak smtplib'in
+        # otomatik "size=N" eklemesini engelle.
+        smtp.esmtp_features.pop("size", None)
+
         smtp.login(self.username, self.password)
         logger.debug(f"SMTP bağlantısı kuruldu: {self.host}:{self.port} "
                      f"({'implicit SSL' if use_ssl else 'STARTTLS' if self.use_tls else 'plain'})")
