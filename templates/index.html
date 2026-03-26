@@ -1513,6 +1513,10 @@ async function previewTotp(srv) {
 }
 
 async function checkSecurity(srv) {
+  await fetch('/api/config', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({config: buildConfig()}),
+  });
   toast(`🛡 ${srv.toUpperCase()} güvenlik testi...`, 'info');
   const res = await fetch('/api/config/test-connection', {
     method:'POST', headers:{'Content-Type':'application/json'},
@@ -1535,6 +1539,11 @@ async function checkSecurity(srv) {
 }
 
 async function testConn(srv) {
+  // Test öncesi config'i sessizce kaydet (backend şifreleri maskeli gelirse mevcut değeri korur)
+  await fetch('/api/config', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({config: buildConfig()}),
+  });
   toast(`🔌 ${srv.toUpperCase()} test ediliyor...`, 'info');
   const res = await fetch('/api/config/test-connection', {
     method:'POST', headers:{'Content-Type':'application/json'},
