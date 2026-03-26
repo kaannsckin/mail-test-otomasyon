@@ -250,6 +250,7 @@ input.has-value{border-color:rgba(0,255,148,.4)}
     <div class="nav-item" data-page="logs"><span class="nav-icon">≡</span>Canlı Loglar</div>
     <div class="nav-item" data-page="results"><span class="nav-icon">◈</span>Sonuçlar</div>
     <div class="nav-item" data-page="reports"><span class="nav-icon">⬖</span>Raporlar</div>
+    <div class="nav-item" data-page="templates"><span class="nav-icon">📝</span>Şablonlar & Ekler</div>
     <div class="nav-item" data-page="guide"><span class="nav-icon">📖</span>Bilgilendirme</div>
   </nav>
   <div class="sidebar-footer">
@@ -312,7 +313,6 @@ input.has-value{border-color:rgba(0,255,148,.4)}
               <div class="form-group"><label>IMAP Port</label><input id="ems_imap_port" type="number" placeholder="993"></div>
               <div class="form-group"><label>Kullanıcı Adı</label><input id="ems_username" placeholder="test@sirket.local"></div>
               <div class="form-group"><label>Şifre</label><input id="ems_password" type="password" placeholder="••••••••"></div>
-              <div class="form-group full"><label>Test Adresi (Alıcı)</label><input id="ems_test_address" placeholder="test@sirket.local"></div>
               <div class="form-group"><label>Sunucu Etiketi</label><input id="ems_label" placeholder="EMS On-Prem"></div>
               <div class="form-group">
                 <label>Güvenlik</label>
@@ -331,7 +331,6 @@ input.has-value{border-color:rgba(0,255,148,.4)}
               <div class="form-group"><label>IMAP Port</label><input id="gmail_imap_port" type="number" placeholder="993"></div>
               <div class="form-group"><label>Gmail Adresi</label><input id="gmail_username" placeholder="test@gmail.com"></div>
               <div class="form-group"><label>App Password</label><input id="gmail_password" type="password" placeholder="xxxx xxxx xxxx xxxx"></div>
-              <div class="form-group full"><label>Test Adresi</label><input id="gmail_test_address" placeholder="test@gmail.com"></div>
             </div>
             <div class="btn-row"><button class="btn btn-ghost btn-sm" onclick="testConn('gmail')">🔌 Bağlantı Test Et</button></div>
           </div>
@@ -344,7 +343,6 @@ input.has-value{border-color:rgba(0,255,148,.4)}
               <div class="form-group"><label>IMAP Port</label><input id="outlook_imap_port" type="number" placeholder="993"></div>
               <div class="form-group"><label>Kullanıcı Adı</label><input id="outlook_username" placeholder="test@sirket.onmicrosoft.com"></div>
               <div class="form-group"><label>Şifre</label><input id="outlook_password" type="password" placeholder="••••••••"></div>
-              <div class="form-group full"><label>Test Adresi</label><input id="outlook_test_address"></div>
             </div>
             <div class="btn-row"><button class="btn btn-ghost btn-sm" onclick="testConn('outlook')">🔌 Bağlantı Test Et</button></div>
           </div>
@@ -396,6 +394,52 @@ input.has-value{border-color:rgba(0,255,148,.4)}
                   <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 (Hızlı)</option>
                 </select>
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MAIL ADRESLERİ -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">✉ Mail Adresleri</span></div>
+        <div class="card-body">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:14px">
+            Her sunucu için test mail adresi girin. Bu adresler senaryolardaki alıcı olarak kullanılır.
+          </div>
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <!-- EMS -->
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="width:72px;font-size:12px;color:var(--muted);font-weight:600">EMS</span>
+              <input id="ma_ems_username" placeholder="kullanici" style="flex:1;min-width:0">
+              <span style="color:var(--muted);font-size:13px;white-space:nowrap">@ meb.gov.tr</span>
+            </div>
+            <!-- Gmail -->
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="width:72px;font-size:12px;color:var(--muted);font-weight:600">Gmail</span>
+              <input id="ma_gmail_username" placeholder="kullanici" style="flex:1;min-width:0">
+              <span style="color:var(--muted);font-size:13px;white-space:nowrap">@ gmail.com</span>
+            </div>
+            <!-- Outlook -->
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="width:72px;font-size:12px;color:var(--muted);font-weight:600">Outlook</span>
+              <input id="ma_outlook_username" placeholder="kullanici" style="flex:1;min-width:0">
+              <span style="color:var(--muted);font-size:13px">@</span>
+              <select id="ma_outlook_domain" style="width:160px">
+                <option value="hotmail.com">hotmail.com</option>
+                <option value="outlook.com">outlook.com</option>
+                <option value="live.com">live.com</option>
+                <option value="outlook.com.tr">outlook.com.tr</option>
+              </select>
+            </div>
+            <!-- Diğer -->
+            <div style="margin-top:4px">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                <span style="width:72px;font-size:12px;color:var(--muted);font-weight:600">Diğer</span>
+                <input id="ma_other_input" placeholder="tam@adres.com" style="flex:1;min-width:0"
+                       onkeydown="if(event.key==='Enter'){addOtherAddress();event.preventDefault()}">
+                <button class="btn btn-ghost btn-sm" onclick="addOtherAddress()">+ Ekle</button>
+              </div>
+              <div id="ma_other_list" style="padding-left:80px;display:flex;flex-direction:column;gap:4px"></div>
             </div>
           </div>
         </div>
@@ -773,6 +817,56 @@ input.has-value{border-color:rgba(0,255,148,.4)}
           <div class="card-body" style="padding:0"><iframe class="report-frame" id="reportFrame" src=""></iframe></div>
         </div>
       </div>
+    </div>
+
+    <!-- ŞABLONLAR & EKLER -->
+    <div class="page" id="page-templates">
+
+      <!-- Mesaj Şablonları -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">📨 Mesaj Şablonları</span>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost btn-sm" onclick="exportDefaultTemplates()">↺ Varsayılanı Aktar</button>
+            <button class="btn btn-primary btn-sm" onclick="saveTemplates()">💾 Kaydet</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:14px">
+            Her senaryo için konu etiketi ve mesaj gövdesini düzenleyin. Değişiklikler <b>templates.yaml</b>'a kaydedilir.
+          </div>
+          <div class="srv-tabs" id="tmplScenarioTabs">
+            <!-- JS ile doldurulur -->
+          </div>
+          <div id="tmplEditorArea" style="margin-top:16px">
+            <div style="color:var(--muted);font-size:13px">Yükleniyor...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Ek Dosya Yönetimi -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">📎 Ek Dosya Yönetimi</span>
+          <div>
+            <button class="btn btn-primary btn-sm" onclick="document.getElementById('fileUploadInput').click()">
+              ⬆ Dosya Yükle
+            </button>
+            <input type="file" id="fileUploadInput" multiple style="display:none"
+                   onchange="uploadAttachments(this.files)">
+          </div>
+        </div>
+        <div class="card-body">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:14px">
+            <b>attachments/</b> dizinindeki dosyalar ek senaryolarında kullanılır.
+            Yeni dosya yükleyebilir veya mevcutları silebilirsiniz.
+          </div>
+          <div id="attachmentList">
+            <div style="color:var(--muted);font-size:13px">Yükleniyor...</div>
+          </div>
+        </div>
+      </div>
+
     </div>
 
     <!-- GUIDE / BİLGİLENDİRME -->
@@ -1216,6 +1310,7 @@ const PAGE_META = {
   logs:       ['Canlı Loglar', 'stdout akışı'],
   results:    ['Sonuçlar', 'son test sonuçları'],
   reports:    ['Raporlar', 'html · csv dosyaları'],
+  templates:  ['Şablonlar & Ekler', 'mesaj şablonları · ek dosya yönetimi'],
   guide:      ['Bilgilendirme', 'kullanım kılavuzu · know-how · sss'],
 };
 
@@ -1230,10 +1325,11 @@ document.querySelectorAll('.nav-item').forEach(el => {
     const [title, bread] = PAGE_META[pg];
     document.getElementById('topbarTitle').textContent = title;
     document.getElementById('topbarBread').textContent = 'mail-otomasyon / ' + bread;
-    if (pg === 'dashboard') loadDashboard();
-    if (pg === 'runner')    loadCombinations();
-    if (pg === 'results')   loadResults();
-    if (pg === 'reports')   loadReports();
+    if (pg === 'dashboard')  loadDashboard();
+    if (pg === 'runner')     loadCombinations();
+    if (pg === 'results')    loadResults();
+    if (pg === 'reports')    loadReports();
+    if (pg === 'templates') { loadTemplates(); loadAttachments(); }
   });
 });
 
@@ -1249,7 +1345,7 @@ async function loadConfig() {
     set(`${s}_imap_host`, d.imap_host); set(`${s}_imap_port`, d.imap_port);
     set(`${s}_username`, d.username);
     set(`${s}_password`, d.password ? '••••••••' : '');
-    set(`${s}_test_address`, d.test_address); set(`${s}_label`, d.label);
+    set(`${s}_label`, d.label);
     if (s === 'ems') { set('ems_smtp_use_tls', d.smtp_use_tls); set('ems_imap_use_ssl', d.imap_use_ssl); }
     // Auth method
     if (d.auth_method) {
@@ -1261,6 +1357,23 @@ async function loadConfig() {
     if (d.mfa_method) set(`${s}_mfa_method`, d.mfa_method);
     if (d.totp_secret) { const el = document.getElementById(`${s}_totp_secret`); if (el) el.placeholder = '(kayıtlı — değiştirmek için girin)'; }
   }
+  // Mail Adresleri
+  const ma = c.mail_addresses || {};
+  const maEms  = ma.ems  || {};
+  const maGmail = ma.gmail || {};
+  const maOut  = ma.outlook || {};
+  set('ma_ems_username',     maEms.username  || '');
+  set('ma_gmail_username',   maGmail.username || '');
+  set('ma_outlook_username', maOut.username  || '');
+  if (maOut.domain) set('ma_outlook_domain', maOut.domain);
+  // Diğer adresler
+  const otherList = document.getElementById('ma_other_list');
+  if (otherList) {
+    otherList.innerHTML = '';
+    const others = Array.isArray(ma.other) ? ma.other : [];
+    others.forEach(o => { const addr = typeof o === 'string' ? o : o.address; if (addr) addOtherAddressEntry(addr); });
+  }
+
   // LLM Provider
   const llm = c.llm || {};
   set('llm_provider', llm.provider || 'google');
@@ -1293,7 +1406,6 @@ function buildConfig() {
       imap_use_ssl: s === 'ems' ? gb('ems_imap_use_ssl') : true,
       username: g(`${s}_username`),
       password: isPh(g(`${s}_password`)) ? '' : g(`${s}_password`),
-      test_address: g(`${s}_test_address`),
       label: g(`${s}_label`) || s.toUpperCase(),
       auth_method: authMethods[s] || 'password',
       mfa_method: g(`${s}_mfa_method`) || 'totp',
@@ -1319,6 +1431,20 @@ function buildConfig() {
     report_output: 'reports/test_report.html', results_csv: 'reports/test_results.csv',
   };
   cfg.logging = { level: 'INFO', file: 'logs/automation.log' };
+  // Mail Adresleri
+  const emsUser  = g('ma_ems_username').trim();
+  const gmailUser = g('ma_gmail_username').trim();
+  const outUser  = g('ma_outlook_username').trim();
+  const outDom   = g('ma_outlook_domain') || 'hotmail.com';
+  cfg.mail_addresses = {
+    ems:    { username: emsUser,  domain: 'meb.gov.tr', address: emsUser  ? emsUser  + '@meb.gov.tr'  : '' },
+    gmail:  { username: gmailUser, domain: 'gmail.com', address: gmailUser ? gmailUser + '@gmail.com'  : '' },
+    outlook:{ username: outUser,  domain: outDom,       address: outUser  ? outUser  + '@' + outDom   : '' },
+  };
+  const otherEntries = Array.from(
+    document.querySelectorAll('#ma_other_list [data-addr]')
+  ).map(el => ({ address: el.dataset.addr })).filter(o => o.address);
+  if (otherEntries.length) cfg.mail_addresses.other = otherEntries;
   return cfg;
 }
 
@@ -1928,6 +2054,172 @@ function toast(msg, type='info') {
 // ── DASHBOARD ──────────────────────────────────────────────────────
 async function loadDashboard() { await loadCombinations(); await loadResults(); }
 function refreshAll() { loadConfig(); loadDashboard(); toast('↻ Yenilendi','info'); }
+
+// ── MAIL ADRESLERİ — Diğer ─────────────────────────────────────────
+function addOtherAddressEntry(addr) {
+  const list = document.getElementById('ma_other_list');
+  if (!list) return;
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:13px';
+  row.dataset.addr = addr;
+  row.innerHTML = `<span style="color:var(--accent2)">•</span>
+    <span style="flex:1;font-family:var(--mono);color:var(--fg)">${addr}</span>
+    <button class="btn btn-ghost btn-sm" style="padding:2px 8px;font-size:11px"
+      onclick="this.closest('[data-addr]').remove()">× Kaldır</button>`;
+  list.appendChild(row);
+}
+function addOtherAddress() {
+  const inp = document.getElementById('ma_other_input');
+  const addr = (inp?.value || '').trim();
+  if (!addr || !addr.includes('@')) { toast('Geçerli bir e-posta adresi girin', 'warn'); return; }
+  addOtherAddressEntry(addr);
+  inp.value = '';
+}
+
+// ── TEMPLATES & ATTACHMENTS ────────────────────────────────────────
+const SCENARIO_LABELS = {
+  plain_text:   'Düz Metin',
+  attachment:   'Ek Dosya',
+  inline_image: 'Inline Görsel',
+  reply_chain:  'Yanıt Zinciri',
+  smime:        'S/MIME',
+  reply_original: 'Yanıt Orijinal',
+};
+const LENGTH_DISPLAY = { short: 'Kısa', medium: 'Orta', long: 'Uzun' };
+let _tmplData = null; // cached template data
+let _activeScenario = 'plain_text';
+
+async function loadTemplates() {
+  const res = await fetch('/api/templates').then(r => r.json());
+  if (!res.ok) { toast('Şablonlar yüklenemedi', 'err'); return; }
+  _tmplData = res.data;
+  renderTemplateEditor(_tmplData, _activeScenario);
+}
+
+function renderScenarioTabs(activeKey) {
+  const keys = ['plain_text','attachment','inline_image','reply_chain','reply_original'];
+  return keys.map(k => `
+    <div class="srv-tab${k===activeKey?' active':''}" onclick="switchTmplScenario('${k}',this)">
+      ${SCENARIO_LABELS[k]||k}
+    </div>`).join('');
+}
+
+function renderTemplateEditor(data, scenarioKey) {
+  const tabs = document.getElementById('tmplScenarioTabs');
+  if (tabs) tabs.innerHTML = renderScenarioTabs(scenarioKey);
+  const area = document.getElementById('tmplEditorArea');
+  if (!area) return;
+  const tmpls = (data?.templates || {})[scenarioKey] || [];
+  if (!tmpls.length) { area.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px">Bu senaryo için şablon bulunamadı.</div>'; return; }
+  area.innerHTML = tmpls.map((t, i) => `
+    <div class="tmpl-block" style="border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <span class="sec-badge ${t.length==='short'?'green':t.length==='medium'?'warn':'blue'}" style="text-transform:uppercase;font-size:10px">
+          ${LENGTH_DISPLAY[t.length]||t.length}
+        </span>
+        <span style="font-size:12px;color:var(--muted)">${scenarioKey} · şablon ${i+1}</span>
+      </div>
+      <div class="form-grid">
+        <div class="form-group full">
+          <label>Konu Etiketi</label>
+          <input id="tmpl_${scenarioKey}_${i}_subject" value="${(t.subject_tag||'').replace(/"/g,'&quot;')}">
+        </div>
+        <div class="form-group full">
+          <label>Mesaj Gövdesi</label>
+          <textarea id="tmpl_${scenarioKey}_${i}_body" rows="6"
+            style="width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:6px;
+                   padding:8px 10px;color:var(--fg);font-family:var(--mono);font-size:12px;resize:vertical"
+          >${(t.body||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</textarea>
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+function switchTmplScenario(key, el) {
+  el.closest('.srv-tabs').querySelectorAll('.srv-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  _activeScenario = key;
+  renderTemplateEditor(_tmplData, key);
+}
+
+async function saveTemplates() {
+  if (!_tmplData) { toast('Önce şablonları yükleyin', 'warn'); return; }
+  // Collect edited values
+  const keys = ['plain_text','attachment','inline_image','reply_chain','reply_original'];
+  for (const sk of keys) {
+    const tmpls = (_tmplData.templates || {})[sk] || [];
+    tmpls.forEach((t, i) => {
+      const subj = document.getElementById(`tmpl_${sk}_${i}_subject`);
+      const body = document.getElementById(`tmpl_${sk}_${i}_body`);
+      if (subj) t.subject_tag = subj.value;
+      if (body)  t.body = body.value;
+    });
+  }
+  const res = await fetch('/api/templates', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(_tmplData),
+  }).then(r => r.json());
+  res.ok ? toast('✅ Şablonlar kaydedildi', 'ok') : toast('Kayıt hatası: ' + res.error, 'err');
+}
+
+async function exportDefaultTemplates() {
+  const res = await fetch('/api/templates/export-defaults', {
+    method: 'POST',
+  }).then(r => r.json());
+  if (res.ok) { toast('✅ Varsayılan şablonlar templates.yaml\'a aktarıldı', 'ok'); await loadTemplates(); }
+  else toast('Hata: ' + res.error, 'err');
+}
+
+// ── ATTACHMENTS ────────────────────────────────────────────────────
+async function loadAttachments() {
+  const res = await fetch('/api/attachments').then(r => r.json());
+  const list = document.getElementById('attachmentList');
+  if (!list) return;
+  if (!res.ok || !res.files.length) {
+    list.innerHTML = '<div style="color:var(--muted);font-size:13px">Henüz ek dosya yok.</div>';
+    return;
+  }
+  const EXT_ICONS = { '.pdf':'📄', '.csv':'📊', '.xlsx':'📊', '.docx':'📝', '.txt':'📋',
+                      '.jpg':'🖼', '.jpeg':'🖼', '.png':'🖼', '.pptx':'📊', '.zip':'📦' };
+  list.innerHTML = `<table style="width:100%;border-collapse:collapse">
+    <thead><tr style="border-bottom:1px solid var(--border)">
+      <th style="text-align:left;padding:6px 8px;font-size:12px;color:var(--muted);font-weight:500">Dosya Adı</th>
+      <th style="text-align:right;padding:6px 8px;font-size:12px;color:var(--muted);font-weight:500">Boyut</th>
+      <th style="width:70px"></th>
+    </tr></thead>
+    <tbody>${res.files.map(f => {
+      const icon = EXT_ICONS[f.ext] || '📎';
+      const size = f.size >= 1048576 ? (f.size/1048576).toFixed(1)+' MB'
+                 : f.size >= 1024    ? (f.size/1024).toFixed(0)+' KB'
+                 : f.size + ' B';
+      return `<tr style="border-bottom:1px solid rgba(255,255,255,.05)">
+        <td style="padding:8px;font-size:13px;font-family:var(--mono)">${icon} ${f.name}</td>
+        <td style="padding:8px;font-size:12px;color:var(--muted);text-align:right">${size}</td>
+        <td style="padding:8px;text-align:right">
+          <button class="btn btn-ghost btn-sm" style="color:var(--red)"
+            onclick="deleteAttachment('${f.name}')">× Sil</button>
+        </td>
+      </tr>`;
+    }).join('')}</tbody></table>`;
+}
+
+async function uploadAttachments(files) {
+  if (!files.length) return;
+  const fd = new FormData();
+  for (const f of files) fd.append('files', f);
+  const res = await fetch('/api/attachments/upload', { method:'POST', body: fd }).then(r => r.json());
+  if (res.ok) { toast(`✅ ${res.saved.length} dosya yüklendi`, 'ok'); loadAttachments(); }
+  else toast('Yükleme hatası: ' + res.error, 'err');
+  document.getElementById('fileUploadInput').value = '';
+}
+
+async function deleteAttachment(filename) {
+  if (!confirm(`"${filename}" silinsin mi?`)) return;
+  const res = await fetch('/api/attachments/' + encodeURIComponent(filename), {
+    method: 'DELETE',
+  }).then(r => r.json());
+  res.ok ? (toast('🗑 Dosya silindi', 'ok'), loadAttachments()) : toast('Silme hatası: ' + res.error, 'err');
+}
 
 // ── INIT ───────────────────────────────────────────────────────────
 loadConfig();

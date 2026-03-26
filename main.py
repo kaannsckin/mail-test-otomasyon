@@ -27,12 +27,31 @@ from receiver import MailReceiver
 from analyzer import MailAnalyzer
 from llm_provider import create_provider
 from reporter import generate_html_report, generate_csv_results
-from message_templates import (
+from template_manager import (
     get_template,
     get_reply_original,
     resolve_inline_html,
     SIGNATURE_HTML,
 )
+
+# ------------------------------------------------------------------ #
+#  Mail address resolution
+# ------------------------------------------------------------------ #
+def resolve_mail_address(config: dict, server_name: str) -> str:
+    """
+    Sunucu adına göre mail adresini çözer.
+    Önce yeni `mail_addresses` bölümüne bakar; yoksa eski `test_address` alanına fallback yapar.
+    """
+    key = server_name.lower()
+    ma = config.get("mail_addresses", {})
+    if key in ma:
+        entry = ma[key]
+        if isinstance(entry, dict):
+            return entry.get("address", "")
+    # Legacy fallback
+    sc = config.get(key, {})
+    return sc.get("test_address", "")
+
 
 # ------------------------------------------------------------------ #
 #  CSV path resolution
@@ -614,6 +633,14 @@ def main():
         logger.info(f"  SMTP → {sender_config.get('smtp_host')}:{sender_config.get('smtp_port')}"
                     f"  (ssl={sender_config.get('smtp_use_ssl', False)}, tls={sender_config.get('smtp_use_tls', True)})")
         logger.info(f"  IMAP → {receiver_config.get('imap_host')}:{receiver_config.get('imap_port')}")
+
+        # mail_addresses'den çözülen adresleri config dict'e inject et
+        sender_address   = resolve_mail_address(config, combo.sender_server)
+        receiver_address = resolve_mail_address(config, combo.receiver_server)
+        if sender_address:
+            sender_config["test_address"] = sender_address
+        if receiver_address:
+            receiver_config["test_address"] = receiver_address
 
         sender   = MailSender(sender_config)
         receiver = MailReceiver(receiver_config)
