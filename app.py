@@ -173,9 +173,12 @@ def verification_respond():
 
     VERIFICATION_DIR.mkdir(exist_ok=True)
     response_file = VERIFICATION_DIR / f"response_{verify_id}.json"
+    pending_file = VERIFICATION_DIR / f"pending_{verify_id}.json"
     try:
         with open(response_file, "w", encoding="utf-8") as f:
             json.dump({"approved": approved, "issues": issues}, f)
+        # Pending dosyasını da sil — eski testlerden kalan stale item'ları temizler
+        pending_file.unlink(missing_ok=True)
         return jsonify({"ok": True, "id": verify_id, "approved": approved})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
