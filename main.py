@@ -337,6 +337,7 @@ def run_scenario(
     body = f"{tmpl.body}\n\n[Run ID: {run_id}]"
 
     combination_meta = {
+        "label": combo.label,
         "sender_server": combo.sender_server,
         "sender_client": combo.sender_client,
         "receiver_server": combo.receiver_server,

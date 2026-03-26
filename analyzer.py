@@ -200,20 +200,25 @@ Sadece JSON döndür, markdown veya açıklama ekleme."""
         - Terminal (stdin.isatty): CLI interactive input
         - Subprocess (app-driven): Dosya-tabanlı IPC ile bekleme
         """
-        headers = received_msg.get("headers", {})
-        subject = headers.get("Subject", "?")
-        from_addr = headers.get("From", "?")
+        headers = received_msg.get("headers", {}) if received_msg else {}
+        subject = headers.get("subject", headers.get("Subject", "?"))
+        from_addr = headers.get("from", headers.get("From", "?"))
+        date_str = headers.get("date", headers.get("Date", "?"))
+
+        sender_server   = combination.get("sender_server", "?")
+        receiver_server = combination.get("receiver_server", "?")
+        label = combination.get("label") or f"{receiver_server} ← {sender_server}"
 
         test_info = {
             "scenario": scenario_type,
-            "label": combination.get("label", "?"),
+            "label": label,
             "from": from_addr,
             "subject": subject,
-            "date": headers.get("Date", "?"),
-            "sender_server": combination.get("sender_server", "?"),
-            "receiver_server": combination.get("receiver_server", "?"),
-            "attachments": len(received_msg.get("attachments", [])),
-            "inline_images": len(received_msg.get("inline_images", [])),
+            "date": date_str,
+            "sender_server": sender_server,
+            "receiver_server": receiver_server,
+            "attachments": len(received_msg.get("attachments", [])) if received_msg else 0,
+            "inline_images": len(received_msg.get("inline_images", [])) if received_msg else 0,
         }
 
         if sys.stdin.isatty():
