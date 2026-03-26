@@ -45,29 +45,48 @@ class MailReceiver:
                          retry_interval: int = 5) -> Optional[dict]:
         """
         Gelen kutusunu polling ile tarar. Beklenen Message-ID'li mesajı bulunca döndürür.
+        UID tabanlı komutlar kullanır (sequence number'lar Gmail'de unstable olabilir).
         Returns: Mesaj detayları içeren dict veya None (bulunamazsa)
         """
         logger.info(f"Mesaj bekleniyor | msg_id={expected_msg_id} | max_wait={wait_seconds}s")
         time.sleep(wait_seconds)  # İlk bekleme — mesajın gelmesi için
 
+        # Message-ID'den açılı parantezleri temizle (arama için)
+        clean_msg_id = expected_msg_id.strip().strip("<>")
+
         for attempt in range(1, max_retries + 1):
             try:
                 imap = self._connect()
-                # Subject ile ara (Message-ID header'ı bazı sunucularda filtrelenebilir)
-                _, data = imap.search(None, f'SUBJECT "{subject_prefix}"')
-                mail_ids = data[0].split()
 
-                for mail_id in reversed(mail_ids[-20:]):  # Son 20 mesaja bak
-                    _, msg_data = imap.fetch(mail_id, "(RFC822)")
+                # Önce tam Message-ID ile ara (en kesin yöntem)
+                _, uid_data = imap.uid("search", None, f'HEADER "Message-ID" "<{clean_msg_id}>"')
+                uids = uid_data[0].split() if uid_data and uid_data[0] else []
+
+                # Bulunamazsa subject prefix ile fallback ara (son 20 mesaj)
+                if not uids:
+                    _, uid_data2 = imap.uid("search", None, f'SUBJECT "{subject_prefix}"')
+                    all_uids = uid_data2[0].split() if uid_data2 and uid_data2[0] else []
+                    uids = all_uids[-20:]  # Son 20 mesaja bak
+
+                found = None
+                for uid in reversed(uids):
+                    _, msg_data = imap.uid("fetch", uid, "(RFC822)")
+                    if not msg_data or not msg_data[0] or not isinstance(msg_data[0], tuple):
+                        continue
                     raw = msg_data[0][1]
+                    if not isinstance(raw, bytes):
+                        continue
                     parsed = email.message_from_bytes(raw)
 
                     if parsed.get("Message-ID", "").strip() == expected_msg_id.strip():
                         logger.info(f"✅ Mesaj bulundu (deneme {attempt}/{max_retries})")
-                        imap.logout()
-                        return self._extract_details(parsed, raw, mail_id.decode())
+                        found = self._extract_details(parsed, raw, uid.decode())
+                        break
 
                 imap.logout()
+                if found:
+                    return found
+
                 logger.debug(f"Mesaj bulunamadı (deneme {attempt}/{max_retries}), {retry_interval}s bekleniyor...")
                 time.sleep(retry_interval)
 
