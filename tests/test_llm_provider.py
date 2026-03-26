@@ -8,6 +8,7 @@ from unittest.mock import patch, MagicMock
 from llm_provider import (
     LLMProvider,
     ClaudeProvider,
+    GoogleProvider,
     create_provider,
 )
 
@@ -35,10 +36,12 @@ class TestCreateProvider:
         provider = create_provider("  claude  ", "test-key")
         assert isinstance(provider, ClaudeProvider)
 
-    def test_google_provider_without_package_raises(self):
-        """google-generativeai paketi yoksa ImportError."""
-        with pytest.raises(ImportError):
-            create_provider("google", "test-key")
+    def test_google_provider_creates_successfully(self):
+        """GoogleProvider REST API tabanlı, ek paket gerektirmez."""
+        provider = create_provider("google", "test-key")
+        assert isinstance(provider, GoogleProvider)
+        assert provider.api_key == "test-key"
+        assert provider.model == "gemini-2.0-flash"
 
 
 # ── LLMProvider ABC ────────────────────────────────────────────
