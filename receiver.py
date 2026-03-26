@@ -58,15 +58,22 @@ class MailReceiver:
             try:
                 imap = self._connect()
 
-                # Önce tam Message-ID ile ara (en kesin yöntem)
+                # Strateji 1: Tam Message-ID header araması (en kesin)
                 _, uid_data = imap.uid("search", None, f'HEADER "Message-ID" "<{clean_msg_id}>"')
                 uids = uid_data[0].split() if uid_data and uid_data[0] else []
 
-                # Bulunamazsa subject prefix ile fallback ara (son 20 mesaj)
-                if not uids:
+                # Strateji 2: Subject prefix ile ara (boş değilse)
+                if not uids and subject_prefix:
                     _, uid_data2 = imap.uid("search", None, f'SUBJECT "{subject_prefix}"')
                     all_uids = uid_data2[0].split() if uid_data2 and uid_data2[0] else []
-                    uids = all_uids[-20:]  # Son 20 mesaja bak
+                    uids = all_uids[-20:]
+
+                # Strateji 3: Son 30 mesajı doğrudan tara (bazı sunucular
+                # HEADER aramasını multipart mesajlarda düzgün desteklemez)
+                if not uids:
+                    _, uid_data3 = imap.uid("search", None, "ALL")
+                    all_uids = uid_data3[0].split() if uid_data3 and uid_data3[0] else []
+                    uids = all_uids[-30:]  # Son 30 mesaj
 
                 found = None
                 for uid in reversed(uids):
