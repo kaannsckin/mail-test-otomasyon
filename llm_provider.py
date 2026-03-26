@@ -69,35 +69,32 @@ class ClaudeProvider(LLMProvider):
 
 
 class GoogleProvider(LLMProvider):
-    """Google Generative AI provider (Gemini)."""
+    """Google Generative AI provider (Gemini) — REST API tabanlı, ek paket gerektirmez."""
+
+    API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
     def __init__(self, api_key: str, model: str = "gemini-2.0-flash"):
-        try:
-            import google.generativeai as genai
+        import requests
 
-            self.genai = genai
-            self.api_key = api_key
-            self.model = model
-            genai.configure(api_key=api_key)
-        except ImportError:
-            logger.error(
-                "google-generativeai paketi yüklü değil. "
-                "pip install google-generativeai çalıştırın."
-            )
-            raise
+        self.api_key = api_key
+        self.model = model
+        self.requests = requests
 
     def analyze(self, prompt: str) -> str:
-        """Google Generative AI'ı çağır."""
+        """Gemini REST API'yi çağır."""
+        url = f"{self.API_BASE}/{self.model}:generateContent?key={self.api_key}"
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "maxOutputTokens": 1000,
+                "temperature": 0.3,
+            },
+        }
         try:
-            model = self.genai.GenerativeModel(self.model)
-            response = model.generate_content(
-                prompt,
-                generation_config=self.genai.types.GenerationConfig(
-                    max_output_tokens=1000,
-                    temperature=0.3,
-                ),
-            )
-            return response.text
+            resp = self.requests.post(url, json=payload, timeout=60)
+            resp.raise_for_status()
+            data = resp.json()
+            return data["candidates"][0]["content"]["parts"][0]["text"]
         except Exception as e:
             logger.error(f"Google API hatası: {e}")
             return json.dumps(
