@@ -31,7 +31,7 @@ class MailSender:
         self.use_tls = server_config.get("smtp_use_tls", True)
         self.username = server_config["username"]
         self.password = server_config["password"]
-        self.from_address = server_config["test_address"]
+        self.from_address = server_config.get("test_address") or server_config.get("username", "")
 
     def _make_ssl_ctx(self) -> ssl.SSLContext:
         """Self-signed / internal cert desteği. smtp_verify_ssl: false → doğrulama atla."""
