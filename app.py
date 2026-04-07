@@ -377,9 +377,10 @@ def latest_results():
 @app.route("/api/results/history")
 def history_results():
     try:
-        from database import get_dashboard_stats
-        stats = get_dashboard_stats()
-        return jsonify({"ok": True, "stats": stats["stats"], "runs": stats["runs"]})
+        from database import get_dashboard_stats, get_recent_runs
+        stats_data = get_dashboard_stats()
+        recent_runs = get_recent_runs()
+        return jsonify({"ok": True, "stats": stats_data, "runs": recent_runs})
     except ImportError:
         return jsonify({"ok": False, "error": "Database modülü bulunamadı"})
 
