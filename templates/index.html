@@ -252,18 +252,114 @@ input.has-value{border-color:rgba(0,255,148,.4)}
 /* UTILS */
 .flex-center{display:flex;align-items:center;gap:10px}
 .flex-between{display:flex;align-items:center;justify-content:space-between}
+.flex-1{flex:1}
+.flex-end{justify-content:flex-end}
+.flex-gap-4{gap:4px}
+.flex-gap-8{gap:8px}
+.flex-gap-12{gap:12px}
+.grid-col-all{grid-column:1/-1}
 .text-muted-sm{color:var(--muted);font-size:13px}
 .text-muted-xs{color:var(--muted);font-size:12px}
+.text-center{text-align:center}
+.text-left{text-align:left}
+.text-right{text-align:right}
+.text-bold{font-weight:700}
+.text-extra-bold{font-weight:800}
+.text-white{color:var(--text)}
+.text-accent{color:var(--accent)}
+.text-blue{color:var(--accent)}
+.text-accent2{color:var(--accent2)}
+.text-green{color:var(--accent2)}
+.text-danger{color:var(--danger)}
+.text-red{color:var(--danger)}
+.text-warn{color:var(--warn)}
+.text-yellow{color:var(--warn)}
+.text-purple{color:#c084fc}
+.text-muted{color:var(--muted)}
+.font-mono{font-family:var(--mono)}
+.flex-center-content{display:flex;justify-content:center;align-items:center}
+.flex-col{display:flex;flex-direction:column}
+.flex-fwd{flex:1;min-width:0}
+.font-size-10{font-size:10px}
+.font-size-11{font-size:11px}
+.font-size-12{font-size:12px}
+.font-size-13{font-size:13px}
+.font-size-14{font-size:14px}
+.font-size-16{font-size:16px}
+.font-size-18{font-size:18px}
+.font-size-24{font-size:24px}
+.font-size-40{font-size:40px}
+.m-0{margin:0}
+.mt-4{margin-top:4px}
+.mt-6{margin-top:6px}
+.mt-8{margin-top:8px}
+.mt-10{margin-top:10px}
 .mt-12{margin-top:12px}
 .mt-16{margin-top:16px}
+.mt-20{margin-top:20px}
+.mt-40{margin-top:40px}
+.mb-4{margin-bottom:4px}
 .mb-6{margin-bottom:6px}
+.mb-8{margin-bottom:8px}
+.mb-10{margin-bottom:10px}
+.mb-12{margin-bottom:12px}
+.mb-14{margin-bottom:14px}
 .mb-15{margin-bottom:15px}
 .mb-16{margin-bottom:16px}
+.mb-20{margin-bottom:20px}
+.mb-24{margin-bottom:24px}
+.mx-auto{margin-left:auto;margin-right:auto}
 .p-0{padding:0}
+.p-8{padding:8px}
+.p-10{padding:10px}
+.p-12{padding:12px}
+.p-14{padding:14px}
+.p-16{padding:16px}
+.p-20{padding:20px}
+.p-32{padding:32px}
+.p-40{padding:40px}
+.p-8-12{padding:8px 12px}
+.p-12-16{padding:12px 16px}
+.px-8{padding-left:8px;padding-right:8px}
+.px-16{padding-left:16px;padding-right:16px}
+.py-8{padding-top:8px;padding-bottom:8px}
+.py-12{padding-top:12px;padding-bottom:12px}
+.pl-4{padding-left:4px}
+.pl-10{padding-left:10px}
+.pl-80{padding-left:80px}
+.w-160{width:160px}
 .w-full{width:100%}
-.text-center{text-align:center}
+.min-w-0{min-width:0}
+.max-w-300{max-width:300px}
+.max-w-420{max-width:420px}
+.max-h-70vh{max-height:70vh}
 .vh-70-auto{max-height:70vh;overflow-y:auto}
+.overflow-x-auto{overflow-x:auto}
+.lh-1-2{line-height:1.2}
+.lh-1-4{line-height:1.4}
+.lh-1-5{line-height:1.5}
+.lh-1-6{line-height:1.6}
+.lh-1-7{line-height:1.7}
+.lh-1-8{line-height:1.8}
+.lh-2{line-height:2}
 .hidden{display:none}
+.border-left-accent{border-left:3px solid var(--accent)}
+.border-bottom-1{border-bottom:1px solid var(--border)}
+.border-radius-6{border-radius:6px}
+.border-radius-8{border-radius:8px}
+.border-radius-12{border-radius:12px}
+.border-radius-12-top{border-radius:12px 12px 0 0}
+.bg-danger-dim{background:rgba(255,69,96,.12)}
+.bg-surface-2{background:var(--surface2)}
+.bg-surface-3{background:var(--surface3)}
+.sticky-top{position:sticky;top:0}
+.z-9999{z-index:9999}
+.shadow-modal{box-shadow:0 8px 32px rgba(0,0,0,0.5)}
+.no-underline{text-decoration:none}
+.underline{text-decoration:underline}
+.break-all{word-break:break-all}
+.nowrap{white-space:nowrap}
+.resize-v{resize:vertical}
 
 /* MODAL OVERRIDES */
 .modal-screenshot{max-width:900px;width:90%;background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:20px}
@@ -318,7 +414,7 @@ input.has-value{border-color:rgba(0,255,148,.4)}
 <div class="modal-overlay" id="screenshotModal" onclick="this.classList.remove('visible')">
   <div class="modal-screenshot" onclick="event.stopPropagation()">
     <div class="flex-between mb-15">
-      <h3 class="m-0" style="font-size:16px;">📸 UI Rendering Snapshot</h3>
+      <h3 class="m-0 font-size-16">📸 UI Rendering Snapshot</h3>
       <button onclick="document.getElementById('screenshotModal').classList.remove('visible')" class="btn btn-ghost btn-sm">Kapat</button>
     </div>
     <div class="vh-70-auto text-center">
@@ -343,7 +439,7 @@ input.has-value{border-color:rgba(0,255,148,.4)}
     <div class="flex-center">
       <button class="btn btn-ghost btn-sm" onclick="refreshAll()">↻ Yenile</button>
       <button class="btn btn-success btn-sm" id="quickRunBtn" onclick="quickRun()">▶ Hızlı Başlat</button>
-      <button class="btn btn-danger btn-sm" id="topStopBtn" style="display:none" onclick="stopRun()">■ Durdur</button>
+      <button class="btn btn-danger btn-sm hidden" id="topStopBtn" onclick="stopRun()">■ Durdur</button>
     </div>
   </div>
 
@@ -437,7 +533,7 @@ input.has-value{border-color:rgba(0,255,148,.4)}
           <span class="sec-badge gray" id="llmProviderBadge">—</span>
         </div>
         <div class="card-body">
-          <div class="form-group" style="margin-bottom:16px">
+          <div class="form-group mb-16">
             <label>Provider Seçimi</label>
             <select id="llm_provider" onchange="onLLMProviderChange()">
               <option value="google">Google Gemini (Ücretsiz)</option>
@@ -448,7 +544,7 @@ input.has-value{border-color:rgba(0,255,148,.4)}
           <!-- Google Gemini Panel -->
           <div id="llmPanelGoogle">
             <div class="llm-badge llm-badge-google">
-              ✨ <b>Ücretsiz:</b> Google AI Studio'dan API key alın → <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:underline">aistudio.google.com/apikey</a>
+              ✨ <b>Ücretsiz:</b> Google AI Studio'dan API key alın → <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" class="text-accent underline">aistudio.google.com/apikey</a>
             </div>
             <div class="form-grid">
               <div class="form-group full"><label>Google API Key</label><input id="google_api_key" type="password" placeholder="AIzaSy..."></div>
@@ -465,7 +561,7 @@ input.has-value{border-color:rgba(0,255,148,.4)}
           <!-- Claude Panel -->
           <div id="llmPanelClaude" class="hidden">
             <div class="llm-badge llm-badge-claude">
-              💰 <b>Ücretli:</b> Anthropic Console'dan API key alın → <a href="https://console.anthropic.com" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:underline">console.anthropic.com</a>
+              💰 <b>Ücretli:</b> Anthropic Console'dan API key alın → <a href="https://console.anthropic.com" target="_blank" rel="noopener" class="text-accent underline">console.anthropic.com</a>
             </div>
             <div class="form-grid">
               <div class="form-group full"><label>Anthropic API Key</label><input id="anthropic_api_key" type="password" placeholder="sk-ant-api03-..."></div>
@@ -488,25 +584,25 @@ input.has-value{border-color:rgba(0,255,148,.4)}
           <div class="text-muted-xs mb-16">
             Her sunucu için test mail adresi girin. Bu adresler senaryolardaki alıcı olarak kullanılır.
           </div>
-          <div style="display:flex;flex-direction:column;gap:12px">
+          <div class="flex-col flex-gap-12">
             <!-- EMS -->
             <div class="addr-row">
               <span class="addr-label">EMS</span>
-              <input id="ma_ems_username" placeholder="kullanici" style="flex:1;min-width:0">
-              <span class="text-muted-sm" style="white-space:nowrap">@ meb.gov.tr</span>
+              <input id="ma_ems_username" placeholder="kullanici" class="flex-fwd">
+              <span class="text-muted-sm nowrap">@ meb.gov.tr</span>
             </div>
             <!-- Gmail -->
             <div class="addr-row">
               <span class="addr-label">Gmail</span>
-              <input id="ma_gmail_username" placeholder="kullanici" style="flex:1;min-width:0">
-              <span class="text-muted-sm" style="white-space:nowrap">@ gmail.com</span>
+              <input id="ma_gmail_username" placeholder="kullanici" class="flex-fwd">
+              <span class="text-muted-sm nowrap">@ gmail.com</span>
             </div>
             <!-- Outlook -->
             <div class="addr-row">
               <span class="addr-label">Outlook</span>
-              <input id="ma_outlook_username" placeholder="kullanici" style="flex:1;min-width:0">
+              <input id="ma_outlook_username" placeholder="kullanici" class="flex-fwd">
               <span class="text-muted-sm">@</span>
-              <select id="ma_outlook_domain" style="width:160px">
+              <select id="ma_outlook_domain" class="w-160">
                 <option value="hotmail.com">hotmail.com</option>
                 <option value="outlook.com">outlook.com</option>
                 <option value="live.com">live.com</option>
@@ -514,14 +610,14 @@ input.has-value{border-color:rgba(0,255,148,.4)}
               </select>
             </div>
             <!-- Diğer -->
-            <div style="margin-top:4px">
-              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-                <span style="width:72px;font-size:12px;color:var(--muted);font-weight:600">Diğer</span>
-                <input id="ma_other_input" placeholder="tam@adres.com" style="flex:1;min-width:0"
+            <div class="mt-4">
+              <div class="flex-center flex-gap-8 mb-6">
+                <span class="addr-label">Diğer</span>
+                <input id="ma_other_input" placeholder="tam@adres.com" class="flex-fwd"
                        onkeydown="if(event.key==='Enter'){addOtherAddress();event.preventDefault()}">
                 <button class="btn btn-ghost btn-sm" onclick="addOtherAddress()">+ Ekle</button>
               </div>
-              <div id="ma_other_list" style="padding-left:80px;display:flex;flex-direction:column;gap:4px"></div>
+              <div id="ma_other_list" class="pl-80 flex-col flex-gap-4"></div>
             </div>
           </div>
         </div>
@@ -586,10 +682,10 @@ input.has-value{border-color:rgba(0,255,148,.4)}
             </div>
 
             <!-- 2FA details (shown when totp/otp selected) -->
-            <div id="mfaDetails-ems" style="display:none">
+            <div id="mfaDetails-ems" class="hidden">
               <div class="divider"></div>
               <div class="section-label">2FA Yöntemi</div>
-              <div class="form-grid" style="margin-bottom:16px">
+              <div class="form-grid mb-16">
                 <div class="form-group">
                   <label>OTP Tipi</label>
                   <select id="ems_mfa_method" onchange="onMfaMethodChange('ems')">
@@ -661,9 +757,9 @@ input.has-value{border-color:rgba(0,255,148,.4)}
                 <div class="auth-desc">SMS / Authenticator</div>
               </div>
             </div>
-            <div id="mfaDetails-gmail" style="display:none">
+            <div id="mfaDetails-gmail" class="hidden">
               <div class="divider"></div>
-              <div class="form-grid" style="margin-bottom:16px">
+              <div class="form-grid mb-16">
                 <div class="form-group">
                   <label>OTP Tipi</label>
                   <select id="gmail_mfa_method" onchange="onMfaMethodChange('gmail')">
@@ -679,7 +775,7 @@ input.has-value{border-color:rgba(0,255,148,.4)}
                     <label>TOTP Secret</label>
                     <input id="gmail_totp_secret" type="password" placeholder="Base32 secret...">
                   </div>
-                  <div class="form-group" style="justify-content:flex-end"><label>&nbsp;</label>
+                  <div class="form-group flex-end"><label>&nbsp;</label>
                     <button class="btn btn-ghost btn-sm" onclick="previewTotp('gmail')">👁 Önizle</button>
                   </div>
                 </div>
@@ -723,9 +819,9 @@ input.has-value{border-color:rgba(0,255,148,.4)}
                 <div class="auth-desc">SMS / Authenticator</div>
               </div>
             </div>
-            <div id="mfaDetails-outlook" style="display:none">
+            <div id="mfaDetails-outlook" class="hidden">
               <div class="divider"></div>
-              <div class="form-grid" style="margin-bottom:16px">
+              <div class="form-grid mb-16">
                 <div class="form-group">
                   <label>OTP Tipi</label>
                   <select id="outlook_mfa_method" onchange="onMfaMethodChange('outlook')">
@@ -741,7 +837,7 @@ input.has-value{border-color:rgba(0,255,148,.4)}
                     <label>TOTP Secret</label>
                     <input id="outlook_totp_secret" type="password" placeholder="Base32 secret...">
                   </div>
-                  <div class="form-group" style="justify-content:flex-end"><label>&nbsp;</label>
+                  <div class="form-group flex-end"><label>&nbsp;</label>
                     <button class="btn btn-ghost btn-sm" onclick="previewTotp('outlook')">👁 Önizle</button>
                   </div>
                 </div>
@@ -769,13 +865,13 @@ input.has-value{border-color:rgba(0,255,148,.4)}
       <div class="card">
         <div class="card-header">
           <span class="card-title">🔀 Kombinasyon Seçimi</span>
-          <div style="display:flex;gap:8px">
+          <div class="flex-center flex-gap-8">
             <button class="btn btn-ghost btn-sm" onclick="selectAllCombos()">Tümünü Seç</button>
             <button class="btn btn-ghost btn-sm" onclick="clearCombos()">Temizle</button>
           </div>
         </div>
         <div class="card-body">
-          <div class="combo-grid" id="comboGrid"><div style="color:var(--muted);font-size:13px">Yükleniyor...</div></div>
+          <div class="combo-grid" id="comboGrid"><div class="text-muted font-size-13">Yükleniyor...</div></div>
         </div>
       </div>
       <div class="card">
@@ -801,7 +897,7 @@ input.has-value{border-color:rgba(0,255,148,.4)}
       <div class="card">
         <div class="card-header"><span class="card-title">🎭 İstemci Taklidi (Spoofer)</span></div>
         <div class="card-body">
-          <div class="auth-method-grid" style="grid-template-columns: repeat(7, 1fr); margin-bottom: 8px;">
+          <div class="auth-method-grid mb-8">
             <div class="auth-card selected" onclick="selectSpoof(this, '')">
               <div class="auth-icon">🚫</div>
               <div class="auth-label">Kapalı</div>
@@ -838,7 +934,7 @@ input.has-value{border-color:rgba(0,255,148,.4)}
                <div class="auth-desc">iOS EAS</div>
             </div>
           </div>
-          <p style="font-size:12px;color:var(--muted)">ℹ️ "Kapalı" değilse, matristeki tüm Gönderici (Sender) istemcileri seçili değere göre ezilir ve teste o istemciye has MIME/VML kuralları giydirilir.</p>
+          <p class="text-muted font-size-12">ℹ️ "Kapalı" değilse, matristeki tüm Gönderici (Sender) istemcileri seçili değere göre ezilir ve teste o istemciye has MIME/VML kuralları giydirilir.</p>
         </div>
       </div>
       <div class="card">
@@ -867,7 +963,7 @@ input.has-value{border-color:rgba(0,255,148,.4)}
           </div>
           <div class="btn-row">
             <button class="btn btn-success" id="runBtn" onclick="startRun()">▶ Testi Başlat</button>
-            <button class="btn btn-danger" id="stopBtn2" style="display:none" onclick="stopRun()">■ Durdur</button>
+            <button class="btn btn-danger hidden" id="stopBtn2" onclick="stopRun()">■ Durdur</button>
           </div>
           <div id="runProgress" class="hidden mt-16">
             <div class="text-muted-xs mb-6" id="runProgressLabel">Çalışıyor...</div>
@@ -883,12 +979,12 @@ input.has-value{border-color:rgba(0,255,148,.4)}
       <div class="card">
         <div class="card-header">
           <span class="card-title">📟 Canlı Log Akışı</span>
-          <div style="display:flex;gap:8px">
+          <div class="flex-center flex-gap-8">
             <button class="btn btn-ghost btn-sm" onclick="clearLogs()">Temizle</button>
             <button class="btn btn-ghost btn-sm" onclick="toggleAutoScroll()">⬇ Oto-Kaydır: <span id="autoScrollState">ON</span></button>
           </div>
         </div>
-        <div class="card-body" style="padding:0">
+        <div class="card-body p-0">
           <div class="terminal">
             <div class="terminal-bar">
               <div class="terminal-dots"><span class="dot-r"></span><span class="dot-y"></span><span class="dot-g"></span></div>
@@ -905,7 +1001,7 @@ input.has-value{border-color:rgba(0,255,148,.4)}
 
     <!-- RESULTS -->
     <div class="page" id="page-results">
-      <div class="stats-row" id="resultStats" style="display:none">
+      <div class="stats-row hidden" id="resultStats">
         <div class="stat-box"><div class="stat-val blue" id="rs-total">0</div><div class="stat-lbl">Toplam</div></div>
         <div class="stat-box"><div class="stat-val green" id="rs-pass">0</div><div class="stat-lbl">✅ PASS</div></div>
         <div class="stat-box"><div class="stat-val red" id="rs-fail">0</div><div class="stat-lbl">❌ FAIL</div></div>
@@ -917,10 +1013,10 @@ input.has-value{border-color:rgba(0,255,148,.4)}
           <button class="btn btn-ghost btn-sm" onclick="loadResults()">↻ Yenile</button>
         </div>
         <div class="card-body p-0">
-          <div style="overflow-x:auto">
+          <div class="overflow-x-auto">
             <table class="results-table">
               <thead><tr><th>Durum</th><th>Kombinasyon</th><th>Senaryo</th><th>Güven</th><th>Özet</th><th>Zaman</th></tr></thead>
-              <tbody id="resultsBody"><tr><td colspan="6" class="text-center text-muted-sm" style="padding:32px">Henüz sonuç yok.</td></tr></tbody>
+              <tbody id="resultsBody"><tr><td colspan="6" class="text-center text-muted-sm p-32">Henüz sonuç yok.</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -931,9 +1027,9 @@ input.has-value{border-color:rgba(0,255,148,.4)}
     <div class="page" id="page-reports">
       <div class="card">
         <div class="card-header"><span class="card-title">📁 Rapor Dosyaları</span><button class="btn btn-ghost btn-sm" onclick="loadReports()">↻</button></div>
-        <div class="card-body"><div class="report-list" id="reportList"><div style="color:var(--muted);font-size:13px">Yükleniyor...</div></div></div>
+        <div class="card-body"><div class="report-list" id="reportList"><div class="text-muted font-size-13">Yükleniyor...</div></div></div>
       </div>
-      <div id="reportViewer" style="display:none">
+      <div id="reportViewer" class="hidden">
         <div class="card">
           <div class="card-header"><span class="card-title" id="reportViewerTitle">Rapor</span><button class="btn btn-ghost btn-sm" onclick="closeReport()">✕</button></div>
           <div class="card-body p-0"><iframe class="report-frame" id="reportFrame" src=""></iframe></div>
@@ -946,7 +1042,7 @@ input.has-value{border-color:rgba(0,255,148,.4)}
       <div class="card">
         <div class="card-header">
           <div><span class="card-title">📝 Mesaj Şablonları & Senaryolar</span></div>
-          <div style="display:flex;gap:10px">
+          <div class="flex-center">
             <button class="btn btn-ghost btn-sm" onclick="exportDefaultTemplates()" title="Hardcodedları YAML'a AKTAR"> Varsayılanları Al</button>
             <button class="btn btn-primary btn-sm" onclick="saveTemplates()">💾 Değişiklikleri Kaydet</button>
           </div>
@@ -971,10 +1067,10 @@ input.has-value{border-color:rgba(0,255,148,.4)}
       <div class="card">
         <div class="card-header"><span class="card-title">📎 Ek Dosya Yönetimi (attachments/)</span></div>
         <div class="card-body">
-          <div style="display:flex;gap:12px;margin-bottom:20px">
-            <input type="file" id="attachUploadInput" multiple style="display:none" onchange="uploadAttachments()">
+          <div class="flex-center flex-gap-12 mb-20">
+            <input type="file" id="attachUploadInput" multiple class="hidden" onchange="uploadAttachments()">
             <button class="btn btn-ghost" onclick="document.getElementById('attachUploadInput').click()">📁 Dosya Yükle</button>
-            <div style="font-size:11px;color:var(--muted);max-width:300px">Yüklediğiniz dosyaları yukarıdaki şablonlarla eşleştirebilirsiniz.</div>
+            <div class="text-muted font-size-11 max-w-300">Yüklediğiniz dosyaları yukarıdaki şablonlarla eşleştirebilirsiniz.</div>
           </div>
           <div id="attachList" class="combo-grid"></div>
         </div>
@@ -1223,12 +1319,12 @@ input.has-value{border-color:rgba(0,255,148,.4)}
 
             <table class="guide-table">
               <tr><th>Bölüm</th><th>Renk</th><th>Açıklama</th></tr>
-              <tr><td><code>[AUTO-TEST]</code></td><td style="color:var(--warn)">Sarı</td><td>Yapılandırılabilir prefix. IMAP filtreleme ve arama için kullanılır.</td></tr>
-              <tr><td><code>#a1b2c3d4</code></td><td style="color:var(--muted)">Gri</td><td>8 haneli benzersiz Run ID. Her mesajı tekil olarak izlemeye yarar.</td></tr>
-              <tr><td><code>Senaryo: ...</code></td><td style="color:var(--accent)">Mavi</td><td>Test edilen senaryo tipi (Plain Text / Ek Dosya / Inline Görsel / Reply Chain / S/MIME).</td></tr>
-              <tr><td><code>(3 Ek: PDF+CSV+TXT, 1.0MB)</code></td><td style="color:var(--accent2)">Yeşil</td><td>Ek durumu: dosya sayısı, formatlar ve toplam boyut. Eksiz senaryolarda "Eksiz" yazar.</td></tr>
-              <tr><td><code>Kısa / Orta / Uzun</code></td><td style="color:#c084fc">Mor</td><td>Mesaj gövdesinin uzunluk kategorisi (template rotasyonu).</td></tr>
-              <tr><td><code>EMS/iOS ← Gmail/Android</code></td><td style="color:var(--text)">Beyaz</td><td>Alıcı sunucu/istemci ← Gönderen sunucu/istemci kombinasyonu.</td></tr>
+              <tr><td><code>[AUTO-TEST]</code></td><td class="text-warn">Sarı</td><td>Yapılandırılabilir prefix. IMAP filtreleme ve arama için kullanılır.</td></tr>
+              <tr><td><code>#a1b2c3d4</code></td><td class="text-muted">Gri</td><td>8 haneli benzersiz Run ID. Her mesajı tekil olarak izlemeye yarar.</td></tr>
+              <tr><td><code>Senaryo: ...</code></td><td class="text-blue">Mavi</td><td>Test edilen senaryo tipi (Plain Text / Ek Dosya / Inline Görsel / Reply Chain / S/MIME).</td></tr>
+              <tr><td><code>(3 Ek: PDF+CSV+TXT, 1.0MB)</code></td><td class="text-green">Yeşil</td><td>Ek durumu: dosya sayısı, formatlar ve toplam boyut. Eksiz senaryolarda "Eksiz" yazar.</td></tr>
+              <tr><td><code>Kısa / Orta / Uzun</code></td><td class="text-purple">Mor</td><td>Mesaj gövdesinin uzunluk kategorisi (template rotasyonu).</td></tr>
+              <tr><td><code>EMS/iOS ← Gmail/Android</code></td><td class="text-white">Beyaz</td><td>Alıcı sunucu/istemci ← Gönderen sunucu/istemci kombinasyonu.</td></tr>
             </table>
           </div>
 
@@ -1296,7 +1392,7 @@ input.has-value{border-color:rgba(0,255,148,.4)}
             <p>Her test satırı şu bilgileri içerir:</p>
             <table class="guide-table">
               <tr><th>Sütun</th><th>Açıklama</th></tr>
-              <tr><td>Durum</td><td><span style="color:var(--accent2)">PASS</span> veya <span style="color:var(--danger)">FAIL</span> — Claude API'nin verdiği nihai karar</td></tr>
+              <tr><td>Durum</td><td><span class="text-accent2">PASS</span> veya <span class="text-danger">FAIL</span> — Claude API'nin verdiği nihai karar</td></tr>
               <tr><td>Kombinasyon</td><td>Hangi sunucu/istemci çifti (ör. EMS/iOS ← Gmail/Android)</td></tr>
               <tr><td>Senaryo</td><td>Test edilen senaryo tipi</td></tr>
               <tr><td>Güven</td><td><strong>HIGH</strong> = kesin sonuç, <strong>MEDIUM</strong> = kısmi doğrulama, <strong>LOW</strong> = belirsiz</td></tr>
@@ -1385,15 +1481,15 @@ python main.py --csv /yol/baska.csv    # Farklı CSV dosyası kullan</div>
   <div class="modal-box">
     <div class="mfa-icon" id="mfaIcon">🔐</div>
     <div class="mfa-server-label" id="mfaServerLabel">SUNUCU</div>
-    <div class="modal-title" style="text-align:center">İki Faktörlü Doğrulama</div>
+    <div class="modal-title text-center">İki Faktörlü Doğrulama</div>
     <div class="mfa-prompt" id="mfaPrompt">Doğrulama kodunuzu girin.</div>
     <input class="mfa-code-input" id="mfaCodeInput" type="text" maxlength="8" placeholder="000000"
            oninput="this.value=this.value.replace(/\D/g,'')"
            onkeydown="if(event.key==='Enter')submitMFA()">
-    <div class="mfa-timer" id="mfaTimer" style="display:none">
+    <div class="mfa-timer hidden" id="mfaTimer">
       Kod <span id="mfaTimerSec">—</span> saniye içinde geçersiz olacak
     </div>
-    <div class="btn-row" style="justify-content:center;margin-top:20px">
+    <div class="btn-row flex-center-content mt-20">
       <button class="btn btn-primary" onclick="submitMFA()">✓ Onayla</button>
       <button class="btn btn-ghost" onclick="cancelMFA()">İptal</button>
     </div>
@@ -1405,12 +1501,12 @@ python main.py --csv /yol/baska.csv    # Farklı CSV dosyası kullan</div>
   <div class="modal-box">
     <div class="mfa-icon">🔌</div>
     <div class="mfa-server-label" id="connMfaLabel">SUNUCU</div>
-    <div class="modal-title" style="text-align:center">Bağlantı Testi — 2FA</div>
+    <div class="modal-title text-center">Bağlantı Testi — 2FA</div>
     <div class="mfa-prompt" id="connMfaPrompt">Bağlantı testi için 2FA kodunuzu girin.</div>
     <input class="mfa-code-input" id="connMfaCode" type="text" maxlength="8" placeholder="000000"
            oninput="this.value=this.value.replace(/\D/g,'')"
            onkeydown="if(event.key==='Enter')submitConnMFA()">
-    <div class="btn-row" style="justify-content:center;margin-top:20px">
+    <div class="btn-row flex-center-content mt-20">
       <button class="btn btn-primary" onclick="submitConnMFA()">Bağlan</button>
       <button class="btn btn-ghost" onclick="closeConnMfaModal()">İptal</button>
     </div>
@@ -1827,7 +1923,7 @@ function renderComboGrid(combos) {
     <div class="combo-card ${selectedCombos.has(c.index)||selectedCombos.has('all')?'selected':''}"
          onclick="toggleCombo(${c.index},this)">
       <div class="combo-label">🔀 ${c.label}</div>
-      <div class="combo-meta">Alan: <b>${c.receiver_server}</b>/${c.receiver_client}<br>Gönderen: <b>${c.sender_server}</b>/<span style="${sstyle}">${sclient}</span></div>
+      <div class="combo-meta">Alan: <b>${c.receiver_server}</b>/${c.receiver_client}<br>Gönderen: <b>${c.sender_server}</b>/<span class="${sstyle}">${sclient}</span></div>
       <span class="combo-badge">${c.step_count} adım</span>
     </div>`;
   }).join('');
@@ -1846,11 +1942,11 @@ function renderDashCombos(combos) {
         sstyle = "color:var(--accent);font-weight:800;";
       }
       return `<tr>
-      <td style="color:var(--muted);font-family:var(--mono)">${c.index+1}</td>
+      <td class="text-muted font-mono">${c.index+1}</td>
       <td>${c.label}</td>
-      <td style="font-family:var(--mono);font-size:12px">${c.receiver_server}/${c.receiver_client}</td>
-      <td style="font-family:var(--mono);font-size:12px">${c.sender_server}/<span style="${sstyle}">${sclient}</span></td>
-      <td style="font-family:var(--mono);color:var(--accent)">${c.step_count}</td>
+      <td class="font-mono font-size-12">${c.receiver_server}/${c.receiver_client}</td>
+      <td class="font-mono font-size-12">${c.sender_server}/<span style="${sstyle}">${sclient}</span></td>
+      <td class="font-mono text-accent">${c.step_count}</td>
     </tr>`;
     }).join('')}</tbody></table>`;
   document.getElementById('st-combos').textContent = combos.length;
@@ -2067,7 +2163,7 @@ function stopVerificationPoll() {
 
 function renderVerifyItem(v) {
   const failedBanner = v.delivery_failed
-    ? `<div style="background:rgba(255,69,96,.12);border:1px solid var(--danger);border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:var(--danger)">
+    ? `<div class="bg-danger-dim border-danger border-radius-6 p-8-12 mb-10 font-size-12 text-danger">
         ⚠️ <strong>Mail teslim edilemedi (timeout)</strong> — IMAP'ta mesaj bulunamadı. Muhtemelen sunucu bağlantı sorunu.
        </div>` : '';
   return `<div class="verify-item" id="vi-${v.id}">
@@ -2089,8 +2185,9 @@ function renderVerifyItem(v) {
     <div class="verify-issue-input" id="vi-issue-${v.id}">
       <textarea id="vi-reason-${v.id}" rows="2"
         placeholder="Sorun açıklaması — ne görüyorsunuz? (opsiyonel)"
-        style="width:100%;resize:vertical;margin-bottom:8px"></textarea>
-      <div style="display:flex;gap:8px;align-items:center">
+        class="mfa-code-input text-left w-full resize-v mb-8" 
+        placeholder="Reddediyorsanız nedenini belirtin..."></textarea>
+      <div class="flex-center flex-gap-8">
         <button class="btn btn-danger btn-sm" onclick="submitVerification('${v.id}', false)">✗ Reddet ve Kaydet</button>
         <button class="btn btn-ghost btn-sm" onclick="document.getElementById('vi-issue-${v.id}').style.display='none'">İptal</button>
       </div>
@@ -2113,7 +2210,7 @@ async function pollVerifications() {
 
     if (res.pending.length === 0) {
       if (!body.querySelector('.verify-item')) {
-        body.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px 0">Test sonucu bekleniyor...</div>';
+        body.innerHTML = '<div class="text-muted font-size-13 py-8">Test sonucu bekleniyor...</div>';
       }
       document.getElementById('verifyBadge').textContent = 'BEKLİYOR';
       document.getElementById('verifyBadge').className = 'sec-badge gray';
@@ -2172,8 +2269,8 @@ async function submitVerification(id, approved) {
     const el = document.getElementById('vi-' + id);
     if (el) {
       el.style.borderColor = approved ? 'var(--accent2)' : 'var(--danger)';
-      const noteHtml = (!approved && note) ? `<div style="font-size:11px;color:var(--muted);margin-top:6px;font-family:var(--mono)">Not: ${note}</div>` : '';
-      el.innerHTML = `<div style="text-align:center;padding:12px;font-size:13px;font-weight:700;color:${approved?'var(--accent2)':'var(--danger)'}">${approved ? '✓ Onaylandı' : '✗ Reddedildi'}${noteHtml}</div>`;
+      const noteHtml = (!approved && note) ? `<div class="font-size-11 text-muted mt-6 font-mono">Not: ${note}</div>` : '';
+      el.innerHTML = `<div class="text-center p-12 font-size-13 text-bold" style="color:${approved?'var(--accent2)':'var(--danger)'}">${approved ? '✓ Onaylandı' : '✗ Reddedildi'}${noteHtml}</div>`;
       setTimeout(() => el.remove(), 3000);
     }
     toast(approved ? '✅ Test onaylandı' : `❌ Test reddedildi${note ? ': '+note.slice(0,40) : ''}`, approved ? 'ok' : 'err');
@@ -2186,7 +2283,7 @@ async function submitVerification(id, approved) {
 async function loadResults() {
   const res = await fetch('/api/results/latest').then(r => r.json());
   const tbody = document.getElementById('resultsBody');
-  if (!res.ok) { tbody.innerHTML='<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:32px">Henüz sonuç yok.</td></tr>'; return; }
+  if (!res.ok) { tbody.innerHTML='<tr><td colspan="6" class="text-center text-muted p-32">Henüz sonuç yok.</td></tr>'; return; }
   const rows=res.results, total=rows.length, pass=rows.filter(r=>r['Sonuç']==='PASS').length;
   const fail=total-pass, rate=total?Math.round(pass/total*100):0;
   document.getElementById('resultStats').style.display='flex';
@@ -2202,14 +2299,14 @@ async function loadResults() {
     const confColor = conf==='HIGH'?'accent2':conf==='MEDIUM'?'warn':'danger';
     return `<tr>
       <td>${ok?'<span class="badge-pass">PASS</span>':'<span class="badge-fail">FAIL</span>'}</td>
-      <td style="font-size:12px;font-family:var(--mono)">${r['Kombinasyon']||''}</td>
+      <td class="font-size-12 font-mono">${r['Kombinasyon']||''}</td>
       <td>${r['Senaryo Tipi']||''}</td>
-      <td><span style="font-family:var(--mono);font-size:11px;color:var(--${confColor})">${conf}</span></td>
-      <td style="font-size:12px;color:var(--muted)">
+      <td><span class="font-mono font-size-11" style="color:var(--${confColor})">${conf}</span></td>
+      <td class="font-size-12 text-muted">
         ${(r['Özet']||'').slice(0,80)}
-        ${r['Ekran Görüntüsü'] ? `<br><a href="#" onclick="showScreenshotModal('/api/' + '${r['Ekran Görüntüsü']}'.replace('reports/','')); return false;" style="color:var(--accent);font-size:11px;text-decoration:none;font-weight:bold;">📸 UI Kanıtı</a>` : ''}
+        ${r['Ekran Görüntüsü'] ? `<br><a href="#" onclick="showScreenshotModal('/api/' + '${r['Ekran Görüntüsü']}'.replace('reports/','')); return false;" class="text-accent font-size-11 no-underline text-bold">📸 UI Kanıtı</a>` : ''}
       </td>
-      <td style="font-size:11px;font-family:var(--mono);color:var(--muted)">${r['Test Zamanı']||''}</td>
+      <td class="font-size-11 font-mono text-muted">${r['Test Zamanı']||''}</td>
     </tr>`;
   }).join('');
   renderDashResults(rows.slice(0,5));
@@ -2221,11 +2318,11 @@ function renderDashResults(rows) {
     <thead><tr><th>Sonuç</th><th>Kombinasyon</th><th>Senaryo</th><th>Özet</th></tr></thead>
     <tbody>${rows.map(r=>`<tr>
       <td>${r['Sonuç']==='PASS'?'<span class="badge-pass">PASS</span>':'<span class="badge-fail">FAIL</span>'}</td>
-      <td style="font-size:12px;font-family:var(--mono)">${r['Kombinasyon']||''}</td>
-      <td style="font-size:12px">${r['Senaryo Tipi']||''}</td>
-      <td style="font-size:12px">
+      <td class="font-size-12 font-mono">${r['Kombinasyon']||''}</td>
+      <td class="font-size-12">${r['Senaryo Tipi']||''}</td>
+      <td class="font-size-12">
         ${(r['Özet']||'').slice(0,50)}
-        ${r['Ekran Görüntüsü'] ? ` <a href="#" onclick="showScreenshotModal('/api/' + '${r['Ekran Görüntüsü']}'.replace('reports/','')); return false;" style="color:var(--accent);font-size:10px;text-decoration:none">📸 Snapshot</a>` : ''}
+        ${r['Ekran Görüntüsü'] ? ` <a href="#" onclick="showScreenshotModal('/api/' + '${r['Ekran Görüntüsü']}'.replace('reports/','')); return false;" class="text-accent font-size-10 no-underline">📸 Snapshot</a>` : ''}
       </td>
     </tr>`).join('')}</tbody></table>`;
 }
@@ -2239,10 +2336,10 @@ function showScreenshotModal(url) {
 async function loadReports() {
   const res = await fetch('/api/reports').then(r=>r.json());
   const list = document.getElementById('reportList');
-  if (!res.reports.length) { list.innerHTML='<div style="color:var(--muted);font-size:13px">Henüz rapor yok.</div>'; return; }
+  if (!res.reports.length) { list.innerHTML='<div class="text-muted font-size-13">Henüz rapor yok.</div>'; return; }
   list.innerHTML = res.reports.map(r=>`<div class="report-item">
     <div><div class="report-name">${r.name}</div><div class="report-meta">${r.mtime} · ${(r.size/1024).toFixed(1)} KB · ${r.type.toUpperCase()}</div></div>
-    <div style="display:flex;gap:8px">
+    <div class="flex-center flex-gap-8">
       ${r.type==='html'?`<button class="btn btn-ghost btn-sm" onclick="openReport('${r.name}')">👁 Görüntüle</button>`:''}
       <a class="btn btn-ghost btn-sm" href="/api/reports/${r.name}" download>⬇ İndir</a>
     </div>
@@ -2319,11 +2416,11 @@ function addOtherAddressEntry(addr) {
   const list = document.getElementById('ma_other_list');
   if (!list) return;
   const row = document.createElement('div');
-  row.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:13px';
+  row.className = 'flex-center flex-gap-8 font-size-13';
   row.dataset.addr = addr;
-  row.innerHTML = `<span style="color:var(--accent2)">•</span>
-    <span style="flex:1;font-family:var(--mono);color:var(--fg)">${addr}</span>
-    <button class="btn btn-ghost btn-sm" style="padding:2px 8px;font-size:11px"
+  row.innerHTML = `<span class="text-accent2">•</span>
+    <span class="flex-1 font-mono text-white">${addr}</span>
+    <button class="btn btn-ghost btn-sm px-8 font-size-11"
       onclick="this.closest('[data-addr]').remove()">× Kaldır</button>`;
   list.appendChild(row);
 }
@@ -2379,14 +2476,14 @@ function renderTemplateEditor(data, scenarioKey) {
   
   const tmpls = (data?.templates || {})[scenarioKey] || [];
   if (!tmpls.length) { 
-    area.innerHTML = '<div style="color:var(--muted);text-align:center;padding:40px">Bu senaryo için şablon bulunamadı.</div>'; 
+    area.innerHTML = '<div class="text-muted text-center p-40">Bu senaryo için şablon bulunamadı.</div>'; 
     return; 
   }
 
   area.innerHTML = `
-    <div style="margin-bottom:20px">
-       <h2 style="font-size:18px;font-weight:800;color:var(--accent)">${SCENARIO_LABELS[scenarioKey] || scenarioKey}</h2>
-       <p style="font-size:11px;color:var(--muted);margin-top:4px">${scenarioKey} senaryosu için varyasyonları düzenleyin.</p>
+    <div class="mb-20">
+       <h2 class="font-size-18 text-extra-bold text-accent">${SCENARIO_LABELS[scenarioKey] || scenarioKey}</h2>
+       <p class="font-size-11 text-muted mt-4">${scenarioKey} senaryosu için varyasyonları düzenleyin.</p>
     </div>
     <div class="tmpl-grid">
       ${tmpls.map((t, i) => renderTmplCard(t, i, scenarioKey)).join('')}
@@ -2401,28 +2498,28 @@ function renderTmplCard(t, i, sk) {
   return `
     <div class="tmpl-card">
       <div class="tmpl-card-header">
-        <div style="display:flex;align-items:center;gap:10px">
+        <div class="flex-center flex-gap-10">
           <span class="sec-badge ${lenColor}">${LENGTH_DISPLAY[t.length] || t.length}</span>
-          <span style="font-size:11px;color:var(--muted);font-family:var(--mono)">${sk}#${i+1}</span>
+          <span class="text-muted font-size-11 font-mono">${sk}#${i+1}</span>
         </div>
-        <div style="display:flex;gap:4px">
+        <div class="flex-center flex-gap-4">
           <span class="var-hint" onclick="insertVar('${sk}_${i}', '{{DATE}}')">{{DATE}}</span>
           <span class="var-hint" onclick="insertVar('${sk}_${i}', '{{SENDER}}')">{{SENDER}}</span>
         </div>
       </div>
       <div class="tmpl-card-body">
-        <div class="form-group" style="margin-bottom:12px">
+        <div class="form-group mb-12">
           <label>Konu Etiketi (Subject Tag)</label>
           <input id="tmpl_${sk}_${i}_subject" value="${(t.subject_tag || '').replace(/"/g, '&quot;')}" placeholder="Örn: [Kritik Test]">
         </div>
-        <div class="form-group" style="margin-bottom:12px">
+        <div class="form-group mb-12">
           <label>Mesaj Gövdesi</label>
           <textarea id="tmpl_${sk}_${i}_body" rows="6" 
-            style="font-family:var(--mono);font-size:12px">${(t.body || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea>
+            class="font-mono font-size-12">${(t.body || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea>
         </div>
         
         <div class="divider"></div>
-        <label style="margin-bottom:8px">İlişkili Ek Dosyalar (attachments/)</label>
+        <label class="mb-8">İlişkili Ek Dosyalar (attachments/)</label>
         <div class="file-selector-grid">
           ${_attachmentList.map(f => `
             <div class="file-pill ${selectedFiles.includes(f.name) ? 'selected' : ''}" 
@@ -2430,7 +2527,7 @@ function renderTmplCard(t, i, sk) {
               <span>📎</span> ${f.name}
             </div>
           `).join('')}
-          ${_attachmentList.length === 0 ? '<div style="font-size:11px;color:var(--muted);grid-column:1/-1">Yüklü dosya bulunamadı. Aşağıdan yükleme yapın.</div>' : ''}
+          ${_attachmentList.length === 0 ? '<div class="text-muted font-size-11 grid-col-all">Yüklü dosya bulunamadı. Aşağıdan yükleme yapın.</div>' : ''}
         </div>
       </div>
     </div>
@@ -2506,7 +2603,7 @@ async function loadAttachments() {
   if (!list) return;
   
   if (!_attachmentList.length) {
-    list.innerHTML = '<div style="color:var(--muted);font-size:12px;grid-column:1/-1;text-align:center;padding:20px">Henüz dosya bulunmuyor.</div>';
+    list.innerHTML = '<div class="text-muted font-size-12 grid-col-all text-center p-20">Henüz dosya bulunmuyor.</div>';
     return;
   }
 
@@ -2514,10 +2611,10 @@ async function loadAttachments() {
   
   list.innerHTML = _attachmentList.map(f => `
     <div class="combo-card">
-      <div style="font-size:24px;margin-bottom:8px">${EXT_ICONS[f.ext] || '📎'}</div>
-      <div class="combo-label" style="word-break:break-all">${f.name}</div>
+      <div class="font-size-24 mb-8">${EXT_ICONS[f.ext] || '📎'}</div>
+      <div class="combo-label break-all">${f.name}</div>
       <div class="combo-meta">${(f.size/1024).toFixed(1)} KB</div>
-      <button class="btn btn-ghost btn-sm" style="margin-top:10px;color:var(--danger);width:100%" 
+      <button class="btn btn-ghost btn-sm mt-10 text-danger w-full" 
         onclick="deleteAttachment('${f.name}')">Sil</button>
     </div>
   `).join('');
@@ -2553,13 +2650,13 @@ loadDashboard();
 </script>
 
 <!-- PASIF MOD: Manuel Doğrulama — Floating Panel (her sayfada görünür) -->
-<div id="verificationCard" style="display:none;position:fixed;bottom:24px;right:24px;width:420px;max-height:70vh;overflow-y:auto;z-index:9999;background:var(--surface2);border:1px solid var(--accent);border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.5);padding:0">
-  <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surface3);border-radius:12px 12px 0 0;position:sticky;top:0">
-    <span style="font-weight:700;font-size:13px;color:var(--fg)">✋ Manuel Doğrulama</span>
-    <span class="sec-badge yellow" id="verifyBadge" style="margin:0">BEKLİYOR</span>
+<div id="verificationCard" class="hidden max-w-420 vh-70-auto z-9999 bg-surface-2 border-accent border-radius-12 shadow-modal p-0" style="position:fixed;bottom:24px;right:24px;width:420px">
+  <div class="flex-between p-12-16 border-bottom-1 bg-surface-3 border-radius-12-top sticky-top">
+    <span class="text-bold font-size-13 text-white">✋ Manuel Doğrulama</span>
+    <span class="sec-badge yellow m-0" id="verifyBadge">BEKLİYOR</span>
   </div>
-  <div id="verificationBody" style="padding:12px 16px">
-    <div style="color:var(--muted);font-size:13px">Test sonucu bekleniyor...</div>
+  <div id="verificationBody" class="p-12-16">
+    <div class="text-muted font-size-13">Test sonucu bekleniyor...</div>
   </div>
 </div>
 </body>
