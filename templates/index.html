@@ -23,7 +23,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--s
 .logo-title{font-size:14px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-top:8px;line-height:1.2}
 .logo-sub{font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:3px}
 nav{flex:1;padding:12px 0}
-.nav-item{display:flex;align-items:center;gap:10px;padding:11px 20px;cursor:pointer;font-size:13px;font-weight:600;color:var(--muted);border-left:3px solid transparent;transition:all .2s;user-select:none}
+.nav-item{display:flex;align-items:center;gap:10px;padding:11px 20px;cursor:pointer;font-size:13px;font-weight:600;color:var(--muted);border-left:3px solid transparent;transition:all .2s;-webkit-user-select:none;user-select:none}
 .nav-item:hover{color:var(--text);background:rgba(0,212,255,.05)}
 .nav-item.active{color:var(--accent);border-left-color:var(--accent);background:rgba(0,212,255,.08)}
 .nav-icon{font-size:16px;width:20px;text-align:center}
@@ -99,7 +99,7 @@ input.has-value{border-color:rgba(0,255,148,.4)}
 .sec-badge.gray{background:rgba(74,101,128,.2);color:var(--muted)}
 
 /* 2FA MODAL */
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(4px);z-index:1000;display:none;align-items:center;justify-content:center}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);z-index:1000;display:none;align-items:center;justify-content:center}
 .modal-overlay.visible{display:flex;animation:fadeIn .2s ease}
 .modal-box{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:32px;min-width:380px;max-width:440px;box-shadow:0 24px 64px rgba(0,0,0,.6)}
 .modal-title{font-size:18px;font-weight:800;margin-bottom:6px}
@@ -249,8 +249,41 @@ input.has-value{border-color:rgba(0,255,148,.4)}
 .file-pill.selected{background:rgba(0,255,148,.08);border-color:var(--accent2);color:var(--accent2)}
 .file-pill input{display:none}
 
-.var-hint{font-size:10px;color:var(--muted);background:rgba(0,212,255,.05);padding:2px 6px;border-radius:4px;cursor:pointer;font-family:var(--mono)}
-.var-hint:hover{color:var(--accent);background:rgba(0,212,255,.12)}
+/* UTILS */
+.flex-center{display:flex;align-items:center;gap:10px}
+.flex-between{display:flex;align-items:center;justify-content:space-between}
+.text-muted-sm{color:var(--muted);font-size:13px}
+.text-muted-xs{color:var(--muted);font-size:12px}
+.mt-12{margin-top:12px}
+.mt-16{margin-top:16px}
+.mb-6{margin-bottom:6px}
+.mb-15{margin-bottom:15px}
+.mb-16{margin-bottom:16px}
+.p-0{padding:0}
+.w-full{width:100%}
+.text-center{text-align:center}
+.vh-70-auto{max-height:70vh;overflow-y:auto}
+.hidden{display:none}
+
+/* MODAL OVERRIDES */
+.modal-screenshot{max-width:900px;width:90%;background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:20px}
+.img-screenshot{max-width:100%;border-radius:8px;border:1px solid var(--border)}
+
+/* DASHBOARD */
+.chart-container{position:relative;height:250px}
+
+/* LLM PANELS */
+.llm-badge{padding:10px 14px;border-radius:8px;font-size:12px;margin-bottom:14px}
+.llm-badge-google{background:rgba(0,255,148,.08);border:1px solid rgba(0,255,148,.25);color:var(--accent2)}
+.llm-badge-claude{background:rgba(255,184,0,.08);border:1px solid rgba(255,184,0,.25);color:var(--warn)}
+
+/* ADDRESSES */
+.addr-row{display:flex;align-items:center;gap:8px}
+.addr-label{width:72px;font-size:12px;color:var(--muted);font-weight:600}
+
+/* TEMPLATES */
+.tmpl-empty-state{padding:100px 0;color:var(--muted)}
+.tmpl-empty-icon{font-size:40px;margin-bottom:16px}
 
 /* SCROLLBAR */
 ::-webkit-scrollbar{width:6px;height:6px}
@@ -283,13 +316,13 @@ input.has-value{border-color:rgba(0,255,148,.4)}
 
 <!-- UI Screenshot Modal -->
 <div class="modal-overlay" id="screenshotModal" onclick="this.classList.remove('visible')">
-  <div class="modal" onclick="event.stopPropagation()" style="max-width: 900px; width: 90%; background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:20px;">
-    <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-      <h3 style="margin:0; font-size:16px;">📸 UI Rendering Snapshot</h3>
+  <div class="modal-screenshot" onclick="event.stopPropagation()">
+    <div class="flex-between mb-15">
+      <h3 class="m-0" style="font-size:16px;">📸 UI Rendering Snapshot</h3>
       <button onclick="document.getElementById('screenshotModal').classList.remove('visible')" class="btn btn-ghost btn-sm">Kapat</button>
     </div>
-    <div class="modal-body" style="text-align:center; max-height: 70vh; overflow-y: auto;">
-      <img id="screenshotImage" src="" style="max-width: 100%; border-radius:8px; border:1px solid var(--border);" />
+    <div class="vh-70-auto text-center">
+      <img id="screenshotImage" src="" class="img-screenshot" />
     </div>
   </div>
 </div>
@@ -307,7 +340,7 @@ input.has-value{border-color:rgba(0,255,148,.4)}
       <div class="topbar-title" id="topbarTitle">Dashboard</div>
       <div class="topbar-breadcrumb" id="topbarBread">mail-otomasyon / genel bakış</div>
     </div>
-    <div style="display:flex;gap:10px;align-items:center">
+    <div class="flex-center">
       <button class="btn btn-ghost btn-sm" onclick="refreshAll()">↻ Yenile</button>
       <button class="btn btn-success btn-sm" id="quickRunBtn" onclick="quickRun()">▶ Hızlı Başlat</button>
       <button class="btn btn-danger btn-sm" id="topStopBtn" style="display:none" onclick="stopRun()">■ Durdur</button>
@@ -327,16 +360,16 @@ input.has-value{border-color:rgba(0,255,148,.4)}
       </div>
       <div class="card">
         <div class="card-header"><span class="card-title">📋 Test Matrisi</span><button class="btn btn-ghost btn-sm" onclick="loadCombinations()">↻</button></div>
-        <div class="card-body"><div id="dashCombosTable" style="color:var(--muted);font-size:13px">Yükleniyor...</div></div>
+        <div class="card-body"><div id="dashCombosTable" class="text-muted-sm">Yükleniyor...</div></div>
       </div>
       <div class="form-grid">
         <div class="card">
           <div class="card-header"><span class="card-title">📊 Son Sonuçlar</span></div>
-          <div class="card-body" id="dashResults"><span style="color:var(--muted);font-size:13px">Henüz sonuç yok.</span></div>
+          <div class="card-body" id="dashResults"><span class="text-muted-sm">Henüz sonuç yok.</span></div>
         </div>
         <div class="card">
           <div class="card-header"><span class="card-title">📈 Geçmiş Trend (SQLite)</span></div>
-          <div class="card-body" style="position:relative;height:250px">
+          <div class="card-body chart-container">
             <canvas id="chartHistory"></canvas>
           </div>
         </div>
@@ -414,8 +447,8 @@ input.has-value{border-color:rgba(0,255,148,.4)}
 
           <!-- Google Gemini Panel -->
           <div id="llmPanelGoogle">
-            <div style="padding:10px 14px;background:rgba(0,255,148,.08);border:1px solid rgba(0,255,148,.25);border-radius:8px;font-size:12px;color:var(--accent2);margin-bottom:14px">
-              ✨ <b>Ücretsiz:</b> Google AI Studio'dan API key alın → <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--accent);text-decoration:underline">aistudio.google.com/apikey</a>
+            <div class="llm-badge llm-badge-google">
+              ✨ <b>Ücretsiz:</b> Google AI Studio'dan API key alın → <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:underline">aistudio.google.com/apikey</a>
             </div>
             <div class="form-grid">
               <div class="form-group full"><label>Google API Key</label><input id="google_api_key" type="password" placeholder="AIzaSy..."></div>
@@ -430,9 +463,9 @@ input.has-value{border-color:rgba(0,255,148,.4)}
           </div>
 
           <!-- Claude Panel -->
-          <div id="llmPanelClaude" style="display:none">
-            <div style="padding:10px 14px;background:rgba(255,184,0,.08);border:1px solid rgba(255,184,0,.25);border-radius:8px;font-size:12px;color:var(--warn);margin-bottom:14px">
-              💰 <b>Ücretli:</b> Anthropic Console'dan API key alın → <a href="https://console.anthropic.com" target="_blank" style="color:var(--accent);text-decoration:underline">console.anthropic.com</a>
+          <div id="llmPanelClaude" class="hidden">
+            <div class="llm-badge llm-badge-claude">
+              💰 <b>Ücretli:</b> Anthropic Console'dan API key alın → <a href="https://console.anthropic.com" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:underline">console.anthropic.com</a>
             </div>
             <div class="form-grid">
               <div class="form-group full"><label>Anthropic API Key</label><input id="anthropic_api_key" type="password" placeholder="sk-ant-api03-..."></div>
@@ -452,27 +485,27 @@ input.has-value{border-color:rgba(0,255,148,.4)}
       <div class="card">
         <div class="card-header"><span class="card-title">✉ Mail Adresleri</span></div>
         <div class="card-body">
-          <div style="font-size:12px;color:var(--muted);margin-bottom:14px">
+          <div class="text-muted-xs mb-16">
             Her sunucu için test mail adresi girin. Bu adresler senaryolardaki alıcı olarak kullanılır.
           </div>
           <div style="display:flex;flex-direction:column;gap:12px">
             <!-- EMS -->
-            <div style="display:flex;align-items:center;gap:8px">
-              <span style="width:72px;font-size:12px;color:var(--muted);font-weight:600">EMS</span>
+            <div class="addr-row">
+              <span class="addr-label">EMS</span>
               <input id="ma_ems_username" placeholder="kullanici" style="flex:1;min-width:0">
-              <span style="color:var(--muted);font-size:13px;white-space:nowrap">@ meb.gov.tr</span>
+              <span class="text-muted-sm" style="white-space:nowrap">@ meb.gov.tr</span>
             </div>
             <!-- Gmail -->
-            <div style="display:flex;align-items:center;gap:8px">
-              <span style="width:72px;font-size:12px;color:var(--muted);font-weight:600">Gmail</span>
+            <div class="addr-row">
+              <span class="addr-label">Gmail</span>
               <input id="ma_gmail_username" placeholder="kullanici" style="flex:1;min-width:0">
-              <span style="color:var(--muted);font-size:13px;white-space:nowrap">@ gmail.com</span>
+              <span class="text-muted-sm" style="white-space:nowrap">@ gmail.com</span>
             </div>
             <!-- Outlook -->
-            <div style="display:flex;align-items:center;gap:8px">
-              <span style="width:72px;font-size:12px;color:var(--muted);font-weight:600">Outlook</span>
+            <div class="addr-row">
+              <span class="addr-label">Outlook</span>
               <input id="ma_outlook_username" placeholder="kullanici" style="flex:1;min-width:0">
-              <span style="color:var(--muted);font-size:13px">@</span>
+              <span class="text-muted-sm">@</span>
               <select id="ma_outlook_domain" style="width:160px">
                 <option value="hotmail.com">hotmail.com</option>
                 <option value="outlook.com">outlook.com</option>
@@ -568,19 +601,18 @@ input.has-value{border-color:rgba(0,255,148,.4)}
                 </div>
               </div>
 
-              <!-- TOTP secret setup -->
               <div id="totpSetup-ems">
                 <div class="section-label">TOTP Otomatik Üretim (Opsiyonel)</div>
-                <p style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6">
+                <p class="text-muted-xs mb-12 lh-1-6">
                   Authenticator uygulamanızdaki secret'ı buraya girerseniz, her test çalışmasında kod otomatik üretilir — sizi durdurmaz.<br>
-                  <span style="color:var(--warn)">⚠ Secret kaydetmek istemiyorsanız boş bırakın.</span> Her çalışmada manuel kod girersiniz.
+                  <span class="text-warn">⚠ Secret kaydetmek istemiyorsanız boş bırakın.</span> Her çalışmada manuel kod girersiniz.
                 </p>
                 <div class="form-grid">
                   <div class="form-group">
                     <label>TOTP Secret (Base32)</label>
                     <input id="ems_totp_secret" type="password" placeholder="JBSWY3DPEHPK3PXP...">
                   </div>
-                  <div class="form-group" style="justify-content:flex-end">
+                  <div class="form-group flex-end">
                     <label>&nbsp;</label>
                     <button class="btn btn-ghost btn-sm" onclick="previewTotp('ems')">👁 Kodu Önizle</button>
                   </div>
@@ -595,7 +627,7 @@ input.has-value{border-color:rgba(0,255,148,.4)}
             <!-- Security badges -->
             <div class="divider"></div>
             <div class="section-label">Bağlantı Güvenliği</div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap" id="secBadges-ems">
+            <div class="addr-row mb-16" id="secBadges-ems">
               <span class="sec-badge gray">TLS: Kontrol edilmedi</span>
             </div>
             <div class="btn-row">
@@ -658,9 +690,9 @@ input.has-value{border-color:rgba(0,255,148,.4)}
               </div>
             </div>
             <div class="divider"></div>
-            <div style="background:rgba(0,212,255,.06);border:1px solid rgba(0,212,255,.2);border-radius:8px;padding:14px;font-size:12px;color:var(--muted);line-height:1.7">
-              💡 <b style="color:var(--text)">Gmail Önerisi:</b> Google hesabınızda 2FA aktifse
-              <b style="color:var(--accent)">App Password</b> kullanın.
+            <div class="llm-badge llm-badge-google lh-1-7">
+              💡 <b class="text-white">Gmail Önerisi:</b> Google hesabınızda 2FA aktifse
+              <b class="text-accent">App Password</b> kullanın.
               Google Hesabı → Güvenlik → 2 Adımlı Doğrulama → Uygulama Şifreleri adımını izleyin.
               App Password ile SMTP/IMAP erişimi sorunsuz çalışır.
             </div>
@@ -749,21 +781,21 @@ input.has-value{border-color:rgba(0,255,148,.4)}
       <div class="card">
         <div class="card-header"><span class="card-title">🧪 Senaryo Tipi</span></div>
         <div class="card-body">
-          <div class="scenario-pills">
-            <div class="pill selected" data-sc="all">Tümü</div>
-            <div class="pill" data-sc="plain_text">Plain Text</div>
-            <div class="pill" data-sc="attachment">Eklentili</div>
-            <div class="pill" data-sc="multi_attachment">Çoklu Ek</div>
-            <div class="pill" data-sc="inline_image">Inline Resim</div>
-            <div class="pill disabled" data-sc="smime" title="Altyapıda yok">İmzalı (Devre Dışı)</div>
-            <div class="pill" data-sc="reply_chain">Reply Chain</div>
-            <div class="pill" data-sc="calendar_invite">Takvim (iTIP)</div>
-            <div class="pill" data-sc="i18n">Uluslararası (i18n)</div>
-            <div class="pill" data-sc="complex_html">Zengin CSS</div>
-            <div class="pill" data-sc="html_table">Tablo (Grid)</div>
-            <div class="pill" data-sc="forward_chain">Forward Chain</div>
-          </div>
-          <p style="font-size:12px;color:var(--muted)">ℹ️ S/MIME altyapıda aktif değil. Kurumsal metin imzası plain_text senaryolarında test edilir.</p>
+            <div class="scenario-pills">
+              <div class="pill selected" data-sc="all">Tümü</div>
+              <div class="pill" data-sc="plain_text">Plain Text</div>
+              <div class="pill" data-sc="attachment">Eklentili</div>
+              <div class="pill" data-sc="multi_attachment">Çoklu Ek</div>
+              <div class="pill" data-sc="inline_image">Inline Resim</div>
+              <div class="pill disabled" data-sc="smime" title="Altyapıda yok">İmzalı (Devre Dışı)</div>
+              <div class="pill" data-sc="reply_chain">Reply Chain</div>
+              <div class="pill" data-sc="calendar_invite">Takvim (iTIP)</div>
+              <div class="pill" data-sc="i18n">Uluslararası (i18n)</div>
+              <div class="pill" data-sc="complex_html">Zengin CSS</div>
+              <div class="pill" data-sc="html_table">Tablo (Grid)</div>
+              <div class="pill" data-sc="forward_chain">Forward Chain</div>
+            </div>
+            <p class="text-muted-xs">ℹ️ S/MIME altyapıda aktif değil. Kurumsal metin imzası plain_text senaryolarında test edilir.</p>
         </div>
       </div>
       <div class="card">
@@ -829,16 +861,16 @@ input.has-value{border-color:rgba(0,255,148,.4)}
               </select>
             </div>
           </div>
-          <div id="analyzerModeInfo" style="display:none;margin-top:12px;padding:12px 16px;background:rgba(255,184,0,.08);border:1px solid rgba(255,184,0,.25);border-radius:8px;font-size:12px;color:var(--warn)">
+          <div id="analyzerModeInfo" class="hidden mt-12 llm-badge-claude">
             <div id="infoPassive">⚡ <b>Pasif Mod:</b> LLM API kullanılmaz. Her test sonucu için app üzerinden manuel onay beklenir. API key gerekmez.</div>
-            <div id="infoAuto" style="display:none">🤖 <b>Otomatik Mod:</b> LLM API kullanılmaz. MIME yapısı ve metadata üzerinden kural bazlı otomatik kontrol yapılır. Hızlıdır ancak görsel kontrol yapmaz.</div>
+            <div id="infoAuto" class="hidden">🤖 <b>Otomatik Mod:</b> LLM API kullanılmaz. MIME yapısı ve metadata üzerinden kural bazlı otomatik kontrol yapılır. Hızlıdır ancak görsel kontrol yapmaz.</div>
           </div>
           <div class="btn-row">
             <button class="btn btn-success" id="runBtn" onclick="startRun()">▶ Testi Başlat</button>
             <button class="btn btn-danger" id="stopBtn2" style="display:none" onclick="stopRun()">■ Durdur</button>
           </div>
-          <div id="runProgress" style="display:none;margin-top:16px">
-            <div style="font-size:12px;color:var(--muted);margin-bottom:6px" id="runProgressLabel">Çalışıyor...</div>
+          <div id="runProgress" class="hidden mt-16">
+            <div class="text-muted-xs mb-6" id="runProgressLabel">Çalışıyor...</div>
             <div class="progress-bar-bg"><div class="progress-bar-fill" id="progressFill" style="width:0%"></div></div>
           </div>
         </div>
@@ -884,11 +916,11 @@ input.has-value{border-color:rgba(0,255,148,.4)}
           <span class="card-title">📈 Test Sonuçları</span>
           <button class="btn btn-ghost btn-sm" onclick="loadResults()">↻ Yenile</button>
         </div>
-        <div class="card-body" style="padding:0">
+        <div class="card-body p-0">
           <div style="overflow-x:auto">
             <table class="results-table">
               <thead><tr><th>Durum</th><th>Kombinasyon</th><th>Senaryo</th><th>Güven</th><th>Özet</th><th>Zaman</th></tr></thead>
-              <tbody id="resultsBody"><tr><td colspan="6" style="text-align:center;color:var(--muted);padding:32px">Henüz sonuç yok.</td></tr></tbody>
+              <tbody id="resultsBody"><tr><td colspan="6" class="text-center text-muted-sm" style="padding:32px">Henüz sonuç yok.</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -904,7 +936,7 @@ input.has-value{border-color:rgba(0,255,148,.4)}
       <div id="reportViewer" style="display:none">
         <div class="card">
           <div class="card-header"><span class="card-title" id="reportViewerTitle">Rapor</span><button class="btn btn-ghost btn-sm" onclick="closeReport()">✕</button></div>
-          <div class="card-body" style="padding:0"><iframe class="report-frame" id="reportFrame" src=""></iframe></div>
+          <div class="card-body p-0"><iframe class="report-frame" id="reportFrame" src=""></iframe></div>
         </div>
       </div>
     </div>
@@ -927,8 +959,8 @@ input.has-value{border-color:rgba(0,255,148,.4)}
             </div>
             <!-- Editor Area -->
             <div id="tmplEditorArea">
-              <div style="text-align:center;padding:100px 0;color:var(--muted)">
-                <div style="font-size:40px;margin-bottom:16px">👈</div>
+              <div class="tmpl-empty-state text-center">
+                <div class="tmpl-empty-icon">👈</div>
                 <div>Konfigüre etmek için soldan bir senaryo seçin.</div>
               </div>
             </div>
