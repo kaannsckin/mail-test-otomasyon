@@ -28,7 +28,7 @@ TEMPLATES_PATH = Path("templates.yaml")
 # ── Yardımcılar ────────────────────────────────────────────────────
 
 def _tmpl_list_to_dicts(templates) -> list:
-    return [{"subject_tag": t.subject_tag, "body": t.body, "length": t.length}
+    return [{"subject_tag": t.subject_tag, "body": t.body, "length": t.length, "attachments": t.attachments or []}
             for t in templates]
 
 
@@ -93,6 +93,7 @@ def get_template(scenario_key: str, rotation_index: int) -> MessageTemplate:
                 subject_tag=t["subject_tag"],
                 body=t["body"],
                 length=t["length"],
+                attachments=t.get("attachments", [])
             )
     return _default_get_template(scenario_key, rotation_index)
 
@@ -108,6 +109,7 @@ def get_reply_original(rotation_index: int) -> MessageTemplate:
                 subject_tag=t["subject_tag"],
                 body=t["body"],
                 length=t["length"],
+                attachments=t.get("attachments", [])
             )
     return _default_get_reply_original(rotation_index)
 

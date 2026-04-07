@@ -36,24 +36,27 @@ run_state = {
 # ── CONFIG ──────────────────────────────────────────────────────
 @app.route("/api/config", methods=["GET"])
 def get_config():
+    DOMAIN_DEFAULTS = {"ems": "meb.gov.tr", "gmail": "gmail.com", "outlook": "hotmail.com"}
     if CONFIG_PATH.exists():
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
-        # Eski format: test_address varsa mail_addresses'e sentezle (backward compat)
-        if "mail_addresses" not in data:
-            DOMAIN_DEFAULTS = {"ems": "meb.gov.tr", "gmail": "gmail.com", "outlook": "hotmail.com"}
-            ma = {}
-            for srv in ["ems", "gmail", "outlook"]:
-                sc = data.get(srv, {})
-                addr = sc.get("test_address", "")
-                if addr and "@" in addr:
-                    user, domain = addr.rsplit("@", 1)
-                    ma[srv] = {"username": user, "domain": domain, "address": addr}
-                else:
-                    ma[srv] = {"username": "", "domain": DOMAIN_DEFAULTS.get(srv, ""), "address": ""}
-            data["mail_addresses"] = ma
-        return jsonify({"ok": True, "config": data})
-    return jsonify({"ok": False, "error": "config.yaml bulunamadı"})
+    else:
+        # İlk kullanım — boş şablon döndür, hata verme
+        data = {}
+
+    # Eski format: test_address varsa mail_addresses'e sentezle (backward compat)
+    if "mail_addresses" not in data:
+        ma = {}
+        for srv in ["ems", "gmail", "outlook"]:
+            sc = data.get(srv, {})
+            addr = sc.get("test_address", "")
+            if addr and "@" in addr:
+                user, domain = addr.rsplit("@", 1)
+                ma[srv] = {"username": user, "domain": domain, "address": addr}
+            else:
+                ma[srv] = {"username": "", "domain": DOMAIN_DEFAULTS.get(srv, ""), "address": ""}
+        data["mail_addresses"] = ma
+    return jsonify({"ok": True, "config": data})
 
 @app.route("/api/config", methods=["POST"])
 def save_config():
@@ -243,14 +246,22 @@ def _get_csv_path():
 # ── RUNNER ──────────────────────────────────────────────────────
 @app.route("/api/run/start", methods=["POST"])
 def start_run():
+    # Zombie kontrolü: running=True ama process ölmüş mü?
     if run_state["running"]:
-        return jsonify({"ok": False, "error": "Zaten bir test çalışıyor"}), 400
+        proc = run_state.get("process")
+        if proc and proc.poll() is not None:
+            # Process ölmüş ama state güncellenmemiş — temizle
+            run_state.update({"running": False, "finished_at": datetime.now().isoformat(),
+                              "exit_code": proc.returncode})
+        else:
+            return jsonify({"ok": False, "error": "Zaten bir test çalışıyor"}), 400
     body      = request.json or {}
     cmd       = [sys.executable, "main.py"]
     if body.get("combo") is not None: cmd += ["--combo", str(body["combo"])]
     if body.get("scenario"):          cmd += ["--scenario", body["scenario"]]
     if body.get("dry_run"):           cmd += ["--dry-run"]
     if body.get("mode"):              cmd += ["--mode", body["mode"]]
+    if body.get("spoof_sender"):      cmd += ["--spoof-sender", body["spoof_sender"]]
     run_state.update({"log_buffer": [], "running": True,
                       "started_at": datetime.now().isoformat(),
                       "finished_at": None, "exit_code": None})
@@ -281,9 +292,18 @@ def stop_run():
     mfa_manager.cancel()
     if run_state.get("process"):
         run_state["process"].terminate()
-        run_state["running"] = False
-        return jsonify({"ok": True})
-    return jsonify({"ok": False, "error": "Çalışan süreç yok"})
+    run_state.update({"running": False, "finished_at": datetime.now().isoformat()})
+    return jsonify({"ok": True})
+
+@app.route("/api/run/reset", methods=["POST"])
+def reset_run():
+    """Stuck run_state'i sıfırla (zombie process sonrası kılıç kullanın)."""
+    proc = run_state.get("process")
+    if proc and proc.poll() is None:
+        proc.terminate()
+    run_state.update({"running": False, "process": None, "exit_code": None,
+                      "finished_at": datetime.now().isoformat(), "log_buffer": []})
+    return jsonify({"ok": True, "msg": "Run state sıfırlandı."})
 
 @app.route("/api/run/status", methods=["GET"])
 def run_status():
@@ -340,7 +360,7 @@ def list_reports():
                           "mtime":datetime.fromtimestamp(st.st_mtime).strftime("%d.%m.%Y %H:%M")})
     return jsonify({"ok": True, "reports": files})
 
-@app.route("/api/reports/<filename>")
+@app.route("/api/reports/<path:filename>")
 def get_report(filename):
     p = REPORTS_DIR / filename
     return send_file(p) if p.exists() else (jsonify({"ok":False}), 404)
@@ -353,6 +373,15 @@ def latest_results():
     with open(files[0],"r",encoding="utf-8-sig") as f:
         for row in csv.DictReader(f): rows.append(dict(row))
     return jsonify({"ok":True,"results":rows,"file":files[0].name})
+
+@app.route("/api/results/history")
+def history_results():
+    try:
+        from database import get_dashboard_stats
+        stats = get_dashboard_stats()
+        return jsonify({"ok": True, "stats": stats["stats"], "runs": stats["runs"]})
+    except ImportError:
+        return jsonify({"ok": False, "error": "Database modülü bulunamadı"})
 
 # ── TEMPLATES ───────────────────────────────────────────────────────
 @app.route("/api/templates", methods=["GET"])
@@ -442,10 +471,12 @@ if __name__ == "__main__":
 
         return True
 
-    port = desired_port
-    if env_port is None:
+    port = int(os.environ.get("PORT", desired_port))
+    if "PORT" not in os.environ:
         while port < desired_port + 20 and not _is_port_free(port):
             port += 1
 
     print(f"\n🚀 Mail Otomasyon Arayüzü: http://localhost:{port}\n")
-    app.run(debug=True, host="0.0.0.0", port=port, threaded=True)
+    # Debug modunu kapatıyoruz çünkü arkaplanda (nohup/&) çalışırken 
+    # reloader terminal etkileşimi bekleyip süreci durdurabiliyor (TN status).
+    app.run(debug=False, host="0.0.0.0", port=port, threaded=True)

@@ -84,9 +84,9 @@ input.has-value{border-color:rgba(0,255,148,.4)}
 
 /* AUTH METHOD SELECTOR */
 .auth-method-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px}
-.auth-card{border:2px solid var(--border);border-radius:10px;padding:12px;cursor:pointer;transition:all .2s;text-align:center}
-.auth-card:hover{border-color:var(--muted)}
-.auth-card.selected{border-color:var(--accent);background:rgba(0,212,255,.08)}
+.auth-card{border:2px solid var(--border);border-radius:12px;padding:12px;cursor:pointer;transition:transform .2s cubic-bezier(0.34, 1.56, 0.64, 1), border-color .2s, box-shadow .2s, background .2s;text-align:center;background:rgba(255,255,255,0.01)}
+.auth-card:hover{border-color:var(--accent);transform:translateY(-2px);box-shadow:0 6px 16px rgba(0,212,255,0.12)}
+.auth-card.selected{border-color:var(--accent);background:rgba(0,212,255,.08);box-shadow:0 0 0 2px rgba(0,212,255,0.3) inset}
 .auth-card .auth-icon{font-size:22px;margin-bottom:6px}
 .auth-card .auth-label{font-size:11px;font-weight:700;color:var(--text)}
 .auth-card .auth-desc{font-size:10px;color:var(--muted);margin-top:2px;line-height:1.4}
@@ -138,10 +138,10 @@ input.has-value{border-color:rgba(0,255,148,.4)}
 
 /* PILLS */
 .scenario-pills{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
-.pill{padding:6px 14px;border-radius:999px;cursor:pointer;font-size:12px;font-weight:600;border:1px solid var(--border);color:var(--muted);transition:all .15s}
-.pill:hover{border-color:var(--accent2);color:var(--text)}
-.pill.selected{background:rgba(0,255,148,.12);border-color:var(--accent2);color:var(--accent2)}
-.pill.disabled{opacity:.4;cursor:not-allowed;text-decoration:line-through}
+.pill{padding:6px 14px;border-radius:999px;cursor:pointer;font-size:12px;font-weight:600;border:1px solid var(--border);color:var(--muted);transition:transform .2s ease, box-shadow .2s ease, border-color .2s, color .2s;background:rgba(255,255,255,0.02)}
+.pill:hover{border-color:var(--accent2);color:var(--text);transform:scale(1.04);box-shadow:0 4px 12px rgba(0,255,148,0.15)}
+.pill.selected{background:rgba(0,255,148,.12);border-color:var(--accent2);color:var(--accent2);box-shadow:0 0 15px rgba(0,255,148,0.2) inset;transform:scale(1.03)}
+.pill.disabled{opacity:.4;cursor:not-allowed;text-decoration:line-through;box-shadow:none;transform:none}
 
 /* TERMINAL */
 .terminal{background:#050a10;border:1px solid var(--border);border-radius:10px;overflow:hidden}
@@ -226,11 +226,38 @@ input.has-value{border-color:rgba(0,255,148,.4)}
 .guide-subject .hl-len{color:#c084fc}
 .guide-subject .hl-combo{color:var(--text)}
 
+/* SCENARIO EDITOR UPDATES */
+.tmpl-layout{display:grid;grid-template-columns:240px 1fr;gap:24px;min-height:500px}
+.tmpl-side-nav{display:flex;flex-direction:column;gap:12px}
+.tmpl-cat-group{margin-bottom:20px}
+.tmpl-cat-title{font-size:10px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;padding-left:8px}
+.tmpl-nav-item{padding:10px 14px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;color:var(--muted);transition:all .2s;display:flex;align-items:center;gap:10px;border:1px solid transparent}
+.tmpl-nav-item:hover{background:rgba(0,212,255,.05);color:var(--text)}
+.tmpl-nav-item.active{background:var(--border);color:var(--accent);border-color:var(--accent);box-shadow:0 4px 12px rgba(0,212,255,.1)}
+.tmpl-nav-icon{font-size:14px;width:18px;text-align:center}
+
+.tmpl-grid{display:grid;grid-template-columns:1fr;gap:20px}
+.tmpl-card{background:var(--bg);border:1px solid var(--border);border-radius:12px;overflow:hidden;transition:all .3s ease}
+.tmpl-card:hover{border-color:var(--accent);box-shadow:0 8px 24px rgba(0,0,0,.2)}
+.tmpl-card-header{padding:12px 16px;background:rgba(255,255,255,.02);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.tmpl-card-body{padding:16px}
+
+/* ATTACHMENT SELECTOR */
+.file-selector-grid{display:grid;grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));gap:8px;margin-top:10px}
+.file-pill{padding:6px 10px;border-radius:6px;background:rgba(255,255,255,.03);border:1px solid var(--border);font-size:11px;cursor:pointer;display:flex;align-items:center;gap:6px;user-select:none;-webkit-user-select:none;transition:all .15s}
+.file-pill:hover{border-color:var(--accent2)}
+.file-pill.selected{background:rgba(0,255,148,.08);border-color:var(--accent2);color:var(--accent2)}
+.file-pill input{display:none}
+
+.var-hint{font-size:10px;color:var(--muted);background:rgba(0,212,255,.05);padding:2px 6px;border-radius:4px;cursor:pointer;font-family:var(--mono)}
+.var-hint:hover{color:var(--accent);background:rgba(0,212,255,.12)}
+
 /* SCROLLBAR */
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 <div class="shell">
@@ -253,6 +280,20 @@ input.has-value{border-color:rgba(0,255,148,.4)}
     <div class="nav-item" data-page="templates"><span class="nav-icon">📝</span>Şablonlar & Ekler</div>
     <div class="nav-item" data-page="guide"><span class="nav-icon">📖</span>Bilgilendirme</div>
   </nav>
+
+<!-- UI Screenshot Modal -->
+<div class="modal-overlay" id="screenshotModal" onclick="this.classList.remove('visible')">
+  <div class="modal" onclick="event.stopPropagation()" style="max-width: 900px; width: 90%; background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:20px;">
+    <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+      <h3 style="margin:0; font-size:16px;">📸 UI Rendering Snapshot</h3>
+      <button onclick="document.getElementById('screenshotModal').classList.remove('visible')" class="btn btn-ghost btn-sm">Kapat</button>
+    </div>
+    <div class="modal-body" style="text-align:center; max-height: 70vh; overflow-y: auto;">
+      <img id="screenshotImage" src="" style="max-width: 100%; border-radius:8px; border:1px solid var(--border);" />
+    </div>
+  </div>
+</div>
+
   <div class="sidebar-footer">
     <span class="status-dot" id="sidebarDot"></span>
     <span id="sidebarStatus">Beklemede</span>
@@ -288,9 +329,17 @@ input.has-value{border-color:rgba(0,255,148,.4)}
         <div class="card-header"><span class="card-title">📋 Test Matrisi</span><button class="btn btn-ghost btn-sm" onclick="loadCombinations()">↻</button></div>
         <div class="card-body"><div id="dashCombosTable" style="color:var(--muted);font-size:13px">Yükleniyor...</div></div>
       </div>
-      <div class="card">
-        <div class="card-header"><span class="card-title">📊 Son Sonuçlar</span></div>
-        <div class="card-body" id="dashResults"><span style="color:var(--muted);font-size:13px">Henüz sonuç yok.</span></div>
+      <div class="form-grid">
+        <div class="card">
+          <div class="card-header"><span class="card-title">📊 Son Sonuçlar</span></div>
+          <div class="card-body" id="dashResults"><span style="color:var(--muted);font-size:13px">Henüz sonuç yok.</span></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">📈 Geçmiş Trend (SQLite)</span></div>
+          <div class="card-body" style="position:relative;height:250px">
+            <canvas id="chartHistory"></canvas>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -704,11 +753,60 @@ input.has-value{border-color:rgba(0,255,148,.4)}
             <div class="pill selected" data-sc="all">Tümü</div>
             <div class="pill" data-sc="plain_text">Plain Text</div>
             <div class="pill" data-sc="attachment">Eklentili</div>
+            <div class="pill" data-sc="multi_attachment">Çoklu Ek</div>
             <div class="pill" data-sc="inline_image">Inline Resim</div>
             <div class="pill disabled" data-sc="smime" title="Altyapıda yok">İmzalı (Devre Dışı)</div>
             <div class="pill" data-sc="reply_chain">Reply Chain</div>
+            <div class="pill" data-sc="calendar_invite">Takvim (iTIP)</div>
+            <div class="pill" data-sc="i18n">Uluslararası (i18n)</div>
+            <div class="pill" data-sc="complex_html">Zengin CSS</div>
+            <div class="pill" data-sc="html_table">Tablo (Grid)</div>
+            <div class="pill" data-sc="forward_chain">Forward Chain</div>
           </div>
           <p style="font-size:12px;color:var(--muted)">ℹ️ S/MIME altyapıda aktif değil. Kurumsal metin imzası plain_text senaryolarında test edilir.</p>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">🎭 İstemci Taklidi (Spoofer)</span></div>
+        <div class="card-body">
+          <div class="auth-method-grid" style="grid-template-columns: repeat(7, 1fr); margin-bottom: 8px;">
+            <div class="auth-card selected" onclick="selectSpoof(this, '')">
+              <div class="auth-icon">🚫</div>
+              <div class="auth-label">Kapalı</div>
+              <div class="auth-desc">Standart (Test)</div>
+            </div>
+            <div class="auth-card" onclick="selectSpoof(this, 'Apple Mail')">
+              <div class="auth-icon">🍎</div>
+              <div class="auth-label">Apple Mail</div>
+              <div class="auth-desc">iOS / macOS</div>
+            </div>
+            <div class="auth-card" onclick="selectSpoof(this, 'Outlook')">
+               <div class="auth-icon">💻</div>
+               <div class="auth-label">Outlook</div>
+               <div class="auth-desc">Windows VML</div>
+            </div>
+            <div class="auth-card" onclick="selectSpoof(this, 'Android Gmail')">
+               <div class="auth-icon">🤖</div>
+               <div class="auth-label">Gmail App</div>
+               <div class="auth-desc">Android 14</div>
+            </div>
+            <div class="auth-card" onclick="selectSpoof(this, 'Thunderbird')">
+               <div class="auth-icon">🕊️</div>
+               <div class="auth-label">Thunderbird</div>
+               <div class="auth-desc">Mozilla</div>
+            </div>
+            <div class="auth-card" onclick="selectSpoof(this, 'Kurumsal Web')">
+               <div class="auth-icon">🌐</div>
+               <div class="auth-label">Bizim Web</div>
+               <div class="auth-desc">Özel İstemci</div>
+            </div>
+            <div class="auth-card" onclick="selectSpoof(this, 'Z-Push')">
+               <div class="auth-icon">📱</div>
+               <div class="auth-label">Z-Push</div>
+               <div class="auth-desc">iOS EAS</div>
+            </div>
+          </div>
+          <p style="font-size:12px;color:var(--muted)">ℹ️ "Kapalı" değilse, matristeki tüm Gönderici (Sender) istemcileri seçili değere göre ezilir ve teste o istemciye has MIME/VML kuralları giydirilir.</p>
         </div>
       </div>
       <div class="card">
@@ -726,12 +824,14 @@ input.has-value{border-color:rgba(0,255,148,.4)}
               <label>Analyzer Modu</label>
               <select id="analyzerMode" onchange="onAnalyzerModeChange()">
                 <option value="active">Aktif (Otomatik LLM Analizi)</option>
+                <option value="auto">Otomatik (Kural Bazlı - LLM'siz)</option>
                 <option value="passive">Pasif (Manuel Doğrulama)</option>
               </select>
             </div>
           </div>
           <div id="analyzerModeInfo" style="display:none;margin-top:12px;padding:12px 16px;background:rgba(255,184,0,.08);border:1px solid rgba(255,184,0,.25);border-radius:8px;font-size:12px;color:var(--warn)">
-            ⚡ <b>Pasif Mod:</b> LLM API kullanılmaz. Her test sonucu için app üzerinden manuel onay beklenir. API key gerekmez.
+            <div id="infoPassive">⚡ <b>Pasif Mod:</b> LLM API kullanılmaz. Her test sonucu için app üzerinden manuel onay beklenir. API key gerekmez.</div>
+            <div id="infoAuto" style="display:none">🤖 <b>Otomatik Mod:</b> LLM API kullanılmaz. MIME yapısı ve metadata üzerinden kural bazlı otomatik kontrol yapılır. Hızlıdır ancak görsel kontrol yapmaz.</div>
           </div>
           <div class="btn-row">
             <button class="btn btn-success" id="runBtn" onclick="startRun()">▶ Testi Başlat</button>
@@ -809,54 +909,44 @@ input.has-value{border-color:rgba(0,255,148,.4)}
       </div>
     </div>
 
-    <!-- ŞABLONLAR & EKLER -->
+    <!-- TEMPLATES -->
     <div class="page" id="page-templates">
-
-      <!-- Mesaj Şablonları -->
       <div class="card">
         <div class="card-header">
-          <span class="card-title">📨 Mesaj Şablonları</span>
-          <div style="display:flex;gap:8px">
-            <button class="btn btn-ghost btn-sm" onclick="exportDefaultTemplates()">↺ Varsayılanı Aktar</button>
-            <button class="btn btn-primary btn-sm" onclick="saveTemplates()">💾 Kaydet</button>
+          <div><span class="card-title">📝 Mesaj Şablonları & Senaryolar</span></div>
+          <div style="display:flex;gap:10px">
+            <button class="btn btn-ghost btn-sm" onclick="exportDefaultTemplates()" title="Hardcodedları YAML'a AKTAR"> Varsayılanları Al</button>
+            <button class="btn btn-primary btn-sm" onclick="saveTemplates()">💾 Değişiklikleri Kaydet</button>
           </div>
         </div>
         <div class="card-body">
-          <div style="font-size:12px;color:var(--muted);margin-bottom:14px">
-            Her senaryo için konu etiketi ve mesaj gövdesini düzenleyin. Değişiklikler <b>templates.yaml</b>'a kaydedilir.
-          </div>
-          <div class="srv-tabs" id="tmplScenarioTabs">
-            <!-- JS ile doldurulur -->
-          </div>
-          <div id="tmplEditorArea" style="margin-top:16px">
-            <div style="color:var(--muted);font-size:13px">Yükleniyor...</div>
+          <div class="tmpl-layout">
+            <!-- Sidebar Navigation -->
+            <div class="tmpl-side-nav" id="tmplCategoriesArea">
+              <!-- JS-populated side nav -->
+            </div>
+            <!-- Editor Area -->
+            <div id="tmplEditorArea">
+              <div style="text-align:center;padding:100px 0;color:var(--muted)">
+                <div style="font-size:40px;margin-bottom:16px">👈</div>
+                <div>Konfigüre etmek için soldan bir senaryo seçin.</div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
-      <!-- Ek Dosya Yönetimi -->
       <div class="card">
-        <div class="card-header">
-          <span class="card-title">📎 Ek Dosya Yönetimi</span>
-          <div>
-            <button class="btn btn-primary btn-sm" onclick="document.getElementById('fileUploadInput').click()">
-              ⬆ Dosya Yükle
-            </button>
-            <input type="file" id="fileUploadInput" multiple style="display:none"
-                   onchange="uploadAttachments(this.files)">
-          </div>
-        </div>
+        <div class="card-header"><span class="card-title">📎 Ek Dosya Yönetimi (attachments/)</span></div>
         <div class="card-body">
-          <div style="font-size:12px;color:var(--muted);margin-bottom:14px">
-            <b>attachments/</b> dizinindeki dosyalar ek senaryolarında kullanılır.
-            Yeni dosya yükleyebilir veya mevcutları silebilirsiniz.
+          <div style="display:flex;gap:12px;margin-bottom:20px">
+            <input type="file" id="attachUploadInput" multiple style="display:none" onchange="uploadAttachments()">
+            <button class="btn btn-ghost" onclick="document.getElementById('attachUploadInput').click()">📁 Dosya Yükle</button>
+            <div style="font-size:11px;color:var(--muted);max-width:300px">Yüklediğiniz dosyaları yukarıdaki şablonlarla eşleştirebilirsiniz.</div>
           </div>
-          <div id="attachmentList">
-            <div style="color:var(--muted);font-size:13px">Yükleniyor...</div>
-          </div>
+          <div id="attachList" class="combo-grid"></div>
         </div>
       </div>
-
     </div>
 
     <!-- GUIDE / BİLGİLENDİRME -->
@@ -978,8 +1068,8 @@ input.has-value{border-color:rgba(0,255,148,.4)}
 
           <!-- 5. Test Senaryoları -->
           <div class="guide-section" id="g-scenarios">
-            <h3>🧪 Test Senaryoları (5 Tip)</h3>
-            <p>Her kombinasyon için 5 farklı senaryo çalıştırılır. Her biri farklı bir iletim özelliğini test eder:</p>
+            <h3>🧪 Test Senaryoları (9 Tip)</h3>
+            <p>Her kombinasyon için 9 farklı senaryo çalıştırılır. Her biri farklı bir iletim özelliğini test eder:</p>
             <table class="guide-table">
               <tr><th>Senaryo</th><th>Kod Adı</th><th>Ne Test Eder</th><th>Kontrol Noktaları</th></tr>
               <tr>
@@ -1006,6 +1096,26 @@ input.has-value{border-color:rgba(0,255,148,.4)}
                 <td>Reply Chain</td><td><code>reply_chain</code></td>
                 <td>In-Reply-To / References headers, alıntı yapısı, thread zinciri</td>
                 <td>• Thread korundu mu?<br>• Alıntı (quote) bozuldu mu?<br>• Encoding kayması var mı?<br>• Çoklu istemci sonrası stabil mi?</td>
+              </tr>
+              <tr>
+                <td>Takvim (iTIP)</td><td><code>calendar_invite</code></td>
+                <td>VCALENDAR parsed, METHOD=REQUEST, etkinlik özellikleri</td>
+                <td>• Content-Type uygun mu?<br>• DTSTART/END parçalandı mı?<br>• Toplantı daveti tanındı mı?</td>
+              </tr>
+              <tr>
+                <td>Uluslararası (i18n)</td><td><code>i18n</code></td>
+                <td>ÖÇŞĞÜİ, Arapça, Asya dilleri (UTF-8), ve Emojiler</td>
+                <td>• Başlıklar (Subject) decode edildi mi?<br>• İçerik rendering mojibake oldu mu?</td>
+              </tr>
+              <tr>
+                <td>Zengin CSS</td><td><code>complex_html</code></td>
+                <td>Media query, dahili style, zengin render vizyonu</td>
+                <td>• CSS style blokları ayakta mı?<br>• Layout render oldu mu?<br>• Media rules etki etti mi?</td>
+              </tr>
+              <tr>
+                <td>Forward (İletiş)</td><td><code>forward</code></td>
+                <td>İleri mesaj yönlendirme (Forward) silsile izolasyonu</td>
+                <td>• Fwd: etiketi mevcut mu?<br>• Asıl From/To bilgisi izole mi?</td>
               </tr>
             </table>
             <div class="guide-box info">
@@ -1216,14 +1326,12 @@ python main.py --csv /yol/baska.csv    # Farklı CSV dosyası kullan</div>
             <h4>Gerçek mail mi gönderiliyor?</h4>
             <p><strong>Normal modda evet</strong> — gerçek SMTP üzerinden gerçek mesajlar gönderilir. <strong>Dry Run modunda hayır</strong> — sadece bağlantı testi yapılır, mail gönderilmez.</p>
 
-            <h4>Kaç kombinasyon var?</h4>
-            <p>CSV dosyasında tanımlanan sayı kadar. Varsayılan checklist'te <strong>10 kombinasyon × 5 senaryo = 50 test</strong> bulunur. Ek kombinasyonlar CSV'ye satır ekleyerek oluşturulabilir.</p>
+            <p>CSV dosyasında tanımlanan sayı kadar. Varsayılan checklist'te <strong>10 kombinasyon × 9 senaryo = 90 test</strong> bulunur. Ek kombinasyonlar CSV'ye satır ekleyerek oluşturulabilir.</p>
 
             <h4>S/MIME neden devre dışı?</h4>
             <p>Kurumda dijital imza altyapısı (PKI/CA) henüz aktif olmadığından S/MIME senaryosu otomatik atlanır. Altyapı hazır olduğunda <code>config.yaml</code>'a <code>smime_cert_path</code> ve <code>smime_key_path</code> eklenerek aktif edilir.</p>
 
-            <h4>Testler ne kadar sürer?</h4>
-            <p>Tek bir senaryo ortalama <strong>20-30 saniye</strong> (gönderim + bekleme + analiz). Tam bir kombinasyon (5 senaryo) ~2-3 dakika. Tüm 10 kombinasyon ~20-30 dakika sürer.</p>
+            <p>Tek bir senaryo ortalama <strong>20-30 saniye</strong> (gönderim + bekleme + analiz). Tam bir kombinasyon (9 senaryo) ~4-5 dakika. Tüm 10 kombinasyon ~40-50 dakika sürer.</p>
 
             <h4>Rapor dosyaları nerede?</h4>
             <p><code>reports/</code> klasöründe. Her çalışma <code>test_report.html</code> ve <code>test_results.csv</code> üretir. Web arayüzünden "Raporlar" sekmesinde görüntülenip indirilebilir.</p>
@@ -1323,6 +1431,24 @@ document.querySelectorAll('.nav-item').forEach(el => {
   });
 });
 
+// ── CONSTANTS (Moved to top to avoid ReferenceError) ───────────────
+const SCENARIO_LABELS = {
+  plain_text:   'Düz Metin',
+  attachment:   'Ek Dosya',
+  multi_attachment: 'Çoklu Ek',
+  inline_image: 'Inline Resim',
+  reply_chain:  'Yanıt Zinciri',
+  smime:        'S/MIME',
+  calendar_invite: 'Takvim Daveti',
+  i18n: 'Uluslararası',
+  complex_html: 'Zengin CSS',
+  html_table: 'HTML Tablo',
+  forward_chain: 'Forward Chain',
+  reply_original: 'Yanıt Orijinal',
+};
+const LENGTH_DISPLAY = { short: 'Kısa', medium: 'Orta', long: 'Uzun' };
+// _tmplData and _activeScenario moved to templates section
+
 // ── CONFIG ─────────────────────────────────────────────────────────
 async function loadConfig() {
   const res = await fetch('/api/config').then(r => r.json());
@@ -1372,8 +1498,11 @@ async function loadConfig() {
   set('anthropic_api_key', anth.api_key && !anth.api_key.startsWith('BURAYA') ? '••••••••••••' : '');
   set('anthropic_model', anth.model);
   const goog = llm.google || {};
-  set('google_api_key', goog.api_key && !goog.api_key.startsWith('BURAYA') ? '••••••••••••' : '');
-  set('google_model', goog.model || 'gemini-2.0-flash');
+  // Desteklenen iki yapı: llm.api_key (düz) veya llm.google.api_key (ıç içe)
+  const googApiKey = goog.api_key || llm.api_key || '';
+  const googModel = goog.model || llm.model || 'gemini-2.0-flash';
+  set('google_api_key', googApiKey && !googApiKey.startsWith('BURAYA') ? '••••••••••••' : '');
+  set('google_model', googModel);
   const t = c.test || {};
   set('test_wait_seconds', t.wait_seconds); set('test_max_retries', t.max_retries);
   set('test_retry_interval', t.retry_interval); set('test_subject_prefix', t.subject_prefix);
@@ -1402,15 +1531,21 @@ function buildConfig() {
       totp_secret: isPh(g(`${s}_totp_secret`)) ? '' : g(`${s}_totp_secret`),
     };
   }
+  const googleApiKey = isPh(g('google_api_key')) ? '' : g('google_api_key');
+  const googleModel = g('google_model') || 'gemini-2.0-flash';
   cfg.llm = {
     provider: g('llm_provider'),
+    // Düz yapı (main.py okur)
+    api_key: googleApiKey,
+    model: googleModel,
+    // İç içe yapı (geriye dönük uyumluluk)
     anthropic: {
       api_key: isPh(g('anthropic_api_key')) ? '' : g('anthropic_api_key'),
       model: g('anthropic_model'),
     },
     google: {
-      api_key: isPh(g('google_api_key')) ? '' : g('google_api_key'),
-      model: g('google_model'),
+      api_key: googleApiKey,
+      model: googleModel,
     },
   };
   cfg.test = {
@@ -1649,13 +1784,21 @@ async function loadCombinations() {
 }
 
 function renderComboGrid(combos) {
-  document.getElementById('comboGrid').innerHTML = combos.map(c => `
+  document.getElementById('comboGrid').innerHTML = combos.map(c => {
+    let sclient = c.sender_client;
+    let sstyle = "";
+    if (selectedSpoofClient) {
+      sclient = "🎭 " + selectedSpoofClient;
+      sstyle = "color:var(--accent);font-weight:800;";
+    }
+    return `
     <div class="combo-card ${selectedCombos.has(c.index)||selectedCombos.has('all')?'selected':''}"
          onclick="toggleCombo(${c.index},this)">
       <div class="combo-label">🔀 ${c.label}</div>
-      <div class="combo-meta">Alan: <b>${c.receiver_server}</b>/${c.receiver_client}<br>Gönderen: <b>${c.sender_server}</b>/${c.sender_client}</div>
+      <div class="combo-meta">Alan: <b>${c.receiver_server}</b>/${c.receiver_client}<br>Gönderen: <b>${c.sender_server}</b>/<span style="${sstyle}">${sclient}</span></div>
       <span class="combo-badge">${c.step_count} adım</span>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 function renderDashCombos(combos) {
@@ -1663,13 +1806,21 @@ function renderDashCombos(combos) {
   if (!combos.length) { el.textContent = 'CSV yüklenemedi.'; return; }
   el.innerHTML = `<table class="results-table">
     <thead><tr><th>#</th><th>Kombinasyon</th><th>Alan</th><th>Gönderen</th><th>Adım</th></tr></thead>
-    <tbody>${combos.map(c => `<tr>
+    <tbody>${combos.map(c => {
+      let sclient = c.sender_client;
+      let sstyle = "";
+      if (selectedSpoofClient) {
+        sclient = "🎭 " + selectedSpoofClient;
+        sstyle = "color:var(--accent);font-weight:800;";
+      }
+      return `<tr>
       <td style="color:var(--muted);font-family:var(--mono)">${c.index+1}</td>
       <td>${c.label}</td>
       <td style="font-family:var(--mono);font-size:12px">${c.receiver_server}/${c.receiver_client}</td>
-      <td style="font-family:var(--mono);font-size:12px">${c.sender_server}/${c.sender_client}</td>
+      <td style="font-family:var(--mono);font-size:12px">${c.sender_server}/<span style="${sstyle}">${sclient}</span></td>
       <td style="font-family:var(--mono);color:var(--accent)">${c.step_count}</td>
-    </tr>`).join('')}</tbody></table>`;
+    </tr>`;
+    }).join('')}</tbody></table>`;
   document.getElementById('st-combos').textContent = combos.length;
 }
 
@@ -1684,6 +1835,17 @@ document.querySelectorAll('.pill:not(.disabled)').forEach(p => {
   });
 });
 
+let selectedSpoofClient = '';
+function selectSpoof(el, client) {
+  el.closest('.auth-method-grid').querySelectorAll('.auth-card').forEach(c => c.classList.remove('selected'));
+  el.classList.add('selected');
+  selectedSpoofClient = client;
+  if(allCombinations.length > 0) {
+      renderComboGrid(allCombinations);
+      renderDashCombos(allCombinations);
+  }
+}
+
 // ── RUNNER ─────────────────────────────────────────────────────────
 async function startRun() {
   const runMode = document.getElementById('runMode').value;
@@ -1692,6 +1854,7 @@ async function startRun() {
   if (analyzerMode === 'passive') body.mode = 'passive';
   if (!selectedCombos.has('all') && selectedCombos.size > 0) body.combo = [...selectedCombos][0];
   if (selectedScenario !== 'all') body.scenario = selectedScenario;
+  if (selectedSpoofClient) body.spoof_sender = selectedSpoofClient;
   const res = await fetch('/api/run/start', {
     method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body),
   }).then(r => r.json());
@@ -1712,8 +1875,10 @@ async function stopRun() {
 }
 
 async function quickRun() {
+  const body = {};
+  if (selectedSpoofClient) body.spoof_sender = selectedSpoofClient;
   const res = await fetch('/api/run/start', {
-    method:'POST', headers:{'Content-Type':'application/json'}, body:'{}',
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body),
   }).then(r => r.json());
   if (!res.ok) { toast('❌ '+res.error,'err'); return; }
   toast('▶ Tüm testler başlatıldı', 'ok');
@@ -1834,7 +1999,9 @@ function startStatusPoll() {
 // ── ANALYZER MODE ─────────────────────────────────────────────────
 function onAnalyzerModeChange() {
   const mode = document.getElementById('analyzerMode').value;
-  document.getElementById('analyzerModeInfo').style.display = mode === 'passive' ? 'block' : 'none';
+  document.getElementById('analyzerModeInfo').style.display = (mode === 'passive' || mode === 'auto') ? 'block' : 'none';
+  document.getElementById('infoPassive').style.display = mode === 'passive' ? 'block' : 'none';
+  document.getElementById('infoAuto').style.display = mode === 'auto' ? 'block' : 'none';
 }
 
 // ── LLM PROVIDER TOGGLE ──────────────────────────────────────────
@@ -1867,11 +2034,16 @@ function stopVerificationPoll() {
 }
 
 function renderVerifyItem(v) {
+  const failedBanner = v.delivery_failed
+    ? `<div style="background:rgba(255,69,96,.12);border:1px solid var(--danger);border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:var(--danger)">
+        ⚠️ <strong>Mail teslim edilemedi (timeout)</strong> — IMAP'ta mesaj bulunamadı. Muhtemelen sunucu bağlantı sorunu.
+       </div>` : '';
   return `<div class="verify-item" id="vi-${v.id}">
     <div class="verify-item-header">
       <span class="verify-item-title">${v.label || '?'}</span>
       <span class="verify-item-scenario">${v.scenario || '?'}</span>
     </div>
+    ${failedBanner}
     <div class="verify-meta">
       Gönderen: ${v.from || '?'}<br>
       Konu: ${v.subject || '?'}<br>
@@ -2001,7 +2173,10 @@ async function loadResults() {
       <td style="font-size:12px;font-family:var(--mono)">${r['Kombinasyon']||''}</td>
       <td>${r['Senaryo Tipi']||''}</td>
       <td><span style="font-family:var(--mono);font-size:11px;color:var(--${confColor})">${conf}</span></td>
-      <td style="font-size:12px;color:var(--muted)">${(r['Özet']||'').slice(0,80)}</td>
+      <td style="font-size:12px;color:var(--muted)">
+        ${(r['Özet']||'').slice(0,80)}
+        ${r['Ekran Görüntüsü'] ? `<br><a href="#" onclick="showScreenshotModal('/api/' + '${r['Ekran Görüntüsü']}'.replace('reports/','')); return false;" style="color:var(--accent);font-size:11px;text-decoration:none;font-weight:bold;">📸 UI Kanıtı</a>` : ''}
+      </td>
       <td style="font-size:11px;font-family:var(--mono);color:var(--muted)">${r['Test Zamanı']||''}</td>
     </tr>`;
   }).join('');
@@ -2016,8 +2191,16 @@ function renderDashResults(rows) {
       <td>${r['Sonuç']==='PASS'?'<span class="badge-pass">PASS</span>':'<span class="badge-fail">FAIL</span>'}</td>
       <td style="font-size:12px;font-family:var(--mono)">${r['Kombinasyon']||''}</td>
       <td style="font-size:12px">${r['Senaryo Tipi']||''}</td>
-      <td style="font-size:12px;color:var(--muted)">${(r['Özet']||'').slice(0,60)}</td>
+      <td style="font-size:12px">
+        ${(r['Özet']||'').slice(0,50)}
+        ${r['Ekran Görüntüsü'] ? ` <a href="#" onclick="showScreenshotModal('/api/' + '${r['Ekran Görüntüsü']}'.replace('reports/','')); return false;" style="color:var(--accent);font-size:10px;text-decoration:none">📸 Snapshot</a>` : ''}
+      </td>
     </tr>`).join('')}</tbody></table>`;
+}
+
+function showScreenshotModal(url) {
+  document.getElementById('screenshotImage').src = url;
+  document.getElementById('screenshotModal').classList.add('visible');
 }
 
 // ── REPORTS ────────────────────────────────────────────────────────
@@ -2033,6 +2216,7 @@ async function loadReports() {
     </div>
   </div>`).join('');
 }
+
 
 function openReport(name) {
   document.getElementById('reportViewer').style.display='block';
@@ -2051,7 +2235,51 @@ function toast(msg, type='info') {
 }
 
 // ── DASHBOARD ──────────────────────────────────────────────────────
-async function loadDashboard() { await loadCombinations(); await loadResults(); }
+let chartInstance = null;
+async function loadDashboard() { await loadCombinations(); await loadResults(); await loadHistoryChart(); }
+
+async function loadHistoryChart() {
+  const res = await fetch('/api/results/history').then(r => r.json());
+  if (!res.ok || !res.runs || res.runs.length === 0) return;
+  const runs = res.runs.reverse(); 
+  const labels = runs.map(r => new Date(r.start_time).toLocaleTimeString('tr-TR', {hour:'2-digit', minute:'2-digit'}));
+  const dataPass = runs.map(r => r.passed_tests);
+  const dataFail = runs.map(r => r.failed_tests);
+  
+  const canvas = document.getElementById('chartHistory');
+  if(!canvas) return;
+  
+  if(chartInstance) chartInstance.destroy();
+  const ctx = canvas.getContext('2d');
+  Chart.defaults.color = '#4a6580';
+  Chart.defaults.font.family = "'JetBrains Mono', monospace";
+  
+  chartInstance = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [
+        { label: 'Başarılı', data: dataPass, backgroundColor: '#00ff94', borderRadius: 4 },
+        { label: 'Hatalı', data: dataFail, backgroundColor: '#ff4560', borderRadius: 4 }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: true, position: 'bottom', labels: { color: '#e2e8f0' } } },
+      scales: {
+        x: { stacked: true, grid: { color: 'rgba(30,58,95,0.5)' }, ticks: { color: '#4a6580' } },
+        y: { stacked: true, grid: { color: 'rgba(30,58,95,0.5)' }, ticks: { precision: 0, color: '#4a6580' } }
+      }
+    }
+  });
+  
+  if(res.stats) {
+     document.getElementById('st-total').textContent = res.stats.total_tests || 0;
+     document.getElementById('st-pass').textContent = res.stats.total_passed || 0;
+     document.getElementById('st-fail').textContent = res.stats.total_failed || 0;
+     document.getElementById('st-rate').textContent = (res.stats.pass_rate || 0) + '%';
+  }
+}
 function refreshAll() { loadConfig(); loadDashboard(); toast('↻ Yenilendi','info'); }
 
 // ── MAIL ADRESLERİ — Diğer ─────────────────────────────────────────
@@ -2075,149 +2303,216 @@ function addOtherAddress() {
   inp.value = '';
 }
 
-// ── TEMPLATES & ATTACHMENTS ────────────────────────────────────────
-const SCENARIO_LABELS = {
-  plain_text:   'Düz Metin',
-  attachment:   'Ek Dosya',
-  inline_image: 'Inline Görsel',
-  reply_chain:  'Yanıt Zinciri',
-  smime:        'S/MIME',
-  reply_original: 'Yanıt Orijinal',
-};
-const LENGTH_DISPLAY = { short: 'Kısa', medium: 'Orta', long: 'Uzun' };
-let _tmplData = null; // cached template data
+// ── TEMPLATES & ATTACHMENTS (Sprint 4 Refined) ─────────────────────
+let _tmplData = null;
 let _activeScenario = 'plain_text';
+let _attachmentList = [];
+
+const SCENARIO_CATEGORIES = [
+  { id: 'basic', label: 'Temel Senaryolar', keys: ['plain_text', 'i18n'], icon: '📄' },
+  { id: 'rich', label: 'Zengin İçerik', keys: ['complex_html', 'html_table'], icon: '🎨' },
+  { id: 'files', label: 'Dosya & Medya', keys: ['attachment', 'multi_attachment', 'inline_image'], icon: '📎' },
+  { id: 'flow', label: 'İletişim Akışı', keys: ['reply_chain', 'forward_chain', 'reply_original'], icon: '🔄' },
+  { id: 'special', label: 'Özel Testler', keys: ['calendar_invite', 'smime'], icon: '⚙' }
+];
 
 async function loadTemplates() {
   const res = await fetch('/api/templates').then(r => r.json());
   if (!res.ok) { toast('Şablonlar yüklenemedi', 'err'); return; }
   _tmplData = res.data;
+  await loadAttachments(); // Attachments needed for template editor
+  renderScenarioSideNav();
   renderTemplateEditor(_tmplData, _activeScenario);
 }
 
-function renderScenarioTabs(activeKey) {
-  const keys = ['plain_text','attachment','inline_image','reply_chain','reply_original'];
-  return keys.map(k => `
-    <div class="srv-tab${k===activeKey?' active':''}" onclick="switchTmplScenario('${k}',this)">
-      ${SCENARIO_LABELS[k]||k}
-    </div>`).join('');
+function renderScenarioSideNav() {
+  const area = document.getElementById('tmplCategoriesArea');
+  if (!area) return;
+  area.innerHTML = SCENARIO_CATEGORIES.map(cat => `
+    <div class="tmpl-cat-group">
+      <div class="tmpl-cat-title">${cat.label}</div>
+      ${cat.keys.map(k => `
+        <div class="tmpl-nav-item ${k === _activeScenario ? 'active' : ''}" onclick="switchTmplScenario('${k}')">
+          <span class="tmpl-nav-icon">${cat.icon}</span>
+          <span>${SCENARIO_LABELS[k] || k}</span>
+        </div>
+      `).join('')}
+    </div>
+  `).join('');
 }
 
 function renderTemplateEditor(data, scenarioKey) {
-  const tabs = document.getElementById('tmplScenarioTabs');
-  if (tabs) tabs.innerHTML = renderScenarioTabs(scenarioKey);
   const area = document.getElementById('tmplEditorArea');
   if (!area) return;
+  
   const tmpls = (data?.templates || {})[scenarioKey] || [];
-  if (!tmpls.length) { area.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:8px">Bu senaryo için şablon bulunamadı.</div>'; return; }
-  area.innerHTML = tmpls.map((t, i) => `
-    <div class="tmpl-block" style="border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:12px">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-        <span class="sec-badge ${t.length==='short'?'green':t.length==='medium'?'warn':'blue'}" style="text-transform:uppercase;font-size:10px">
-          ${LENGTH_DISPLAY[t.length]||t.length}
-        </span>
-        <span style="font-size:12px;color:var(--muted)">${scenarioKey} · şablon ${i+1}</span>
-      </div>
-      <div class="form-grid">
-        <div class="form-group full">
-          <label>Konu Etiketi</label>
-          <input id="tmpl_${scenarioKey}_${i}_subject" value="${(t.subject_tag||'').replace(/"/g,'&quot;')}">
-        </div>
-        <div class="form-group full">
-          <label>Mesaj Gövdesi</label>
-          <textarea id="tmpl_${scenarioKey}_${i}_body" rows="6"
-            style="width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:6px;
-                   padding:8px 10px;color:var(--fg);font-family:var(--mono);font-size:12px;resize:vertical"
-          >${(t.body||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</textarea>
-        </div>
-      </div>
-    </div>`).join('');
+  if (!tmpls.length) { 
+    area.innerHTML = '<div style="color:var(--muted);text-align:center;padding:40px">Bu senaryo için şablon bulunamadı.</div>'; 
+    return; 
+  }
+
+  area.innerHTML = `
+    <div style="margin-bottom:20px">
+       <h2 style="font-size:18px;font-weight:800;color:var(--accent)">${SCENARIO_LABELS[scenarioKey] || scenarioKey}</h2>
+       <p style="font-size:11px;color:var(--muted);margin-top:4px">${scenarioKey} senaryosu için varyasyonları düzenleyin.</p>
+    </div>
+    <div class="tmpl-grid">
+      ${tmpls.map((t, i) => renderTmplCard(t, i, scenarioKey)).join('')}
+    </div>
+  `;
 }
 
-function switchTmplScenario(key, el) {
-  el.closest('.srv-tabs').querySelectorAll('.srv-tab').forEach(t => t.classList.remove('active'));
-  el.classList.add('active');
+function renderTmplCard(t, i, sk) {
+  const lenColor = t.length === 'short' ? 'green' : t.length === 'medium' ? 'yellow' : 'blue';
+  const selectedFiles = t.attachments || [];
+  
+  return `
+    <div class="tmpl-card">
+      <div class="tmpl-card-header">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span class="sec-badge ${lenColor}">${LENGTH_DISPLAY[t.length] || t.length}</span>
+          <span style="font-size:11px;color:var(--muted);font-family:var(--mono)">${sk}#${i+1}</span>
+        </div>
+        <div style="display:flex;gap:4px">
+          <span class="var-hint" onclick="insertVar('${sk}_${i}', '{{DATE}}')">{{DATE}}</span>
+          <span class="var-hint" onclick="insertVar('${sk}_${i}', '{{SENDER}}')">{{SENDER}}</span>
+        </div>
+      </div>
+      <div class="tmpl-card-body">
+        <div class="form-group" style="margin-bottom:12px">
+          <label>Konu Etiketi (Subject Tag)</label>
+          <input id="tmpl_${sk}_${i}_subject" value="${(t.subject_tag || '').replace(/"/g, '&quot;')}" placeholder="Örn: [Kritik Test]">
+        </div>
+        <div class="form-group" style="margin-bottom:12px">
+          <label>Mesaj Gövdesi</label>
+          <textarea id="tmpl_${sk}_${i}_body" rows="6" 
+            style="font-family:var(--mono);font-size:12px">${(t.body || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea>
+        </div>
+        
+        <div class="divider"></div>
+        <label style="margin-bottom:8px">İlişkili Ek Dosyalar (attachments/)</label>
+        <div class="file-selector-grid">
+          ${_attachmentList.map(f => `
+            <div class="file-pill ${selectedFiles.includes(f.name) ? 'selected' : ''}" 
+                 onclick="toggleFileSelection('${sk}', ${i}, '${f.name}', this)">
+              <span>📎</span> ${f.name}
+            </div>
+          `).join('')}
+          ${_attachmentList.length === 0 ? '<div style="font-size:11px;color:var(--muted);grid-column:1/-1">Yüklü dosya bulunamadı. Aşağıdan yükleme yapın.</div>' : ''}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function toggleFileSelection(sk, idx, filename, el) {
+  const tmpl = _tmplData.templates[sk][idx];
+  if (!tmpl.attachments) tmpl.attachments = [];
+  
+  const fIdx = tmpl.attachments.indexOf(filename);
+  if (fIdx > -1) {
+    tmpl.attachments.splice(fIdx, 1);
+    el.classList.remove('selected');
+  } else {
+    tmpl.attachments.push(filename);
+    el.classList.add('selected');
+  }
+}
+
+function insertVar(idSuffix, val) {
+  const el = document.getElementById(`tmpl_${idSuffix}_body`);
+  if (!el) return;
+  const start = el.selectionStart;
+  const end = el.selectionEnd;
+  el.value = el.value.substring(0, start) + val + el.value.substring(end);
+  el.focus();
+}
+
+function switchTmplScenario(key) {
   _activeScenario = key;
+  renderScenarioSideNav();
   renderTemplateEditor(_tmplData, key);
 }
 
 async function saveTemplates() {
   if (!_tmplData) { toast('Önce şablonları yükleyin', 'warn'); return; }
-  // Collect edited values
-  const keys = ['plain_text','attachment','inline_image','reply_chain','reply_original'];
-  for (const sk of keys) {
-    const tmpls = (_tmplData.templates || {})[sk] || [];
-    tmpls.forEach((t, i) => {
+  
+  // Sync subject and body from inputs
+  for (const sk in _tmplData.templates) {
+    _tmplData.templates[sk].forEach((t, i) => {
       const subj = document.getElementById(`tmpl_${sk}_${i}_subject`);
       const body = document.getElementById(`tmpl_${sk}_${i}_body`);
       if (subj) t.subject_tag = subj.value;
-      if (body)  t.body = body.value;
+      if (body) t.body = body.value;
     });
   }
+  
   const res = await fetch('/api/templates', {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify(_tmplData),
   }).then(r => r.json());
-  res.ok ? toast('✅ Şablonlar kaydedildi', 'ok') : toast('Kayıt hatası: ' + res.error, 'err');
+  
+  if (res.ok) toast('✅ Şablonlar ve dosya eşleşmeleri kaydedildi', 'ok');
+  else toast('Kayıt hatası: ' + res.error, 'err');
 }
 
 async function exportDefaultTemplates() {
-  const res = await fetch('/api/templates/export-defaults', {
-    method: 'POST',
-  }).then(r => r.json());
-  if (res.ok) { toast('✅ Varsayılan şablonlar templates.yaml\'a aktarıldı', 'ok'); await loadTemplates(); }
-  else toast('Hata: ' + res.error, 'err');
+  const res = await fetch('/api/templates/export-defaults', { method: 'POST' }).then(r => r.json());
+  if (res.ok) { 
+    toast('✅ Varsayılanlar aktarıldı', 'ok'); 
+    await loadTemplates(); 
+  } else toast('Hata: ' + res.error, 'err');
 }
 
 // ── ATTACHMENTS ────────────────────────────────────────────────────
 async function loadAttachments() {
   const res = await fetch('/api/attachments').then(r => r.json());
-  const list = document.getElementById('attachmentList');
+  if (!res.ok) return;
+  _attachmentList = res.files || [];
+  
+  const list = document.getElementById('attachList');
   if (!list) return;
-  if (!res.ok || !res.files.length) {
-    list.innerHTML = '<div style="color:var(--muted);font-size:13px">Henüz ek dosya yok.</div>';
+  
+  if (!_attachmentList.length) {
+    list.innerHTML = '<div style="color:var(--muted);font-size:12px;grid-column:1/-1;text-align:center;padding:20px">Henüz dosya bulunmuyor.</div>';
     return;
   }
-  const EXT_ICONS = { '.pdf':'📄', '.csv':'📊', '.xlsx':'📊', '.docx':'📝', '.txt':'📋',
-                      '.jpg':'🖼', '.jpeg':'🖼', '.png':'🖼', '.pptx':'📊', '.zip':'📦' };
-  list.innerHTML = `<table style="width:100%;border-collapse:collapse">
-    <thead><tr style="border-bottom:1px solid var(--border)">
-      <th style="text-align:left;padding:6px 8px;font-size:12px;color:var(--muted);font-weight:500">Dosya Adı</th>
-      <th style="text-align:right;padding:6px 8px;font-size:12px;color:var(--muted);font-weight:500">Boyut</th>
-      <th style="width:70px"></th>
-    </tr></thead>
-    <tbody>${res.files.map(f => {
-      const icon = EXT_ICONS[f.ext] || '📎';
-      const size = f.size >= 1048576 ? (f.size/1048576).toFixed(1)+' MB'
-                 : f.size >= 1024    ? (f.size/1024).toFixed(0)+' KB'
-                 : f.size + ' B';
-      return `<tr style="border-bottom:1px solid rgba(255,255,255,.05)">
-        <td style="padding:8px;font-size:13px;font-family:var(--mono)">${icon} ${f.name}</td>
-        <td style="padding:8px;font-size:12px;color:var(--muted);text-align:right">${size}</td>
-        <td style="padding:8px;text-align:right">
-          <button class="btn btn-ghost btn-sm" style="color:var(--red)"
-            onclick="deleteAttachment('${f.name}')">× Sil</button>
-        </td>
-      </tr>`;
-    }).join('')}</tbody></table>`;
+
+  const EXT_ICONS = { '.pdf':'📄', '.csv':'📊', '.xlsx':'📊', '.docx':'📝', '.txt':'📋', '.jpg':'🖼', '.png':'🖼', '.zip':'📦' };
+  
+  list.innerHTML = _attachmentList.map(f => `
+    <div class="combo-card">
+      <div style="font-size:24px;margin-bottom:8px">${EXT_ICONS[f.ext] || '📎'}</div>
+      <div class="combo-label" style="word-break:break-all">${f.name}</div>
+      <div class="combo-meta">${(f.size/1024).toFixed(1)} KB</div>
+      <button class="btn btn-ghost btn-sm" style="margin-top:10px;color:var(--danger);width:100%" 
+        onclick="deleteAttachment('${f.name}')">Sil</button>
+    </div>
+  `).join('');
 }
 
-async function uploadAttachments(files) {
-  if (!files.length) return;
+async function uploadAttachments() {
+  const input = document.getElementById('attachUploadInput');
+  if (!input || !input.files.length) return;
+  
   const fd = new FormData();
-  for (const f of files) fd.append('files', f);
+  for (const f of input.files) fd.append('files', f);
+  
   const res = await fetch('/api/attachments/upload', { method:'POST', body: fd }).then(r => r.json());
-  if (res.ok) { toast(`✅ ${res.saved.length} dosya yüklendi`, 'ok'); loadAttachments(); }
-  else toast('Yükleme hatası: ' + res.error, 'err');
-  document.getElementById('fileUploadInput').value = '';
+  if (res.ok) { 
+    toast(`✅ ${res.saved.length} dosya yüklendi`, 'ok'); 
+    await loadTemplates(); // Reload everything to update selectors
+  } else toast('Yükleme hatası: ' + res.error, 'err');
+  input.value = '';
 }
 
 async function deleteAttachment(filename) {
   if (!confirm(`"${filename}" silinsin mi?`)) return;
-  const res = await fetch('/api/attachments/' + encodeURIComponent(filename), {
-    method: 'DELETE',
-  }).then(r => r.json());
-  res.ok ? (toast('🗑 Dosya silindi', 'ok'), loadAttachments()) : toast('Silme hatası: ' + res.error, 'err');
+  const res = await fetch(`/api/attachments/${filename}`, { method:'DELETE' }).then(r => r.json());
+  if (res.ok) { 
+    toast('✅ Dosya silindi', 'ok'); 
+    await loadTemplates(); 
+  } else toast('Silme hatası: ' + res.error, 'err');
 }
 
 // ── INIT ───────────────────────────────────────────────────────────

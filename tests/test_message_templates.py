@@ -145,7 +145,11 @@ class TestSignatures:
 # ── ALL_TEMPLATES sözlüğü ─────────────────────────────────────
 class TestAllTemplatesDict:
     def test_has_four_scenario_keys(self):
-        expected = {"plain_text", "attachment", "inline_image", "reply_chain"}
+        expected = {
+            "plain_text", "attachment", "multi_attachment", "inline_image", 
+            "reply_chain", "html_table", "forward_chain", 
+            "calendar_invite", "i18n", "complex_html"
+        }
         assert set(ALL_TEMPLATES.keys()) == expected
 
     def test_reply_original_not_in_all_templates(self):
