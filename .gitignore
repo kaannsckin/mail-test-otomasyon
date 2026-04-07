@@ -25,6 +25,8 @@ logs/
 reports/
 test_files/
 .verifications/
+app.log
+*.log
 
 # Old output copies
 mnt/
