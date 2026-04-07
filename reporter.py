@@ -48,11 +48,12 @@ def generate_html_report(results: List[dict], output_path: str):
               <td><span class="badge {sc_class}">{('✅ PASS' if sc_passed else '❌ FAIL')}</span></td>
               <td>{r['scenario_type']}</td>
               <td class="summary-cell">{analysis.get('summary','')}</td>
-              <td>
+               <td>
                 <details>
                   <summary>Kontroller ({len(analysis.get('checks',[]))})</summary>
                   <ul class="checks-list">{checks_html}</ul>
                   {f'<ul class="issues-list">{issues_html}</ul>' if issues_html else ''}
+                  {f'<div style="margin-top:10px;"><a href="{analysis.get("screenshot").replace("reports/","",1) if analysis.get("screenshot") else ""}" target="_blank" style="font-size:12px; color:#10b981; font-weight:bold; text-decoration:none;">📸 UI Snapshot Görüntüle</a></div>' if analysis.get("screenshot") else ''}
                 </details>
               </td>
               <td><span class="confidence confidence-{analysis.get('confidence','LOW').lower()}">{analysis.get('confidence','?')}</span></td>
@@ -170,7 +171,7 @@ def generate_csv_results(results: List[dict], output_path: str):
         writer = csv.writer(f)
         writer.writerow([
             "Kombinasyon", "Senaryo Tipi", "Sonuç", "Güven Seviyesi",
-            "Özet", "Sorunlar", "Öneriler", "Test Zamanı"
+            "Özet", "Sorunlar", "Öneriler", "Test Zamanı", "Ekran Görüntüsü"
         ])
         for r in results:
             analysis = r.get("analysis", {})
@@ -183,5 +184,6 @@ def generate_csv_results(results: List[dict], output_path: str):
                 " | ".join(analysis.get("issues", [])),
                 " | ".join(analysis.get("recommendations", [])),
                 r.get("test_time", ""),
+                analysis.get("screenshot", ""),
             ])
     logger.info(f"CSV sonuçları oluşturuldu: {output_path}")

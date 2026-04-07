@@ -39,8 +39,8 @@ class MailAnalyzer:
         """
         self.provider = provider
         self.mode = mode.lower().strip()
-        if self.mode not in ("active", "passive"):
-            raise ValueError(f"Geçersiz mode: {mode}. 'active' veya 'passive' kullanın.")
+        if self.mode not in ("active", "passive", "auto"):
+            raise ValueError(f"Geçersiz mode: {mode}. 'active', 'passive' veya 'auto' kullanın.")
         if self.mode == "active" and provider is None:
             raise ValueError("Active modda LLM provider zorunludur.")
 
@@ -55,6 +55,17 @@ class MailAnalyzer:
         Returns: {passed: bool, checks: [...], summary: str, confidence: str}
         """
         if received_msg is None:
+            if self.mode == "passive":
+                # Pasif modda bile kullanıcıya göster — mail gelmedi bilgisiyle
+                dummy_meta = dict(send_meta)
+                dummy_meta["subject"] = send_meta.get("subject", "")
+                return self._manual_verify(
+                    scenario_type,
+                    send_meta,
+                    None,
+                    combination,
+                    delivery_failed=True
+                )
             return {
                 "passed": False,
                 "checks": [{"name": "Mesaj Alımı", "passed": False,
@@ -67,6 +78,8 @@ class MailAnalyzer:
             prompt = self._build_prompt(scenario_type, send_meta, received_msg, combination)
             response = self._call_provider(prompt)
             return self._parse_response(response, scenario_type)
+        elif self.mode == "auto":
+            return self._auto_verify(scenario_type, send_meta, received_msg, combination)
         else:
             return self._manual_verify(scenario_type, send_meta, received_msg, combination)
 
@@ -82,11 +95,21 @@ class MailAnalyzer:
             f"Alan İstemci: {combination['receiver_client']}"
         )
 
-        headers_str = json.dumps(received_msg["headers"], ensure_ascii=False, indent=2)
-        parts_str = json.dumps(received_msg["parts"][:5], ensure_ascii=False, indent=2)
-        attachments_str = json.dumps(received_msg["attachments"], ensure_ascii=False, indent=2)
-        inline_str = json.dumps(received_msg["inline_images"], ensure_ascii=False, indent=2)
-        send_meta_str = json.dumps({k: v for k, v in send_meta.items() if k != "raw_bytes"},
+        def _safe_json(obj):
+            """bytes içeren nesneleri JSON-güvenli hale getir."""
+            if isinstance(obj, bytes):
+                return f"<bytes len={len(obj)}>"
+            if isinstance(obj, dict):
+                return {k: _safe_json(v) for k, v in obj.items() if k != "data"}
+            if isinstance(obj, list):
+                return [_safe_json(i) for i in obj]
+            return obj
+
+        headers_str = json.dumps(_safe_json(received_msg["headers"]), ensure_ascii=False, indent=2)
+        parts_str = json.dumps(_safe_json(received_msg["parts"][:5]), ensure_ascii=False, indent=2)
+        attachments_str = json.dumps(_safe_json(received_msg["attachments"]), ensure_ascii=False, indent=2)
+        inline_str = json.dumps(_safe_json(received_msg["inline_images"]), ensure_ascii=False, indent=2)
+        send_meta_str = json.dumps({k: v for k, v in send_meta.items() if k not in ("raw_bytes", "data")},
                                    ensure_ascii=False, indent=2)
 
         scenario_checks = {
@@ -136,9 +159,41 @@ Kontrol edilecekler:
 4. Alıntı (quote) bölümü ">" ile işaretlenmiş mi?
 5. Encoding farklılıklarında karakter bozulması var mı?
 """,
+            "calendar_invite": """
+Kontrol edilecekler:
+1. Content-Type 'text/calendar' var mı?
+2. METHOD:REQUEST olarak seçilmiş mi ve vCalendar başlangıç/bitiş tagleri düzgün pars edilmiş mi?
+3. Mesaj gövdesinde SUMMARY, DTSTART gibi takvim objeleri bozulmadan iletilmiş mi?
+""",
+            "i18n": """
+Kontrol edilecekler:
+1. Subject başlığındaki (ÖÇŞĞÜİ, Arapça harfler, Kanji, Emojiler) düzgün bir şekilde parse edilmiş ve okunabilir yapıda mı? (=?UTF-8?Q? vb. decoder edilmiş mi?)
+2. E-posta gövdesindeki Unicode karakterler bozulmuş mu? (mojibake tespiti yap)
+""",
+            "complex_html": """
+Kontrol edilecekler:
+1. Gelen e-posta gövdesinde kompleks HTML yapıları (div, style tag'i, media query objeleri) silinmiş mi veya bozulmuş mu?
+2. Eğer "screenshot" alanı mevcut ise, görseldeki renderin bütünlüğü hakkında çıkarımda bulun (arka plan renkleri işlenmiş mi vb.)
+""",
+            "forward": """
+Kontrol edilecekler:
+1. "Fwd:" ile başlayan Forward Subject string'i var mı?
+2. Gövdede "---------- Forwarded message ---------" silsilesi ve orijinal gönderici (From, Date, Subject, To) izolasyonu başarılı mı?
+"""
         }
 
         checks = scenario_checks.get(scenario_type, "Genel mesaj iletim kontrolü yap.")
+        
+        receiver_client = combination.get('receiver_client', '').lower()
+        sender_client = combination.get('sender_client', '').lower()
+        
+        extra_rules = ""
+        if "apple" in receiver_client or "ios" in receiver_client:
+            extra_rules += "\n- DİKKAT (Apple Mail Alıcısı): Apple Mail bazen CID resimleri ve inline HTML yapısını bozup içeriği ek (attachment) olarak algılayabilir. Bunu kesinlikle HATA/BAŞARISIZ olarak değerlendirme. Apple için bu normal bir render davranışıdır."
+        if "outlook" in sender_client or "exchange" in sender_client:
+            extra_rules += "\n- DİKKAT (Outlook Göndericisi): E-postanın içinde VML/XML taglarının (<!--[if mso]>) gömülü olduğunu teyit et. Eğer MSO blokları yoksa ama testte gönderici 'Outlook' diyorsa bunu uyumsuzluk/spoofing hatası say."
+
+        checks += extra_rules
 
         return f"""Sen bir mail protokolü test uzmanısın. Aşağıdaki MIME verisini analiz et ve her kontrol noktasını değerlendir.
 
@@ -194,15 +249,16 @@ Sadece JSON döndür, markdown veya açıklama ekleme."""
     #  Manuel Doğrulama (Pasif Mode) — Hibrit: CLI + App IPC
     # ------------------------------------------------------------------ #
     def _manual_verify(self, scenario_type: str, send_meta: dict,
-                       received_msg: dict, combination: dict) -> dict:
+                       received_msg, combination: dict,
+                       delivery_failed: bool = False) -> dict:
         """
         Pasif modda doğrulama.
         - Terminal (stdin.isatty): CLI interactive input
         - Subprocess (app-driven): Dosya-tabanlı IPC ile bekleme
         """
         headers = received_msg.get("headers", {}) if received_msg else {}
-        subject = headers.get("subject", headers.get("Subject", "?"))
-        from_addr = headers.get("from", headers.get("From", "?"))
+        subject = headers.get("subject", headers.get("Subject", send_meta.get("subject", "?")))
+        from_addr = headers.get("from", headers.get("From", send_meta.get("from_addr", "?")))
         date_str = headers.get("date", headers.get("Date", "?"))
 
         sender_server   = combination.get("sender_server", "?")
@@ -219,9 +275,15 @@ Sadece JSON döndür, markdown veya açıklama ekleme."""
             "receiver_server": receiver_server,
             "attachments": len(received_msg.get("attachments", [])) if received_msg else 0,
             "inline_images": len(received_msg.get("inline_images", [])) if received_msg else 0,
+            "delivery_failed": delivery_failed,
         }
 
-        if sys.stdin.isatty():
+        # App'ten subprocess olarak çalıştırılıyor mu?
+        # app.py MAIL_AUTO_APP_MODE=1 set eder — isatty() güvenilmez.
+        import os as _os
+        if _os.environ.get("MAIL_AUTO_APP_MODE") == "1":
+            return self._app_verify(test_info)
+        elif sys.stdin.isatty():
             return self._cli_verify(test_info)
         else:
             return self._app_verify(test_info)
@@ -356,3 +418,74 @@ Sadece JSON döndür, markdown veya açıklama ekleme."""
                 "issues": ["JSON parse hatası"],
                 "recommendations": [],
             }
+    # ------------------------------------------------------------------ #
+    #  Otomatik Doğrulama (Kural Bazlı)
+    # ------------------------------------------------------------------ #
+    def _auto_verify(self, scenario_type: str, send_meta: dict,
+                     received_msg: dict, combination: dict) -> dict:
+        """
+        LLM veya insan müdahalesi olmadan kural bazlı doğrulama.
+        Sadece MIME yapısını ve temel metadata'yı kontrol eder.
+        """
+        checks = []
+        is_passed = True
+        summary = "Otomatik kontrol tamamlandı."
+
+        # 1. Temiz Gönderen/Alıcı Kontrolü
+        headers = received_msg.get("headers", {})
+        subj = headers.get("subject", "").lower()
+        orig_subj = send_meta.get("subject", "").lower()
+        
+        # Konu eşleşmesi (Prefix'leri tolere et)
+        subject_match = orig_subj in subj or subj in orig_subj or "[auto-test]" in subj
+        checks.append({
+            "name": "Konu Eşleşmesi",
+            "passed": subject_match,
+            "detail": f"Gelen: {headers.get('subject', '?')}"
+        })
+
+        # 2. Senaryo Spesifik Kurallar
+        if scenario_type == "plain_text":
+            body_exists = any(p.get("content_type", "").startswith("text/plain") for p in received_msg.get("parts", []))
+            checks.append({"name": "Metin İçeriği", "passed": body_exists, "detail": "text/plain part mevcut."})
+        
+        elif scenario_type == "attachment" or scenario_type == "multi_attachment":
+            has_attach = len(received_msg.get("attachments", [])) > 0
+            count = len(received_msg.get("attachments", []))
+            checks.append({"name": "Ek Dosya", "passed": has_attach, "detail": f"{count} ek bulundu."})
+            if scenario_type == "multi_attachment":
+                checks.append({"name": "Çoklu Ek Kontrolü", "passed": count >= 2, "detail": f"En az 2 ek bekleniyor, {count} bulundu."})
+
+        elif scenario_type == "inline_image":
+            has_inline = len(received_msg.get("inline_images", [])) > 0
+            checks.append({"name": "Inline Resim", "passed": has_inline, "detail": "CID referanslı resim bulundu."})
+
+        elif scenario_type == "reply_chain":
+            has_in_reply = bool(headers.get("in_reply_to"))
+            checks.append({"name": "MIME Reply Zinciri", "passed": has_in_reply, "detail": "In-Reply-To header mevcut."})
+
+        elif scenario_type == "calendar_invite":
+            has_cal = any("calendar" in p.get("content_type", "").lower() for p in received_msg.get("parts", []))
+            checks.append({"name": "Takvim Partı", "passed": has_cal, "detail": "text/calendar part bulundu."})
+
+        elif scenario_type == "html_table":
+            html_parts = [p.get("full_text", "") for p in received_msg.get("parts", []) if "html" in p.get("content_type", "").lower()]
+            has_table = any("<table" in h.lower() for h in html_parts)
+            checks.append({"name": "Tablo Yapısı (HTML)", "passed": has_table, "detail": "HTML içerisinde <table> etiketi tespit edildi."})
+
+        elif scenario_type == "forward_chain":
+            is_fwd = "fwd:" in subj or "fw:" in subj
+            checks.append({"name": "Forward Prefix", "passed": is_fwd, "detail": "Konu Fwd/Fw ile başlıyor."})
+
+        # Genel sonuç
+        failed_count = sum(1 for c in checks if not c["passed"])
+        is_passed = failed_count == 0
+        
+        return {
+            "passed": is_passed,
+            "confidence": "AUTO-RULE",
+            "checks": checks,
+            "summary": f"Kurallar ile {'BAŞARILI' if is_passed else 'BAŞARISIZ'} olarak işaretlendi.",
+            "issues": [c["name"] for c in checks if not c["passed"]],
+            "recommendations": ["Analizi derinleştirmek için 'Aktif' moda geçin."]
+        }

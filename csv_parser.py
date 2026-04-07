@@ -16,6 +16,10 @@ SCENARIO_TYPE_MAP = {
     "Inline Resim (Embedded Image)": "inline_image",
     "İmzalı Mesaj (S/MIME / PGP)": "smime",
     "Cevaplama & Bozulma Testi (Reply Chain)": "reply_chain",
+    "Takvim Daveti (iTIP / ICS)": "calendar_invite",
+    "Uluslararası Alfabe ve Emoji Sınaması": "i18n",
+    "Rich CSS ve Media Query Sınaması": "complex_html",
+    "Forward (Mesaj İletme) Akışı": "forward",
 }
 
 

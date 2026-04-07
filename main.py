@@ -23,10 +23,11 @@ from pathlib import Path
 # Proje modülleri
 from csv_parser import parse_csv, TestCombination
 from sender import MailSender
-from receiver import MailReceiver
+from receiver import create_receiver, BaseReceiver
 from analyzer import MailAnalyzer
 from llm_provider import create_provider
 from reporter import generate_html_report, generate_csv_results
+from database import save_run
 from template_manager import (
     get_template,
     get_reply_original,
@@ -213,11 +214,17 @@ def _resolve_attachment_paths(test_config: dict) -> list[str]:
 #  Subject builder helpers
 # ------------------------------------------------------------------ #
 SCENARIO_LABELS: dict[str, str] = {
-    "plain_text":   "Plain Text",
-    "attachment":   "Ek Dosya",
-    "inline_image": "Inline Görsel",
-    "reply_chain":  "Reply Chain",
-    "smime":        "S/MIME İmza",
+    "plain_text": "Düz Metin (UTF-8)",
+    "attachment": "Ekli Mesaj (Tek Dosya)",
+    "multi_attachment": "Çoklu Ek (Mixed MIME)",
+    "inline_image": "Gömülü Resim (CID)",
+    "smime": "İmzalı Mesaj (S/MIME / PGP)",
+    "reply_chain": "Yanıt Zinciri (Threading)",
+    "calendar_invite": "Takvim Daveti (iTIP/ICS)",
+    "i18n": "Uluslararası Alfabe",
+    "complex_html": "Zengin CSS ve Yerleşim",
+    "html_table": "HTML Tablo (Grid)",
+    "forward_chain": "İletilmiş Mesaj (Forward)",
 }
 
 LENGTH_LABELS: dict[str, str] = {
@@ -242,7 +249,6 @@ def _format_file_size(total_bytes: int) -> str:
 
 
 def _attachment_tag(paths: list[str]) -> str:
-    """Ek dosya bilgisini özet olarak döndürür. Ör: '3 Ek: PDF+CSV+TXT, 1.2MB'"""
     if not paths:
         return "Eksiz"
     existing = [p for p in paths if os.path.exists(p)]
@@ -298,7 +304,7 @@ def run_scenario(
     combo: TestCombination,
     combo_index: int,
     sender: MailSender,
-    receiver: MailReceiver,
+    receiver: BaseReceiver,
     analyzer: MailAnalyzer,
     test_config: dict,
 ) -> dict:
@@ -310,6 +316,12 @@ def run_scenario(
     wait = test_config.get("wait_seconds", 15)
     retries = test_config.get("max_retries", 3)
     retry_int = test_config.get("retry_interval", 5)
+
+    # Pasif modda IMAP beklemeyi kısalt — mail gelmediyse de doğrulama ekranı çıkar
+    if analyzer.mode == "passive":
+        wait = min(wait, 10)   # En fazla 10sn bekle
+        retries = 1             # Tek deneme yeterli
+        retry_int = 3
     image_path = test_config.get("test_image_path") or "test_files/test_image.png"
 
     attachment_paths = _resolve_attachment_paths(test_config)
@@ -352,26 +364,51 @@ def run_scenario(
         f"Kombo: {combo.label} | run_id={run_id}"
     )
 
+    # Şablonda özel ek dosyalar tanımlıysa bunları kullan, yoksa genel config'deki dosyaları kullan
+    final_attachments = []
+    if tmpl.attachments:
+        repo_root = Path(__file__).parent
+        attachments_dir = repo_root / "attachments"
+        for filename in tmpl.attachments:
+            p = attachments_dir / filename
+            if p.is_file():
+                final_attachments.append(str(p))
+            else:
+                logger.warning(f"Şablonda tanımlı dosya bulunamadı: {filename}")
+    
+    if not final_attachments:
+        final_attachments = attachment_paths
+
     try:
         if scenario_key == "plain_text":
-            send_meta = sender.send_plain_text(to_address, subject, body)
+            send_meta = sender.send_plain_text(to_address, subject, body, sender_client=combo.sender_client)
 
         elif scenario_key == "attachment":
             send_meta = sender.send_with_attachment(
-                to_address, subject, body, attachment_paths or "test_files/test_document.pdf",
+                to_address, subject, body, final_attachments or "test_files/test_document.pdf", sender_client=combo.sender_client
+            )
+
+        elif scenario_key == "multi_attachment":
+            # Birden fazla dosya gönder — yoksa fallback
+            multi_paths = final_attachments if len(final_attachments) > 1 else [
+                "test_files/test_document.pdf",
+                "test_files/test_image.png"
+            ]
+            send_meta = sender.send_with_attachment(
+                to_address, subject, body, multi_paths, sender_client=combo.sender_client
             )
 
         elif scenario_key == "inline_image":
             html_body = resolve_inline_html(tmpl.body, "{{CID}}")
             send_meta = sender.send_inline_image(
-                to_address, subject, image_path, html_body=html_body,
+                to_address, subject, image_path, html_body=html_body, sender_client=combo.sender_client
             )
 
         elif scenario_key == "smime":
             cert = test_config.get("smime_cert_path", "")
             key = test_config.get("smime_key_path", "")
             if cert and key and os.path.exists(cert) and os.path.exists(key):
-                send_meta = sender.send_smime_signed(to_address, subject, body, cert, key)
+                send_meta = sender.send_smime_signed(to_address, subject, body, cert, key, sender_client=combo.sender_client)
             else:
                 logger.warning("S/MIME sertifikası bulunamadı, senaryo atlanıyor.")
                 return {
@@ -399,7 +436,7 @@ def run_scenario(
             )
             orig_body = f"{orig_tmpl.body}\n\n[Run ID: {run_id}]"
 
-            original_meta = sender.send_plain_text(to_address, orig_subject, orig_body)
+            original_meta = sender.send_plain_text(to_address, orig_subject, orig_body, sender_client=combo.sender_client)
             time.sleep(5)
             send_meta = sender.send_reply(
                 to_address,
@@ -407,11 +444,28 @@ def run_scenario(
                 original_meta.get("msg_id", ""),
                 "",
                 body,
+                sender_client=combo.sender_client
             )
+
+        elif scenario_key == "calendar_invite":
+            send_meta = sender.send_calendar_invite(to_address, subject, body, sender_client=combo.sender_client)
+
+        elif scenario_key == "i18n":
+            i18n_subject = f"🌍 [I18N] {subject} - ÖÇŞĞÜİ ﷽ 漢字 🚀"
+            i18n_body = f"{body}\n\nUluslararası Alfabe Testi:\nTürkçe: ÖÇŞĞÜİöçşğüı\nArapça: ﷽\nAsya: 漢字\nEmoji: 🚀🔥🐞"
+            send_meta = sender.send_plain_text(to_address, i18n_subject, i18n_body, sender_client=combo.sender_client)
+
+        elif scenario_key == "complex_html" or scenario_key == "html_table":
+            # html_table senaryosu tmpl.body içindeki tabloyu kullanır
+            send_meta = sender.send_complex_html(to_address, subject, tmpl.body, sender_client=combo.sender_client)
+
+        elif scenario_key == "forward_chain":
+            orig_subject = f"Orijinal Mesaj Konusu - {run_id}"
+            orig_body = "Bu mesaj önceden iletilmiş ve zincirlenmiş bir alt formattır."
+            send_meta = sender.send_forward(to_address, orig_subject, sender.from_address, body, orig_body, sender_client=combo.sender_client)
 
         else:
             raise ValueError(f"Bilinmeyen senaryo tipi: {scenario_key}")
-
     except Exception as e:
         logger.error(f"Gönderim hatası ({scenario_key}): {e}", exc_info=True)
         return {
@@ -458,6 +512,20 @@ def run_scenario(
         scenario_key, send_meta, received, combination_meta
     )
 
+    # Playwright UI / DOM Snapshot
+    if received:
+        html_part = next((p for p in received.get("parts", []) if "html" in p.get("content_type", "").lower()), None)
+        if html_part and html_part.get("full_text"):
+            try:
+                from ui_tester import UITester
+                tester = UITester(headless=True)
+                screen_path = f"reports/screenshots/{scenario_key}_{uuid.uuid4().hex[:8]}.png"
+                success = tester.take_screenshot_from_html(html_part["full_text"], screen_path)
+                if success:
+                    analysis["screenshot"] = screen_path
+            except Exception as e:
+                logger.warning(f"  UI Screenshot alınamadı: {e}")
+
     status = "✅ PASS" if analysis.get("passed") else "❌ FAIL"
     logger.info(
         f"◼ Sonuç: {status} | {combo.label} / {scenario_key} ({tmpl.length}) "
@@ -493,6 +561,7 @@ def main():
     parser.add_argument("--mode", default=None, choices=["active", "passive"],
                         help="Analyzer modu: active (otomatik LLM) veya passive (manuel doğrulama)")
     parser.add_argument("--dry-run", action="store_true", help="Bağlantı testi, mail gönderme")
+    parser.add_argument("--spoof-sender", default=None, help="Tüm test kombinasyonları için gönderici istemciyi ez (Örn: Apple Mail, Outlook)")
     args = parser.parse_args()
 
     # Config yükle
@@ -524,6 +593,12 @@ def main():
             sys.exit(1)
         combinations = [combinations[args.combo]]
         logger.info(f"Sadece kombinasyon #{args.combo} çalıştırılıyor: {combinations[0].label}")
+
+    # Spoofing (İstemci Ezme)
+    if args.spoof_sender:
+        logger.info(f"🎭 Spoofing Aktif: Tüm testlerde Sender Client '{args.spoof_sender}' olarak simüle edilecek.")
+        for cb in combinations:
+            cb.sender_client = args.spoof_sender
 
     # Dry-run
     if args.dry_run:
@@ -584,6 +659,11 @@ def main():
         analyzer = MailAnalyzer(provider=None, mode="passive")
         logger.info("⚙️  Analyzer Mode: PASİF (Manuel Doğrulama)")
         logger.info("    → CLI'da interactive input veya App üzerinden onay beklenir")
+    elif analyzer_mode == "auto":
+        # Otomatik (Kural Bazlı) modda LLM provider gereksiz
+        analyzer = MailAnalyzer(provider=None, mode="auto")
+        logger.info("⚙️  Analyzer Mode: OTOMATİK (Kural Bazlı)")
+        logger.info("    → MIME yapısı ve metadata üzerinden otomatik kontrol yapılır")
     else:
         # Aktif modda LLM Provider setup (Claude veya Google Gemini)
         llm_cfg = config.get("llm", {})
@@ -597,11 +677,11 @@ def main():
                 logger.error("Anthropic API key eksik. config.yaml'ı kontrol edin.")
                 sys.exit(1)
         elif provider_type == "google":
-            provider_cfg = llm_cfg.get("google", {})
-            api_key = provider_cfg.get("api_key", "")
-            model = provider_cfg.get("model", "gemini-2.0-flash")
+            # Desteklenen iki yapı: a) llm.api_key (düz) b) llm.google.api_key (iç içe)
+            api_key = llm_cfg.get("api_key", "") or llm_cfg.get("google", {}).get("api_key", "")
+            model = llm_cfg.get("model", "") or llm_cfg.get("google", {}).get("model", "gemini-2.0-flash")
             if not api_key:
-                logger.error("Google API key eksik. config.yaml'ı kontrol edin.")
+                logger.error("❌ Google API key eksik. config.yaml'da llm.api_key altanı kontrol edin.")
                 sys.exit(1)
         else:
             logger.error(f"Bilinmeyen provider: {provider_type}")
@@ -616,6 +696,7 @@ def main():
             sys.exit(1)
 
     all_results = []
+    run_uuid = str(uuid.uuid4())
     Path("reports").mkdir(exist_ok=True)
 
     for combo_idx, combo in enumerate(combinations):
@@ -647,7 +728,7 @@ def main():
             receiver_config["test_address"] = receiver_address
 
         sender   = MailSender(sender_config)
-        receiver = MailReceiver(receiver_config)
+        receiver = create_receiver(receiver_config)
 
         scenarios_to_run = list(combo.scenarios.keys())
         if args.scenario:
@@ -681,8 +762,10 @@ def main():
             except Exception as e:
                 logger.error(f"  Beklenmeyen hata ({sc_key}): {e}", exc_info=True)
 
-    # Raporla
+    # Raporla ve Veritabanına Yaz
     if all_results:
+        save_run(run_uuid, all_results)
+        
         html_path = test_config.get("report_output", "reports/test_report.html")
         csv_path_out = test_config.get("results_csv", "reports/test_results.csv")
         generate_html_report(all_results, html_path)

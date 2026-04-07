@@ -1,0 +1,763 @@
+signature_block: '
+
+
+  ---
+
+  Saygılarımla,
+
+  Mail Otomasyon Test Sistemi
+
+  Bilgi Teknolojileri Müdürlüğü
+
+  Tel: +90 312 000 00 00 | Dahili: 4455
+
+  Bu mesaj otomatik test altyapısı tarafından üretilmiştir.
+
+  '
+signature_html: '<hr style=''border:none; border-top:1px solid #ccc; margin:24px 0
+  12px'' /><p style=''font-size:12px; color:#666; font-family:Arial, sans-serif''><strong>Mail
+  Otomasyon Test Sistemi</strong><br/>Bilgi Teknolojileri Müdürlüğü<br/>Tel: +90 312
+  000 00 00 | Dahili: 4455<br/><em>Bu mesaj otomatik test altyapısı tarafından üretilmiştir.</em></p>'
+templates:
+  attachment:
+  - attachments: []
+    body: 'Merhaba,
+
+
+      Bu mesaj, alıcı istemcinin ''Content-Disposition'' header''larını ve Base64
+      kodlanmış eklentileri doğru işleyip işlemediğini test eder.
+
+      Test Amacı: Dosya iletim bütünlüğü.
+
+      Türkçe karakter: ğüşıöçĞÜŞİÖÇ
+
+
+      ---
+
+      Saygılarımla,
+
+      Mail Otomasyon Test Sistemi
+
+      Bilgi Teknolojileri Müdürlüğü
+
+      Tel: +90 312 000 00 00 | Dahili: 4455
+
+      Bu mesaj otomatik test altyapısı tarafından üretilmiştir.
+
+      '
+    length: short
+    subject_tag: Ek Dosya Protokol Testi
+  - attachments: []
+    body: 'Sayın Yetkili,
+
+
+      Posta altyapısı testleri kapsamında eklenti iletimi gerçekleşmektedir.
+
+
+      Kontrol Noktaları:
+
+      - Eklenti dosya adındaki Türkçe karakterlerin (ğüşıöç) korunması.
+
+      - MIME boundary (sınır) belirteçlerinin alıcıda doğru ayrıştırılması.
+
+      - Content-Transfer-Encoding: base64 doğrulaması.
+
+
+      Lütfen ekteki dosyanın ismini ve boyutunu kontrol ediniz.
+
+
+      ---
+
+      Saygılarımla,
+
+      Mail Otomasyon Test Sistemi
+
+      Bilgi Teknolojileri Müdürlüğü
+
+      Tel: +90 312 000 00 00 | Dahili: 4455
+
+      Bu mesaj otomatik test altyapısı tarafından üretilmiştir.
+
+      '
+    length: medium
+    subject_tag: Eklenti İletim Kararlılık Sınaması
+  - attachments: []
+    body: "Teknik Ekibe,\n\nBu mesaj, e-posta istemcilerinin ekli dosyaları (attachment)\
+      \ RFC 2183 standartlarına göre nasıl kapsüllediğini ölçümlemek için tasarlanmıştır.\n\
+      \n== Senaryo ve Beklenti ==\nE-posta içeriğinde yer alan ekler; sunucu tarafından\
+      \ 'multipart/mixed' yapısı altında gönderilmektedir. Testin temel amacı, bu\
+      \ karışık MIME segmentlerinin alıcı tarafında (Outlook, Gmail, iOS vb.) birbirinden\
+      \ hatasız ayrıştırılıp ayrıştırılmadığını görmektir. \n\n== Doğrulama Listesi\
+      \ ==\n- Dosya Adı: {filename} (Türkçe karakter testi dahil)\n- MIME Type: Alıcı\
+      \ tarafından otomatik tanınmalıdır.\n- İletim Güvenliği: Dosyanın binary bütünlüğü\
+      \ korunmalıdır.\n\nÖzellikle mobil istemcilerde (EAS/Z-Push) eklenti adlarındaki\
+      \ bozulmalar (encoding errors) bu testin ana odak noktasıdır.\n\n---\nSaygılarımla,\n\
+      Mail Otomasyon Test Sistemi\nBilgi Teknolojileri Müdürlüğü\nTel: +90 312 000\
+      \ 00 00 | Dahili: 4455\nBu mesaj otomatik test altyapısı tarafından üretilmiştir.\n"
+    length: long
+    subject_tag: 'Teknik Rapor: Eklenti ve MIME Yapısı Analizi'
+  calendar_invite:
+  - attachments: []
+    body: 'Haftalık teknik senkron toplantısı davetidir.
+
+
+      ---
+
+      Saygılarımla,
+
+      Mail Otomasyon Test Sistemi
+
+      Bilgi Teknolojileri Müdürlüğü
+
+      Tel: +90 312 000 00 00 | Dahili: 4455
+
+      Bu mesaj otomatik test altyapısı tarafından üretilmiştir.
+
+      '
+    length: short
+    subject_tag: 'Toplantı: Haftalık Senkron'
+  - attachments: []
+    body: 'Merhaba,
+
+
+      Safir Posta geçişi öncesi son kullanıcı eğitimi yapılacaktır.
+
+
+      ---
+
+      Saygılarımla,
+
+      Mail Otomasyon Test Sistemi
+
+      Bilgi Teknolojileri Müdürlüğü
+
+      Tel: +90 312 000 00 00 | Dahili: 4455
+
+      Bu mesaj otomatik test altyapısı tarafından üretilmiştir.
+
+      '
+    length: medium
+    subject_tag: 'Workshop: Safir Posta Eğitimi'
+  - attachments: []
+    body: 'Sayın Paydaşlar,
+
+
+      Projenin final aşamasına geçilmesi öncesinde detaylı bir değerlendirme toplantısı
+      planlanmıştır.
+
+
+      ---
+
+      Saygılarımla,
+
+      Mail Otomasyon Test Sistemi
+
+      Bilgi Teknolojileri Müdürlüğü
+
+      Tel: +90 312 000 00 00 | Dahili: 4455
+
+      Bu mesaj otomatik test altyapısı tarafından üretilmiştir.
+
+      '
+    length: long
+    subject_tag: Proje Değerlendirme Kurulu (Kurumsal)
+  complex_html:
+  - attachments: []
+    body: '<html><body><p>Merhaba,</p><p>Bu mesaj, HTML e-postalarda ''Content-ID''
+      (CID) referanslı gömülü görsellerin iletimini test etmek içindir.</p><p><img
+      src="cid:{{CID}}" alt="Gömülü Görsel" style="max-width:600px" /></p><p>Türkçe:
+      ğüşıöçĞÜŞİÖÇ</p>{{SIGNATURE_HTML}}</body></html>'
+    length: short
+    subject_tag: Gömülü Görsel (CID) Doğrulaması
+  - attachments: []
+    body: '<html><body><h3>Gömülü Görsel Testi</h3><p>E-posta istemcinizin inline
+      (mesaj gövdesinde) görselleri işleme kapasitesi aşağıdaki görsel üzerinden test
+      edilmektedir.</p><ul><li>Görsel multipart/related yapısı içinde kapsüllenmiştir.</li><li>Farklı
+      ağ koşullarında görsel bütünlüğü korunmalıdır.</li></ul><p>Yukarıdaki görsel
+      görünmüyorsa, CID referansı alıcı tarafında çözümlenememiş demektir. Bu durumda
+      istemci loglarını ve MIME yapısını kontrol ediniz.</p><h3>Gömülü Görsel</h3><p><img
+      src="cid:{{CID}}" alt="Safir Test" style="max-width:600px; border:1px solid
+      #ccc" /></p>{{SIGNATURE_HTML}}</body></html>'
+    length: medium
+    subject_tag: HTML CID Uyumluluk Sınaması
+  - attachments: []
+    body: '<html><body><h2>Teknik Detay: CID (Content-ID) Mimarisi</h2><p>Bu senaryo,
+      görsellerin base64 olarak gövdeye gömülmesi yerine, ayrı bir MIME parçasında
+      tutulup HTML içinde <code>cid:</code> protocolu ile çağırılmasını (referencing)
+      test eder.</p>== Beklenen Davranış ==<br/>1. İstemci mesajı açtığında görseli
+      otomatik yüklemelidir (external image gibi blocklamadan).<br/>2. ''Forward''
+      veya ''Reply'' yapıldığında CID eşleşmesi bozulmamalıdır.<br/>3. Outlook''un
+      ''Word'' motorunda ve mobil istemcilerde ''auto-scale'' özelliği düzgün çalışmalıdır.<br/><br/><h3>Test
+      Görseli</h3><p><img src="cid:{{CID}}" alt="Kurumsal Logo" style="max-width:100%;
+      height:auto" /></p>{{SIGNATURE_HTML}}</body></html>'
+    length: long
+    subject_tag: Gelişmiş CID ve HTML5 Render Analizi
+  forward_chain:
+  - attachments: []
+    body: 'İletilen mesajın (Forward) MIME boundary izolasyonunu ve header bütünlüğünü
+      test eder.
+
+
+      Türkçe: ğüşıöçĞÜŞİÖÇ
+
+
+      ---
+
+      Saygılarımla,
+
+      Mail Otomasyon Test Sistemi
+
+      Bilgi Teknolojileri Müdürlüğü
+
+      Tel: +90 312 000 00 00 | Dahili: 4455
+
+      Bu mesaj otomatik test altyapısı tarafından üretilmiştir.
+
+      '
+    length: short
+    subject_tag: 'Fwd: Protokol Bilgilendirme'
+  - attachments: []
+    body: 'Merhaba,
+
+
+      Aşağıdaki mesajın iletim (forwarding) sürecinde MIME kapsüllemesinin bozulmadığını
+      teyit ediniz. Orijinal ''From'' ve ''Date'' bilgileri gövdede net okunabilmelidir.
+
+
+      --- Orijinal Mesaj ---
+
+      Amaç: Forward zinciri protokol uyumluluğu.
+
+      Sınama: ğüşıöçĞÜŞİÖÇ
+
+
+      ---
+
+      Saygılarımla,
+
+      Mail Otomasyon Test Sistemi
+
+      Bilgi Teknolojileri Müdürlüğü
+
+      Tel: +90 312 000 00 00 | Dahili: 4455
+
+      Bu mesaj otomatik test altyapısı tarafından üretilmiştir.
+
+      '
+    length: medium
+    subject_tag: 'Fwd: Önemli Duyuru ve Teknik Detay'
+  - attachments: []
+    body: 'Sayın Yönetici,
+
+
+      Bu mesaj, ''Nested Forward'' (İç İçe İletme) yapısını test etmekte olup, RFC
+      standardına göre boundary iç içe geçmelerini (nesting) denetler.
+
+
+      == Test Kapsamı ==
+
+      Çoklu iletme işlemlerinde mesaj hiyerarşisinin hantal istemcilerde dahi bozulmadan
+      (özellikle encoding ve özel karakterlerde) iletimi en kritik noktadır.
+
+
+      Karakter Doğrulama: ğüşıöç ĞÜŞIÖÇ — çalışma, güncelleme, şifreleme.
+
+
+      ---
+
+      Saygılarımla,
+
+      Mail Otomasyon Test Sistemi
+
+      Bilgi Teknolojileri Müdürlüğü
+
+      Tel: +90 312 000 00 00 | Dahili: 4455
+
+      Bu mesaj otomatik test altyapısı tarafından üretilmiştir.
+
+      '
+    length: long
+    subject_tag: 'Fwd: Fwd: Teknik Analiz ve Posta Yönetimi'
+  html_table:
+  - attachments: []
+    body: <html><body><p>Merhaba, bu mesaj istemcinin HTML tablolarını rendering kapasitesini
+      ölçer.</p><table border='1' style='border-collapse:collapse; width:100%'><tr><th>Parametre</th><th>Değer</th><th>Durum</th></tr><tr><td>Karakter
+      Seti</td><td>UTF-8</td><td>✅ Başarılı</td></tr><tr><td>MIME Tip</td><td>HTML</td><td>✅
+      Başarılı</td></tr></table>{{SIGNATURE_HTML}}</body></html>
+    length: short
+    subject_tag: HTML Tablo Render Testi (3x3)
+  - attachments: []
+    body: '<html><body><h3>MIME Tablo Uyumluluk Testi</h3><p>Aşağıdaki tablo, hücre
+      içi stillerin ve arka plan renklerinin korunup korunmadığını test eder.</p><table
+      style=''width:100%; border-collapse:collapse; border:1px solid #aaa''><thead><tr
+      style=''background:#004a99; color:white''><th style=''padding:10px''>ID</th><th
+      style=''padding:10px''>Kategori</th><th style=''padding:10px''>Test Notu</th></tr></thead><tbody><tr><td
+      style=''padding:10px; border-bottom:1px solid #ddd''>101</td><td style=''padding:10px;
+      border-bottom:1px solid #ddd''>Protokol</td><td style=''padding:10px; border-bottom:1px
+      solid #ddd''>ğüşıöç karakter seti testi</td></tr><tr style=''background:#f9f9f9''><td
+      style=''padding:10px; border-bottom:1px solid #ddd''>102</td><td style=''padding:10px;
+      border-bottom:1px solid #ddd''>Görünüm</td><td style=''padding:10px; border-bottom:1px
+      solid #ddd''>Zebra-striping render kontrolü</td></tr></tbody></table>{{SIGNATURE_HTML}}</body></html>'
+    length: medium
+    subject_tag: Kompleks HTML Tablo ve Stil Doğrulaması
+  - attachments: []
+    body: '<html><body><h2>Teknik Test: Gelişmiş HTML Tablo Yapısı</h2><p>Bu senaryo,
+      kurumsal yazışmalarda sıkça kullanılan ''tablo kopyala-yapıştır'' (table paste)
+      davranışını e-posta protokolü seviyesinde simüle eder.</p><table style=''border:2px
+      solid #333; font-family:sans-serif; width:100%; border-collapse:collapse''><tr><th
+      colspan=''3'' style=''background:#333; color:white; padding:15px''>Sistem Metrikleri
+      Raporu</th></tr><tr><td style=''padding:10px; border:1px solid #666''><b>CPU</b></td><td
+      style=''padding:10px; border:1px solid #666''>%12</td><td style=''padding:10px;
+      border:1px solid #666; color:green''>Stabil</td></tr><tr><td style=''padding:10px;
+      border:1px solid #666''><b>RAM</b></td><td style=''padding:10px; border:1px
+      solid #666''>4.2 GB</td><td style=''padding:10px; border:1px solid #666; color:orange''>Orta</td></tr><tr><td
+      style=''padding:10px; border:1px solid #666''><b>IMAP I/O</b></td><td style=''padding:10px;
+      border:1px solid #666''>240 msg/s</td><td style=''padding:10px; border:1px solid
+      #666; color:blue''>Yüksek</td></tr></table><p>Türkçe Karakter: ğüşıöçĞÜŞİÖÇ</p>{{SIGNATURE_HTML}}</body></html>'
+    length: long
+    subject_tag: Kritik Veri Tablosu - Render ve Bütünlük
+  i18n:
+  - attachments: []
+    body: 'Türkçe: ÖÇŞĞÜİöçşğüı (şifreleme, çalışma).
+
+
+      ---
+
+      Saygılarımla,
+
+      Mail Otomasyon Test Sistemi
+
+      Bilgi Teknolojileri Müdürlüğü
+
+      Tel: +90 312 000 00 00 | Dahili: 4455
+
+      Bu mesaj otomatik test altyapısı tarafından üretilmiştir.
+
+      '
+    length: short
+    subject_tag: '🌍 Test: ÖÇŞĞÜİ 🚀'
+  - attachments: []
+    body: 'Arapça: ﷽
+
+      Asya: 漢字 (Test)
+
+      Emoji: 🚀🔥🐞
+
+      Türkçe: öçşğüı
+
+
+      ---
+
+      Saygılarımla,
+
+      Mail Otomasyon Test Sistemi
+
+      Bilgi Teknolojileri Müdürlüğü
+
+      Tel: +90 312 000 00 00 | Dahili: 4455
+
+      Bu mesaj otomatik test altyapısı tarafından üretilmiştir.
+
+      '
+    length: medium
+    subject_tag: '🌍 Multi-lingual: ﷽ 漢字 🔥'
+  - attachments: []
+    body: 'Bu test, farklı alfabelerin (UTF-8) sunucu ve istemci tarafında bozulmadan
+      taşınmasını ölçer.
+
+
+      Özel: ğüşıöç ĞÜŞIÖÇ
+
+      Arapça: ﷽
+
+      Asya: 漢字
+
+      Emoji: 🚀🔥🐞
+
+
+      ---
+
+      Saygılarımla,
+
+      Mail Otomasyon Test Sistemi
+
+      Bilgi Teknolojileri Müdürlüğü
+
+      Tel: +90 312 000 00 00 | Dahili: 4455
+
+      Bu mesaj otomatik test altyapısı tarafından üretilmiştir.
+
+      '
+    length: long
+    subject_tag: 🌍 Uluslararası Karakter Bütünlüğü Analizi
+  inline_image:
+  - attachments: []
+    body: '<html><body><p>Merhaba,</p><p>Bu mesaj, HTML e-postalarda ''Content-ID''
+      (CID) referanslı gömülü görsellerin iletimini test etmek içindir.</p><p><img
+      src="cid:{{CID}}" alt="Gömülü Görsel" style="max-width:600px" /></p><p>Türkçe:
+      ğüşıöçĞÜŞİÖÇ</p>{{SIGNATURE_HTML}}</body></html>'
+    length: short
+    subject_tag: Gömülü Görsel (CID) Doğrulaması
+  - attachments: []
+    body: '<html><body><h3>Gömülü Görsel Testi</h3><p>E-posta istemcinizin inline
+      (mesaj gövdesinde) görselleri işleme kapasitesi aşağıdaki görsel üzerinden test
+      edilmektedir.</p><ul><li>Görsel multipart/related yapısı içinde kapsüllenmiştir.</li><li>Farklı
+      ağ koşullarında görsel bütünlüğü korunmalıdır.</li></ul><p>Yukarıdaki görsel
+      görünmüyorsa, CID referansı alıcı tarafında çözümlenememiş demektir. Bu durumda
+      istemci loglarını ve MIME yapısını kontrol ediniz.</p><h3>Gömülü Görsel</h3><p><img
+      src="cid:{{CID}}" alt="Safir Test" style="max-width:600px; border:1px solid
+      #ccc" /></p>{{SIGNATURE_HTML}}</body></html>'
+    length: medium
+    subject_tag: HTML CID Uyumluluk Sınaması
+  - attachments: []
+    body: '<html><body><h2>Teknik Detay: CID (Content-ID) Mimarisi</h2><p>Bu senaryo,
+      görsellerin base64 olarak gövdeye gömülmesi yerine, ayrı bir MIME parçasında
+      tutulup HTML içinde <code>cid:</code> protocolu ile çağırılmasını (referencing)
+      test eder.</p>== Beklenen Davranış ==<br/>1. İstemci mesajı açtığında görseli
+      otomatik yüklemelidir (external image gibi blocklamadan).<br/>2. ''Forward''
+      veya ''Reply'' yapıldığında CID eşleşmesi bozulmamalıdır.<br/>3. Outlook''un
+      ''Word'' motorunda ve mobil istemcilerde ''auto-scale'' özelliği düzgün çalışmalıdır.<br/><br/><h3>Test
+      Görseli</h3><p><img src="cid:{{CID}}" alt="Kurumsal Logo" style="max-width:100%;
+      height:auto" /></p>{{SIGNATURE_HTML}}</body></html>'
+    length: long
+    subject_tag: Gelişmiş CID ve HTML5 Render Analizi
+  multi_attachment:
+  - attachments: []
+    body: 'Merhaba,
+
+
+      Bu mesaj, alıcı istemcinin ''Content-Disposition'' header''larını ve Base64
+      kodlanmış eklentileri doğru işleyip işlemediğini test eder.
+
+      Test Amacı: Dosya iletim bütünlüğü.
+
+      Türkçe karakter: ğüşıöçĞÜŞİÖÇ
+
+
+      ---
+
+      Saygılarımla,
+
+      Mail Otomasyon Test Sistemi
+
+      Bilgi Teknolojileri Müdürlüğü
+
+      Tel: +90 312 000 00 00 | Dahili: 4455
+
+      Bu mesaj otomatik test altyapısı tarafından üretilmiştir.
+
+      '
+    length: short
+    subject_tag: Ek Dosya Protokol Testi
+  - attachments: []
+    body: 'Sayın Yetkili,
+
+
+      Posta altyapısı testleri kapsamında eklenti iletimi gerçekleşmektedir.
+
+
+      Kontrol Noktaları:
+
+      - Eklenti dosya adındaki Türkçe karakterlerin (ğüşıöç) korunması.
+
+      - MIME boundary (sınır) belirteçlerinin alıcıda doğru ayrıştırılması.
+
+      - Content-Transfer-Encoding: base64 doğrulaması.
+
+
+      Lütfen ekteki dosyanın ismini ve boyutunu kontrol ediniz.
+
+
+      ---
+
+      Saygılarımla,
+
+      Mail Otomasyon Test Sistemi
+
+      Bilgi Teknolojileri Müdürlüğü
+
+      Tel: +90 312 000 00 00 | Dahili: 4455
+
+      Bu mesaj otomatik test altyapısı tarafından üretilmiştir.
+
+      '
+    length: medium
+    subject_tag: Eklenti İletim Kararlılık Sınaması
+  - attachments: []
+    body: "Teknik Ekibe,\n\nBu mesaj, e-posta istemcilerinin ekli dosyaları (attachment)\
+      \ RFC 2183 standartlarına göre nasıl kapsüllediğini ölçümlemek için tasarlanmıştır.\n\
+      \n== Senaryo ve Beklenti ==\nE-posta içeriğinde yer alan ekler; sunucu tarafından\
+      \ 'multipart/mixed' yapısı altında gönderilmektedir. Testin temel amacı, bu\
+      \ karışık MIME segmentlerinin alıcı tarafında (Outlook, Gmail, iOS vb.) birbirinden\
+      \ hatasız ayrıştırılıp ayrıştırılmadığını görmektir. \n\n== Doğrulama Listesi\
+      \ ==\n- Dosya Adı: {filename} (Türkçe karakter testi dahil)\n- MIME Type: Alıcı\
+      \ tarafından otomatik tanınmalıdır.\n- İletim Güvenliği: Dosyanın binary bütünlüğü\
+      \ korunmalıdır.\n\nÖzellikle mobil istemcilerde (EAS/Z-Push) eklenti adlarındaki\
+      \ bozulmalar (encoding errors) bu testin ana odak noktasıdır.\n\n---\nSaygılarımla,\n\
+      Mail Otomasyon Test Sistemi\nBilgi Teknolojileri Müdürlüğü\nTel: +90 312 000\
+      \ 00 00 | Dahili: 4455\nBu mesaj otomatik test altyapısı tarafından üretilmiştir.\n"
+    length: long
+    subject_tag: 'Teknik Rapor: Eklenti ve MIME Yapısı Analizi'
+  plain_text:
+  - attachments:
+    - Safir Posta Bilgi Notu _.pdf
+    body: 'Merhaba,
+
+
+      Bu mesaj, alıcı istemcinin temel SMTP düz metin (Plain Text) e-postaları UTF-8
+      standartlarında alıp almadığını doğrulamak amacıyla gönderilmiştir.
+
+      Test Amacı: Karakter seti bütünlüğü ve iletim hızı.
+
+      Türkçe karakterler: ğüşıöçĞÜŞİÖÇ
+
+
+
+      ---
+
+      Saygılarımla,
+
+      Mail Otomasyon Test Sistemi
+
+      Bilgi Teknolojileri Müdürlüğü
+
+      Tel: +90 312 000 00 00 | Dahili: 4455
+
+      Bu mesaj otomatik test altyapısı tarafından üretilmiştir.
+
+      '
+    length: short
+    subject_tag: Düz Metin İletim Testi
+  - attachments: []
+    body: 'Sayın Yetkili,
+
+
+      E-posta altyapı geçiş çalışmaları kapsamında, alıcı istemcinin standard RFC
+      5322 uyumluluğu test edilmektedir.
+
+
+      Senaryo Detayı:
+
+      - Mesaj Tipi: Plain Text (Düz Metin)
+
+      - Kodlama: UTF-8 (7-bit / 8-bit)
+
+      - Kontrol: ĞÜŞİÖÇ karakterlerinin bozulmadan iletimi.
+
+
+      Bu mesajın içeriği, sunucu tarafındaki MIME transformasyonlarının doğruluğunu
+      teyit etmek için tasarlanmıştır.
+
+
+
+      ---
+
+      Saygılarımla,
+
+      Mail Otomasyon Test Sistemi
+
+      Bilgi Teknolojileri Müdürlüğü
+
+      Tel: +90 312 000 00 00 | Dahili: 4455
+
+      Bu mesaj otomatik test altyapısı tarafından üretilmiştir.
+
+      '
+    length: medium
+    subject_tag: Protokol Doğrulama - UTF-8 / Plain Text
+  - attachments: []
+    body: 'Sayın Teknik Ekip,
+
+
+      Posta sunucusu (EMS/Safir) geçiş sürecinde, alıcı tarafındaki istemcilerin metin
+      tabanlı içerikleri işleme kapasitesi ölçülmektedir.
+
+
+      == Test ve Analiz Kapsamı ==
+
+      Bu uzun formatlı düz metin mesajı; ağ üzerindeki paket segmentasyonu ve SMTP
+      sunucusundaki satır sonu (CRLF) dönüşümlerini test eder. Özellikle 80 karakterden
+      uzun satırların istemci tarafından nasıl wrap edildiği (sarılmış) ve Türkçe
+      karakterlerin bu süreçte zarar görüp görmediği incelenmektedir.
+
+
+      == Doğrulama Parametreleri ==
+
+      1. UTF-8 Karakter seti: ğüşıöç ĞÜŞIÖÇ (Tam Set)
+
+      2. Satır uzunluğu toleransı: Mesajın görsel bütünlüğü korunmalıdır.
+
+      3. Header / Body ayırımı devitasyonu: MIME boundary tespiti.
+
+
+      Bu otomatik üretilmiş bir içeriktir. Lütfen kontrol sonrası teyit ediniz.
+
+
+      ---
+
+      Saygılarımla,
+
+      Mail Otomasyon Test Sistemi
+
+      Bilgi Teknolojileri Müdürlüğü
+
+      Tel: +90 312 000 00 00 | Dahili: 4455
+
+      Bu mesaj otomatik test altyapısı tarafından üretilmiştir.
+
+      '
+    length: long
+    subject_tag: 'Teknik Analiz: Plain Text Protokol Uyumluluğu'
+  reply_chain:
+  - attachments: []
+    body: 'Teşekkürler, not aldım. İşlem tamamlandığında bilgilendireceğim.
+
+
+      Karakter testi: ğüşıöç ĞÜŞİÖÇ
+
+
+      ---
+
+      Saygılarımla,
+
+      Mail Otomasyon Test Sistemi
+
+      Bilgi Teknolojileri Müdürlüğü
+
+      Tel: +90 312 000 00 00 | Dahili: 4455
+
+      Bu mesaj otomatik test altyapısı tarafından üretilmiştir.
+
+      '
+    length: short
+    subject_tag: Durum Onayı
+  - attachments: []
+    body: 'Merhaba,
+
+
+      Önceki mesajınızdaki test sonuçlarını inceledim. Aşağıdaki noktaları paylaşmak
+      isterim:
+
+
+      - SMTP bağlantısı sorunsuz görünüyor; relay loglarında hata yok.
+
+      - Eklenti iletiminde dosya adı Türkçe karakter içerdiğinde (ör. ''SAFİR'') bazı
+      istemcilerde encoding farkı oluşabiliyor.
+
+      - Thread yapısı korunuyor; In-Reply-To header''ı doğru.
+
+
+      Karakter testi: ğüşıöçĞÜŞİÖÇ
+
+
+      ---
+
+      Saygılarımla,
+
+      Mail Otomasyon Test Sistemi
+
+      Bilgi Teknolojileri Müdürlüğü
+
+      Tel: +90 312 000 00 00 | Dahili: 4455
+
+      Bu mesaj otomatik test altyapısı tarafından üretilmiştir.
+
+      '
+    length: medium
+    subject_tag: Geçiş Testi Geri Bildirimi
+  - attachments: []
+    body: 'Sayın Yetkili,
+
+
+      Thread üzerindeki tüm mesajları sırasıyla inceledim. Aşağıda kombinasyon bazlı
+      gözlemlerimi detaylı olarak aktarıyorum:
+
+
+      == Gözlem 1: Header Bütünlüğü ==
+
+      İlk mesajdan itibaren Message-ID ve References header''ları zincirleme olarak
+      doğru taşınmış. Thread görünümü hatasız.
+
+
+      == Gözlem 2: Alıntı (Quote) Yapısı ==
+
+      İstemciler arasındaki alıntı (quote) formatı geçişlerinde karakter kaybı yaşanmıyor.
+
+
+      Karakter doğrulama: ğüşıöç ĞÜŞIÖÇ — çalışma, güncelleme, şifreleme.
+
+
+      ---
+
+      Saygılarımla,
+
+      Mail Otomasyon Test Sistemi
+
+      Bilgi Teknolojileri Müdürlüğü
+
+      Tel: +90 312 000 00 00 | Dahili: 4455
+
+      Bu mesaj otomatik test altyapısı tarafından üretilmiştir.
+
+      '
+    length: long
+    subject_tag: Detaylı Reply Chain Analizi ve Karar
+  reply_original:
+  - attachments: []
+    body: "Merhaba, posta geçiş testi başlatılıyor. \n\n---\nSaygılarımla,\nMail Otomasyon\
+      \ Test Sistemi\nBilgi Teknolojileri Müdürlüğü\nTel: +90 312 000 00 00 | Dahili:\
+      \ 4455\nBu mesaj otomatik test altyapısı tarafından üretilmiştir.\n"
+    length: short
+    subject_tag: Test Koordinasyonu
+  - attachments: []
+    body: 'Merhaba,
+
+
+      Safir Posta geçiş testleri bu mesaj ile başlatılmıştır.
+
+
+      ---
+
+      Saygılarımla,
+
+      Mail Otomasyon Test Sistemi
+
+      Bilgi Teknolojileri Müdürlüğü
+
+      Tel: +90 312 000 00 00 | Dahili: 4455
+
+      Bu mesaj otomatik test altyapısı tarafından üretilmiştir.
+
+      '
+    length: medium
+    subject_tag: Geçiş Testi Başlangıç
+  - attachments: []
+    body: 'Sayın Yetkili,
+
+
+      Bu mesaj, Safir Posta sunucu geçişi kapsamında yürütülen - Birden fazla paragraf
+      yazınız
+
+      - Mümkünse farklı bir istemciden yanıtlayınız
+
+
+      Karakter doğrulama satırı:
+
+      ğüşıöç ĞÜŞIÖÇ — çalışma, güncelleme, şifreleme, ışık, ölçüm, üretim.
+
+
+      ---
+
+      Saygılarımla,
+
+      Mail Otomasyon Test Sistemi
+
+      Bilgi Teknolojileri Müdürlüğü
+
+      Tel: +90 312 000 00 00 | Dahili: 4455
+
+      Bu mesaj otomatik test altyapısı tarafından üretilmiştir.
+
+      '
+    length: long
+    subject_tag: Posta Sunucu Testi Başlangıç Bildirimi
