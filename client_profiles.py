@@ -1,6 +1,23 @@
 import re
 from email.message import Message
+from email import encoders
 
+def _safe_set_html_payload(part: Message, html_str: str):
+    """HTML içeriğini değiştirdikten sonra mevcut encoding kuralına göre yeniden güvenli bir şekilde encode eder."""
+    current_encoding = part.get("Content-Transfer-Encoding", "").lower()
+    
+    if "Content-Transfer-Encoding" in part:
+        del part["Content-Transfer-Encoding"]
+    part.set_payload(html_str.encode("utf-8"))
+    
+    if current_encoding == "quoted-printable":
+        encoders.encode_quopri(part)
+    else:
+        encoders.encode_base64(part)
+    
+    # MIMEText default davranışı olarak charset tekrar eklenir (base64'ü tetiklemeden)
+    if "charset" not in part.get_content_type():
+        part.set_param("charset", "utf-8")
 def apply_client_profile(msg: Message, client_name: str) -> Message:
     """
     Belirtilen istemci profiline göre Message nesnesinin MIME yapısında
@@ -50,7 +67,7 @@ def _apply_ios(msg: Message):
                     if '<meta name="viewport"' not in html_str:
                         meta = '<meta name="viewport" content="width=device-width, initial-scale=1.0">'
                         html_str = html_str.replace("<html>", f"<html><head>{meta}</head>")
-                    part.set_payload(html_str, "utf-8")
+                    _safe_set_html_payload(part, html_str)
                 except UnicodeDecodeError:
                     pass
 
@@ -79,7 +96,7 @@ def _apply_outlook(msg: Message):
                         
                     # Outlook spesifik paragraf sonları (Word render)
                     html_str = html_str.replace("</p>", '<o:p></o:p></p>')
-                    part.set_payload(html_str, "utf-8")
+                    _safe_set_html_payload(part, html_str)
                 except UnicodeDecodeError:
                     pass
 
@@ -99,7 +116,7 @@ def _apply_gmail(msg: Message):
                     else:
                         html_str = f'<div dir="ltr" class="gmail_default">{html_str}</div>'
                         
-                    part.set_payload(html_str, "utf-8")
+                    _safe_set_html_payload(part, html_str)
                 except UnicodeDecodeError:
                     pass
 
@@ -159,7 +176,7 @@ def _apply_custom_web(msg: Message):
                         html_str = html_str.replace("</body>", f"{signature_html}\n</body>")
                     else:
                         html_str = f"{html_str}\n{signature_html}"
-                    part.set_payload(html_str, "utf-8")
+                    _safe_set_html_payload(part, html_str)
                 except Exception:
                     pass
 

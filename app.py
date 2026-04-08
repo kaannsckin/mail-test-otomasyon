@@ -275,6 +275,7 @@ def _trigger_run(params: dict = None, is_autonomous: bool = False):
     if params.get("dry_run"):           cmd += ["--dry-run"]
     if params.get("mode"):              cmd += ["--mode", params["mode"]]
     if params.get("spoof_sender"):      cmd += ["--spoof-sender", params["spoof_sender"]]
+    if params.get("save_to_sent"):      cmd += ["--save-to-sent"]
 
     run_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}{'_auto' if is_autonomous else ''}"
     run_state.update({
