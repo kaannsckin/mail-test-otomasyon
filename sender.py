@@ -103,7 +103,7 @@ class MailSender:
             raise smtplib.SMTPAuthenticationError(code, f"XOAUTH2 Başarısız: {err_msg}")
 
     def _base_headers(self, subject: str, to_address: str, msg_id: Optional[str] = None) -> dict:
-        return {
+        headers = {
             "Message-ID": msg_id or make_msgid(),
             "Date": formatdate(localtime=True),
             "Subject": subject,
@@ -111,6 +111,9 @@ class MailSender:
             "To": to_address,
             "X-Test-Automation": "mail-otomasyon-v1",
         }
+        if getattr(self, "save_to_sent", False):
+            headers["X-Mailer"] = "Mail-Otomasyon-Agent"
+        return headers
 
     # ------------------------------------------------------------------ #
     #  Senaryo 1: Plain Text
@@ -418,10 +421,10 @@ class MailSender:
             try:
                 # SMTP bağlantısı ve gönderim
                 with self._connect() as smtp:
-                    # as_string() → encode daha güvenli (EMS/Z-Push uyumu için)
+                    import email.policy
                     smtp.sendmail(
                         self.from_address, [to_address],
-                        msg.as_string().encode("utf-8", "replace")
+                        msg.as_bytes(policy=email.policy.SMTP)
                     )
                 return time.time()
 

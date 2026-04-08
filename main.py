@@ -604,6 +604,7 @@ def main():
                         help="Analyzer modu: active (otomatik LLM) veya passive (manuel doğrulama)")
     parser.add_argument("--dry-run", action="store_true", help="Bağlantı testi, mail gönderme")
     parser.add_argument("--spoof-sender", default=None, help="Tüm test kombinasyonları için gönderici istemciyi ez (Örn: Apple Mail, Outlook)")
+    parser.add_argument("--save-to-sent", action="store_true", help="EMS sunucusunda maili Sent klasörüne zorla kaydet (X-Mailer ekler)")
     args = parser.parse_args()
 
     # Config yükle
@@ -772,6 +773,7 @@ def main():
             receiver_config["test_address"] = receiver_address
 
         sender   = MailSender(sender_config)
+        sender.save_to_sent = args.save_to_sent
         receiver = create_receiver(receiver_config)
 
         scenarios_to_run = list(combo.scenarios.keys())
