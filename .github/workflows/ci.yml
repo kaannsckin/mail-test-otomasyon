@@ -127,22 +127,21 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest pytest-cov
+          pip install pytest pytest-cov pytest-timeout
 
       - name: Install Playwright browsers (for endpoint tests)
         run: |
-          pip install playwright
           playwright install chromium --with-deps 2>/dev/null || true
 
       - name: Create minimal config.yaml
         run: |
-          cat > config.yaml << 'EOF'
-          mail_interval_minutes: 60
-          spreadsheet_path: mail_test_checklist.csv
-          log_level: WARNING
-          auth:
-            provider: none
-          EOF
+          cat > config.yaml << 'ENDOFCONFIG'
+mail_interval_minutes: 60
+spreadsheet_path: mail_test_checklist.csv
+log_level: WARNING
+auth:
+  provider: none
+ENDOFCONFIG
 
       - name: Run performance tests
         run: |
