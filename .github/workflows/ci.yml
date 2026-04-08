@@ -135,13 +135,13 @@ jobs:
 
       - name: Create minimal config.yaml
         run: |
-          cat > config.yaml << 'ENDOFCONFIG'
-mail_interval_minutes: 60
-spreadsheet_path: mail_test_checklist.csv
-log_level: WARNING
-auth:
-  provider: none
-ENDOFCONFIG
+          echo "mail_interval_minutes: 60" > config.yaml
+          echo "spreadsheet_path: mail_test_checklist.csv" >> config.yaml
+          echo "log_level: WARNING" >> config.yaml
+          echo "auth:" >> config.yaml
+          echo "  provider: none" >> config.yaml
+          cat config.yaml
+
 
       - name: Run performance tests
         run: |
