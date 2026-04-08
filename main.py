@@ -20,6 +20,9 @@ from datetime import datetime
 from email.utils import make_msgid
 from pathlib import Path
 
+_BASE_DIR = Path(os.environ.get("MAIL_AUTO_CONFIG_DIR", "")).resolve() \
+             if os.environ.get("MAIL_AUTO_CONFIG_DIR") else Path(__file__).parent
+
 # Proje modülleri
 from csv_parser import parse_csv, TestCombination
 from sender import MailSender
@@ -97,9 +100,9 @@ def resolve_csv_path(csv_path: str) -> str:
 #  Logging kurulumu
 # ------------------------------------------------------------------ #
 def setup_logging(config: dict):
-    log_dir = Path("logs")
+    log_dir = _BASE_DIR / "logs"
     log_dir.mkdir(exist_ok=True)
-    log_file = config.get("logging", {}).get("file", "logs/automation.log")
+    log_file = _BASE_DIR / config.get("logging", {}).get("file", "logs/automation.log")
     level = getattr(logging, config.get("logging", {}).get("level", "INFO"))
 
     logging.basicConfig(
@@ -134,7 +137,7 @@ def get_server_config(config: dict, server_name: str) -> dict:
 # ------------------------------------------------------------------ #
 def prepare_test_files():
     """Yoksa örnek test dosyaları oluşturur."""
-    Path("test_files").mkdir(exist_ok=True)
+    (_BASE_DIR / "test_files").mkdir(exist_ok=True)
 
     pdf_path = "test_files/test_document.pdf"
     if not os.path.exists(pdf_path):
@@ -521,10 +524,49 @@ def run_scenario(
                 tester = UITester(headless=True)
                 screen_path = f"reports/screenshots/{scenario_key}_{uuid.uuid4().hex[:8]}.png"
                 success = tester.take_screenshot_from_html(html_part["full_text"], screen_path)
+                
                 if success:
                     analysis["screenshot"] = screen_path
+                    
+                    # Visual Regression (Sprint 8)
+                    baseline_dir = _BASE_DIR / "data" / "baselines"
+                    baseline_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    # Baseline filename unique to combination + scenario
+                    safe_label = combo.label.replace("/", "_").replace(" ", "_").replace("←", "_to_")
+                    baseline_file = baseline_dir / f"{scenario_key}_{safe_label}.png"
+                    
+                    if baseline_file.exists():
+                        diff_dir = _BASE_DIR / "reports" / "diffs"
+                        diff_dir.mkdir(parents=True, exist_ok=True)
+                        diff_path = diff_dir / f"diff_{run_id}_{scenario_key}.png"
+                        
+                        comparison = tester.compare_screenshots(str(baseline_file), screen_path, str(diff_path))
+                        if "error" not in comparison:
+                            analysis["baseline"] = str(baseline_file)
+                            analysis["diff_screenshot"] = str(diff_path)
+                            analysis["diff_percent"] = comparison["diff_percent"]
+                            analysis["is_visual_match"] = comparison["is_match"]
+                            
+                            if not comparison["is_match"]:
+                                analysis["passed"] = False
+                                analysis["checks"].append({
+                                    "name": "Görsel Regresyon",
+                                    "passed": False,
+                                    "detail": f"Tasarım %{comparison['diff_percent']} oranında değişmiş!"
+                                })
+                                analysis["issues"].append(f"Görsel regresyon hatası (%{comparison['diff_percent']} fark)")
+                            else:
+                                analysis["checks"].append({
+                                    "name": "Görsel Regresyon",
+                                    "passed": True,
+                                    "detail": f"Tasarım baseline ile uyumlu (%{comparison['diff_percent']} fark)"
+                                })
+                    else:
+                        analysis["baseline"] = None
+                        logger.info(f"  ℹ Baseline bulunamadı, bu görsel ileride kullanılabilir.")
             except Exception as e:
-                logger.warning(f"  UI Screenshot alınamadı: {e}")
+                logger.warning(f"  UI Screenshot / Regresyon hatası: {e}")
 
     status = "✅ PASS" if analysis.get("passed") else "❌ FAIL"
     logger.info(
@@ -552,7 +594,7 @@ def run_scenario(
 # ------------------------------------------------------------------ #
 def main():
     parser = argparse.ArgumentParser(description="Mail Otomasyon Testi")
-    parser.add_argument("--config", default="config.yaml", help="Config dosyası yolu")
+    parser.add_argument("--config", default=str(_BASE_DIR / "config.yaml"), help="Config dosyası yolu")
     parser.add_argument("--csv", default=None, help="Test CSV dosyası yolu")
     parser.add_argument("--combo", type=int, default=None, help="Sadece N. kombinasyonu çalıştır (0-index)")
     parser.add_argument("--scenario", default=None,
@@ -697,7 +739,9 @@ def main():
 
     all_results = []
     run_uuid = str(uuid.uuid4())
-    Path("reports").mkdir(exist_ok=True)
+    # Raporlama klasörünü hazırla
+    (_BASE_DIR / "reports").mkdir(exist_ok=True)
+    (_BASE_DIR / "reports" / "screenshots").mkdir(exist_ok=True, parents=True)
 
     for combo_idx, combo in enumerate(combinations):
         logger.info(f"\n{'='*60}")
@@ -766,10 +810,10 @@ def main():
     if all_results:
         save_run(run_uuid, all_results)
         
-        html_path = test_config.get("report_output", "reports/test_report.html")
-        csv_path_out = test_config.get("results_csv", "reports/test_results.csv")
-        generate_html_report(all_results, html_path)
-        generate_csv_results(all_results, csv_path_out)
+        html_path = _BASE_DIR / test_config.get("report_output", "reports/test_report.html")
+        csv_path_out = _BASE_DIR / test_config.get("results_csv", "reports/test_results.csv")
+        generate_html_report(all_results, str(html_path))
+        generate_csv_results(all_results, str(csv_path_out))
         logger.info(f"\n{'='*60}")
         logger.info(f"TEST TAMAMLANDI")
         total = len(all_results)

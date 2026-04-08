@@ -153,6 +153,7 @@ input.has-value{border-color:rgba(0,255,148,.4)}
 .terminal-body{padding:14px 16px;height:360px;overflow-y:auto;font-family:var(--mono);font-size:12px;line-height:1.7}
 .log-line{white-space:pre-wrap;word-break:break-all}
 .log-line.ok{color:var(--accent2)}.log-line.error{color:var(--danger)}.log-line.warn{color:var(--warn)}.log-line.info{color:#a0c4ff}.log-line.dim{color:var(--muted)}
+.log-line.spoof-block{background:rgba(255,69,96,0.15);border-left:3px solid var(--danger);padding-left:10px;margin:4px 0;font-weight:700;color:var(--danger)}
 
 /* RESULTS */
 .results-table{width:100%;border-collapse:collapse;font-size:13px}
@@ -385,6 +386,20 @@ input.has-value{border-color:rgba(0,255,148,.4)}
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+/* VISUAL REGRESSION (Sprint 8) */
+.visual-comparison-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-top: 10px; }
+.visual-box { background: rgba(255,255,255,0.03); border-radius: 8px; padding: 12px; border: 1px solid rgba(255,255,255,0.05); }
+.visual-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 8px; font-weight: 600; text-align: center; }
+.visual-img-container { position: relative; width: 100%; min-height: 200px; background: rgba(0,0,0,0.2); border-radius: 4px; overflow: hidden; border: 1px solid rgba(255,255,255,0.1); }
+.visual-img-container img { width: 100%; display: block; height: auto; transition: transform 0.2s; cursor: zoom-in; }
+.empty-visual { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--text-muted); font-style: italic; }
+.visual-badge { cursor: pointer; display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 700; transition: all 0.2s; }
+.visual-badge:hover { filter: brightness(1.2); transform: translateY(-1px); }
+.visual-badge.match { background: rgba(46, 204, 113, 0.2); color: #2ecc71; border: 1px solid rgba(46, 204, 113, 0.3); }
+.visual-badge.diff { background: rgba(231, 76, 60, 0.2); color: #e74c3c; border: 1px solid rgba(231, 76, 60, 0.3); }
+.visual-badge.none { background: rgba(255, 255, 255, 0.1); color: #aaa; border: 1px solid rgba(255, 255, 255, 0.15); }
+.modal-lg { max-width: 1100px; width: 95%; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -407,6 +422,7 @@ input.has-value{border-color:rgba(0,255,148,.4)}
     <div class="nav-item" data-page="results"><span class="nav-icon">◈</span>Sonuçlar</div>
     <div class="nav-item" data-page="reports"><span class="nav-icon">⬖</span>Raporlar</div>
     <div class="nav-item" data-page="templates"><span class="nav-icon">📝</span>Şablonlar & Ekler</div>
+    <div class="nav-item" data-page="automation"><span class="nav-icon">☁</span>Otomasyon & Zamanlayıcı</div>
     <div class="nav-item" data-page="guide"><span class="nav-icon">📖</span>Bilgilendirme</div>
   </nav>
 
@@ -426,6 +442,44 @@ input.has-value{border-color:rgba(0,255,148,.4)}
   <div class="sidebar-footer">
     <span class="status-dot" id="sidebarDot"></span>
     <span id="sidebarStatus">Beklemede</span>
+  </div>
+
+  <!-- VISUAL MODAL (Sprint 8) -->
+  <div id="visualModal" class="modal hidden" style="background: rgba(0,0,0,0.85); display: flex; align-items: center; justify-content: center;">
+    <div class="modal-content modal-lg" style="background: #1a1b1e; border: 1px solid #333;">
+      <div class="modal-header" style="border-bottom: 1px solid #333;">
+        <span class="modal-title">🎨 Görsel Regresyon Analizi (A/B Karşılaştırma)</span>
+        <button class="btn-close" onclick="closeVisualModal()" style="background: none; border: none; color: #fff; font-size: 20px; cursor: pointer;">✕</button>
+      </div>
+      <div class="modal-body" style="padding: 20px;">
+        <div class="visual-comparison-grid">
+          <div class="visual-box">
+            <div class="visual-label">Baseline (Referans)</div>
+            <div class="visual-img-container" id="baselineContainer">
+              <img id="baselineImg" src="" alt="Baseline">
+              <div class="empty-visual hidden" id="baselineEmpty">Baseline Tanımlanmamış</div>
+            </div>
+          </div>
+          <div class="visual-box">
+            <div class="visual-label">Mevcut Render</div>
+            <div class="visual-img-container">
+              <img id="currentImg" src="" alt="Current">
+            </div>
+          </div>
+          <div class="visual-box">
+            <div class="visual-label">Fark (Diff) <span id="diffPercentBadge" class="badge"></span></div>
+            <div class="visual-img-container" id="diffContainer">
+              <img id="diffImg" src="" alt="Diff">
+              <div class="empty-visual hidden" id="diffEmpty">Fark Bulunmadı</div>
+            </div>
+          </div>
+        </div>
+        <div class="visual-actions mt-20" style="text-align: right;">
+          <p class="text-muted-sm mb-12">ℹ️ Eğer mevcut render tasarımı doğruysa, bunu yeni "referans" olarak atayabilirsiniz.</p>
+          <button class="btn btn-primary" id="setBaselineBtn" onclick="setAsBaseline()">⭐ Bu Görseli Baseline Olarak Ata</button>
+        </div>
+      </div>
+    </div>
   </div>
 </aside>
 
@@ -756,6 +810,31 @@ input.has-value{border-color:rgba(0,255,148,.4)}
                 <div class="auth-label">Sadece OTP</div>
                 <div class="auth-desc">SMS / Authenticator</div>
               </div>
+              <div class="auth-card" data-method="oauth2" onclick="selectAuth('gmail','oauth2',this)">
+                <div class="auth-icon">🌏</div>
+                <div class="auth-label">Modern Auth</div>
+                <div class="auth-desc">Google OAuth2 (En Güvenli)</div>
+              </div>
+            </div>
+
+            <!-- OAuth2 Details (Gmail) -->
+            <div id="oauth2Details-gmail" class="hidden auth-details-box mt-16 p-16 border-radius-8">
+              <div class="section-label">Google Cloud Console Ayarları</div>
+              <div class="form-grid mb-12">
+                <div class="form-group">
+                  <label>Client ID</label>
+                  <input id="gmail_oauth_client_id" placeholder="...">
+                </div>
+                <div class="form-group">
+                  <label>Client Secret</label>
+                  <input id="gmail_oauth_client_secret" type="password" placeholder="...">
+                </div>
+              </div>
+              <div class="btn-row flex-center-content">
+                <button class="btn btn-primary" onclick="startOAuthFlow('gmail')">🪪 Google ile Giriş Yap</button>
+                <div id="status-gmail" class="sec-badge gray">Durum: Token Yok</div>
+              </div>
+              <p class="text-muted-xs mt-8">Redirect URI: <code id="gmail_redirect_uri">...</code></p>
             </div>
             <div id="mfaDetails-gmail" class="hidden">
               <div class="divider"></div>
@@ -818,6 +897,30 @@ input.has-value{border-color:rgba(0,255,148,.4)}
                 <div class="auth-icon">💬</div><div class="auth-label">Sadece OTP</div>
                 <div class="auth-desc">SMS / Authenticator</div>
               </div>
+              <div class="auth-card" data-method="oauth2" onclick="selectAuth('outlook','oauth2',this)">
+                <div class="auth-icon">☁</div><div class="auth-label">Modern Auth</div>
+                <div class="auth-desc">MS Graph / OAuth2</div>
+              </div>
+            </div>
+
+            <!-- OAuth2 Details (Outlook) -->
+            <div id="oauth2Details-outlook" class="hidden auth-details-box mt-16 p-16 border-radius-8">
+              <div class="section-label">Microsoft Entra (Azure AD) Ayarları</div>
+              <div class="form-grid mb-12">
+                <div class="form-group">
+                  <label>Application (Client) ID</label>
+                  <input id="outlook_oauth_client_id" placeholder="...">
+                </div>
+                <div class="form-group">
+                  <label>Directory (Tenant) ID</label>
+                  <input id="outlook_oauth_tenant_id" placeholder="common">
+                </div>
+              </div>
+              <div class="btn-row flex-center-content">
+                <button class="btn btn-primary" onclick="startOAuthFlow('outlook')">🪪 Microsoft ile Giriş Yap</button>
+                <div id="status-outlook" class="sec-badge gray">Durum: Token Yok</div>
+              </div>
+              <p class="text-muted-xs mt-8">Redirect URI: <code id="outlook_redirect_uri">...</code></p>
             </div>
             <div id="mfaDetails-outlook" class="hidden">
               <div class="divider"></div>
@@ -857,6 +960,56 @@ input.has-value{border-color:rgba(0,255,148,.4)}
 
       <div class="btn-row">
         <button class="btn btn-primary" onclick="saveSecurityConfig()">💾 Güvenlik Ayarlarını Kaydet</button>
+      </div>
+    </div>
+
+    <!-- AUTOMATION -->
+    <div class="page" id="page-automation">
+      <div class="card">
+        <div class="card-header"><span class="card-title">☁ Otonom Test Operasyonu</span></div>
+        <div class="card-body">
+          <div class="toggle-row mb-16">
+            <input id="auto_enabled" type="checkbox" onchange="toggleAutoUI()">
+            <span class="text-bold">Otonom Test Döngüsü Aktif</span>
+          </div>
+          
+          <div id="auto_settings" class="pl-32 border-left-accent">
+            <div class="form-grid mb-16">
+              <div class="form-group">
+                <label>Çalışma Aralığı (Dakika)</label>
+                <input id="auto_interval" type="number" value="60" min="15">
+              </div>
+              <div class="form-group flex-end">
+                <label>&nbsp;</label>
+                <div class="text-muted-xs">En az 15 dakika önerilir.</div>
+              </div>
+            </div>
+            
+            <div class="divider"></div>
+            <div class="section-label">Bildirimlar</div>
+            <div class="form-group mb-12">
+              <label>Slack / Teams Webhook URL</label>
+              <input id="auto_webhook" placeholder="https://hooks.slack.com/services/...">
+            </div>
+            <div class="toggle-row">
+              <input id="auto_notify_fail_only" type="checkbox" checked>
+              <span>Sadece hata (fail) durumunda bildirim gönder</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <div class="btn-row">
+        <button class="btn btn-primary" onclick="saveAutoConfig()">💾 Otomasyonu Kaydet</button>
+        <button class="btn btn-ghost" onclick="syncScheduler()">🔄 Zamanlayıcıyı Senkronize Et</button>
+      </div>
+
+      <div class="card mt-20">
+        <div class="card-header"><span class="card-title">ℹ Bilgi</span></div>
+        <div class="card-body text-muted-sm lh-1-7">
+          Otonom mod aktif edildiğinde, sistem arka planda belirlenen aralıklarla tüm test kombinasyonlarını çalıştırır.<br>
+          Sonuçlar her zamanki gibi veritabanına kaydedilir ve eğer ayarlandıysa belirtilen Webhook kanalına alarm gönderilir.
+        </div>
       </div>
     </div>
 
@@ -1010,12 +1163,15 @@ input.has-value{border-color:rgba(0,255,148,.4)}
       <div class="card">
         <div class="card-header">
           <span class="card-title">📈 Test Sonuçları</span>
-          <button class="btn btn-ghost btn-sm" onclick="loadResults()">↻ Yenile</button>
+          <div class="flex-center">
+            <a href="/api/reports/test_report.html" download class="btn btn-success btn-sm">⬇ Son Raporu İndir</a>
+            <button class="btn btn-ghost btn-sm" onclick="loadResults()">↻ Yenile</button>
+          </div>
         </div>
         <div class="card-body p-0">
           <div class="overflow-x-auto">
             <table class="results-table">
-              <thead><tr><th>Durum</th><th>Kombinasyon</th><th>Senaryo</th><th>Güven</th><th>Özet</th><th>Zaman</th></tr></thead>
+              <thead><tr><th>Durum</th><th>Kombinasyon</th><th>Senaryo</th><th>Görsel</th><th>Güven</th><th>Özet</th><th>Zaman</th></tr></thead>
               <tbody id="resultsBody"><tr><td colspan="6" class="text-center text-muted-sm p-32">Henüz sonuç yok.</td></tr></tbody>
             </table>
           </div>
@@ -1517,6 +1673,7 @@ python main.py --csv /yol/baska.csv    # Farklı CSV dosyası kullan</div>
 
 <script>
 // ── STATE ──────────────────────────────────────────────────────────
+let lastResults = [];
 let selectedCombos = new Set();
 let selectedScenario = 'all';
 let autoScroll = true;
@@ -1537,6 +1694,7 @@ const PAGE_META = {
   results:    ['Sonuçlar', 'son test sonuçları'],
   reports:    ['Raporlar', 'html · csv dosyaları'],
   templates:  ['Şablonlar & Ekler', 'mesaj şablonları · ek dosya yönetimi'],
+  automation: ['Otomasyon & Zamanlayıcı', 'otonom test · periyodik çalışma'],
   guide:      ['Bilgilendirme', 'kullanım kılavuzu · know-how · sss'],
 };
 
@@ -1636,6 +1794,19 @@ async function loadConfig() {
   set('test_retry_interval', t.retry_interval); set('test_subject_prefix', t.subject_prefix);
   set('test_attachment_path', t.test_attachment_path); set('test_image_path', t.test_image_path);
   set('test_csv_input', t.csv_input);
+
+  set('auto_notify_fail_only', auto.notifications?.notify_on_fail_only ?? true);
+  toggleAutoUI();
+
+  // OAUTH2 (Sprint 7)
+  for (const s of ['gmail', 'outlook']) {
+    const d = c[s]?.oauth2 || {};
+    set(`${s}_oauth_client_id`, d.client_id);
+    if (s === 'gmail') set(`${s}_oauth_client_secret`, d.client_secret);
+    if (s === 'outlook') set(`${s}_oauth_tenant_id`, d.tenant_id);
+    document.getElementById(`${s}_redirect_uri`).textContent = `${window.location.origin}/api/oauth/callback`;
+  }
+  updateOAuthStatus();
 }
 
 function buildConfig() {
@@ -1658,6 +1829,13 @@ function buildConfig() {
       mfa_method: g(`${s}_mfa_method`) || 'totp',
       totp_secret: isPh(g(`${s}_totp_secret`)) ? '' : g(`${s}_totp_secret`),
     };
+    if (s === 'gmail' || s === 'outlook') {
+      cfg[s].oauth2 = {
+        client_id: g(`${s}_oauth_client_id`),
+        client_secret: s === 'gmail' ? g(`${s}_oauth_client_secret`) : undefined,
+        tenant_id: s === 'outlook' ? g(`${s}_oauth_tenant_id`) : undefined,
+      };
+    }
   }
   const googleApiKey = isPh(g('google_api_key')) ? '' : g('google_api_key');
   const googleModel = g('google_model') || 'gemini-2.0-flash';
@@ -1698,6 +1876,20 @@ function buildConfig() {
     document.querySelectorAll('#ma_other_list [data-addr]')
   ).map(el => ({ address: el.dataset.addr })).filter(o => o.address);
   if (otherEntries.length) cfg.mail_addresses.other = otherEntries;
+  if (otherEntries.length) cfg.mail_addresses.other = otherEntries;
+
+  // Automation (Sprint 6) - also include here to prevent data loss on generic save
+  const autoEl = document.getElementById('auto_enabled');
+  if (autoEl) {
+    cfg.automation = {
+      enabled: autoEl.checked,
+      schedule: { interval_minutes: +document.getElementById('auto_interval').value || 60 },
+      notifications: {
+        webhook_url: document.getElementById('auto_webhook').value,
+        notify_on_fail_only: document.getElementById('auto_notify_fail_only').checked
+      }
+    };
+  }
   return cfg;
 }
 
@@ -1712,6 +1904,44 @@ async function saveConfig() {
 async function saveSecurityConfig() {
   await saveConfig();
   toast('🔐 Güvenlik ayarları kaydedildi','ok');
+}
+
+// ── AUTOMATION JS ──────────────────────────────────────────────────
+function toggleAutoUI() {
+  const enabled = document.getElementById('auto_enabled').checked;
+  document.getElementById('auto_settings').style.opacity = enabled ? '1' : '0.4';
+  document.getElementById('auto_settings').style.pointerEvents = enabled ? 'auto' : 'none';
+}
+
+async function saveAutoConfig() {
+  const cfg = buildConfig();
+  const auto = {
+    enabled: document.getElementById('auto_enabled').checked,
+    schedule: { interval_minutes: +document.getElementById('auto_interval').value || 60 },
+    notifications: {
+      webhook_url: document.getElementById('auto_webhook').value,
+      notify_on_fail_only: document.getElementById('auto_notify_fail_only').checked
+    }
+  };
+  cfg.automation = auto;
+  
+  const res = await fetch('/api/config', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({config: cfg}),
+  }).then(r => r.json());
+  
+  if (res.ok) {
+    toast('✅ Otomasyon ayarları kaydedildi ve senkronize ediliyor...','ok');
+    syncScheduler();
+  } else {
+    toast('Kayıt hatası: '+res.error,'err');
+  }
+}
+
+async function syncScheduler() {
+  const res = await fetch('/api/automation/sync', { method: 'POST' }).then(r => r.json());
+  if (res.ok) toast('🔄 Zamanlayıcı tazeledendi', 'info');
+  else toast('Zamanlayıcı hatası', 'err');
 }
 
 function switchSrv(key, el) {
@@ -1739,6 +1969,51 @@ function selectAuth(srv, method, el) {
 function updateMfaDetailsVisibility(srv, method) {
   const det = document.getElementById(`mfaDetails-${srv}`);
   if (det) det.style.display = ['totp_password','otp_only'].includes(method) ? 'block' : 'none';
+  
+  // OAuth2 visibility
+  const oaDet = document.getElementById(`oauth2Details-${srv}`);
+  if (oaDet) oaDet.style.display = (method === 'oauth2') ? 'block' : 'none';
+}
+
+async function startOAuthFlow(srv) {
+  // Önce mevcut Client ID vb. kaydetmeliyiz ki backend URL üretirken kullansın
+  await saveConfig();
+  
+  const res = await fetch(`/api/oauth/url?server=${srv}`).then(r => r.json());
+  if (res.ok) {
+    window.open(res.url, '_blank', 'width=600,height=700');
+    toast('🔐 Yetkilendirme penceresi açıldı...', 'info');
+    // Durumu periyodik kontrol etmeye başla
+    const poller = setInterval(async () => {
+      const st = await updateOAuthStatus();
+      if (st && st[srv]) {
+        clearInterval(poller);
+        toast(`✅ ${srv.toUpperCase()} yetkilendirildi!`, 'ok');
+      }
+    }, 3000);
+    setTimeout(() => clearInterval(poller), 120000); // 2 dk sonra bırak
+  } else {
+    toast('Hata: ' + res.error, 'err');
+  }
+}
+
+async function updateOAuthStatus() {
+  try {
+    const res = await fetch('/api/oauth/status').then(r => r.json());
+    for (const s of ['gmail', 'outlook']) {
+      const el = document.getElementById(`status-${s}`);
+      if (el) {
+        if (res[s]) {
+          el.textContent = 'Durum: Token Aktif';
+          el.className = 'sec-badge green';
+        } else {
+          el.textContent = 'Durum: Token Yok';
+          el.className = 'sec-badge gray';
+        }
+      }
+    }
+    return res;
+  } catch(e) { return null; }
 }
 
 function onMfaMethodChange(srv) {
@@ -1884,7 +2159,87 @@ async function cancelMFA() {
   toast('2FA iptal edildi — test durabilir', 'warn');
 }
 
-// MFA polling — test çalışırken 2FA bekleniyor mu?
+// ── VISUAL REGRESSION (Sprint 8) ──────────────────────────────
+let currentVisualData = null;
+
+function openVisualModal(resId) {
+  // allResults içinden ilgili sonucu bul
+  const res = lastResults.find(r => r.id == resId || r.test_time == resId);
+  if (!res) return;
+  
+  currentVisualData = res;
+  const ana = res.analysis || {};
+  
+  const bImg = document.getElementById('baselineImg');
+  const cImg = document.getElementById('currentImg');
+  const dImg = document.getElementById('diffImg');
+  
+  const bEmpty = document.getElementById('baselineEmpty');
+  const dEmpty = document.getElementById('diffEmpty');
+  const badge = document.getElementById('diffPercentBadge');
+  
+  // Current Image (Mutlaka olmalı)
+  cImg.src = res.screenshot_path ? `/api/reports/${res.screenshot_path.split('/').pop()}` : '';
+  if (res.screenshot_path && res.screenshot_path.includes('reports/screenshots/')) {
+      cImg.src = `/api/reports/screenshots/${res.screenshot_path.split('/').pop()}`;
+  }
+
+  // Baseline
+  if (res.baseline_path) {
+    bImg.src = `/api/visual/diff-info?path=${encodeURIComponent(res.baseline_path)}`;
+    bImg.classList.remove('hidden');
+    bEmpty.classList.add('hidden');
+  } else {
+    bImg.classList.add('hidden');
+    bEmpty.classList.remove('hidden');
+  }
+  
+  // Diff
+  if (res.diff_path) {
+    dImg.src = `/api/visual/diff-info?path=${encodeURIComponent(res.diff_path)}`;
+    dImg.classList.remove('hidden');
+    dEmpty.classList.add('hidden');
+    
+    const pct = res.diff_percent || 0;
+    badge.textContent = `%${pct.toFixed(2)} Fark`;
+    badge.className = 'badge ' + (res.is_visual_match ? 'badge-success' : 'badge-danger');
+  } else {
+    dImg.classList.add('hidden');
+    dEmpty.classList.remove('hidden');
+    badge.textContent = '';
+  }
+  
+  document.getElementById('visualModal').classList.remove('hidden');
+}
+
+function closeVisualModal() {
+  document.getElementById('visualModal').classList.add('hidden');
+}
+
+async function setAsBaseline() {
+  if (!currentVisualData) return;
+  const body = {
+    screenshot_path: currentVisualData.screenshot_path,
+    scenario_key: currentVisualData.scenario_key,
+    combination_label: currentVisualData.combination_label
+  };
+  
+  const res = await fetch('/api/visual/set-baseline', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(r => r.json());
+  
+  if (res.ok) {
+    toast('⭐ Yeni baseline başarıyla atandı!', 'ok');
+    closeVisualModal();
+    loadResults(); // Tabloyu tazele
+  } else {
+    toast('Hata: ' + res.error, 'err');
+  }
+}
+
+// Polling for automated tests... (renamed to avoid conflict)
 function startMFAPoll() {
   clearInterval(mfaPollInterval);
   mfaPollInterval = setInterval(async () => {
@@ -2099,6 +2454,7 @@ function appendLog(line) {
 }
 
 function classifyLog(l) {
+  if (/SPOOF_BLOCK|🚨/i.test(l)) return 'spoof-block';
   if (/✅|PASS|başarılı/i.test(l)) return 'ok';
   if (/❌|ERROR|FAIL|hata/i.test(l)) return 'error';
   if (/WARN|⚠|MFA|2FA/i.test(l)) return 'warn';

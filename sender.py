@@ -20,6 +20,7 @@ from email import encoders
 from email.utils import formatdate, make_msgid
 from email.headerregistry import Address
 from typing import Optional
+from oauth_manager import get_oauth_manager
 
 logger = logging.getLogger(__name__)
 
@@ -61,15 +62,45 @@ class MailSender:
                 smtp.starttls(context=ssl_ctx)
                 smtp.ehlo()
 
-        # Bazı EMS sunucuları SIZE parametresini EHLO'da ilan edip
-        # MAIL FROM'da reddeder (555 hatası). SIZE'ı kaldırarak smtplib'in
-        # otomatik "size=N" eklemesini engelle.
+        # size=N parametresini kaldır (bazı sunucular reddeder)
         smtp.esmtp_features.pop("size", None)
 
-        smtp.login(self.username, self.password)
+        auth_method = self.config.get("auth_method", "password")
+        if auth_method == "oauth2":
+            self._login_oauth2(smtp)
+        else:
+            smtp.login(self.username, self.password)
+            
         logger.debug(f"SMTP bağlantısı kuruldu: {self.host}:{self.port} "
-                     f"({'implicit SSL' if use_ssl else 'STARTTLS' if self.use_tls else 'plain'})")
+                     f"({'implicit SSL' if use_ssl else 'STARTTLS' if self.use_tls else 'plain'}) "
+                     f"[{auth_method}]")
         return smtp
+
+    def _login_oauth2(self, smtp: smtplib.SMTP):
+        """XOAUTH2 üzerinden oturum açar."""
+        mgr = get_oauth_manager()
+        token = None
+        server_key = "outlook" if "office365" in self.host.lower() else "gmail" if "gmail" in self.host.lower() else None
+        
+        if not server_key:
+            raise ValueError(f"OAuth2 sadece Outlook ve Gmail sunucuları için desteklenmektedir (Host: {self.host})")
+
+        if server_key == "outlook":
+            oauth_cfg = self.config.get("oauth2", {})
+            token = mgr.get_ms_token(oauth_cfg.get("client_id"), oauth_cfg.get("tenant_id", "common"))
+        elif server_key == "gmail":
+            token = mgr.get_google_token()
+
+        if not token:
+            raise ConnectionError(f"OAuth2 Token alınamadı ({server_key}). Lütfen yetkilendirme akışını tamamlayın.")
+
+        auth_str = mgr.generate_xoauth2_string(self.username, token)
+        # XOAUTH2 standardı: AUTH XOAUTH2 base64str
+        code, resp = smtp.docmd("AUTH", "XOAUTH2 " + auth_str)
+        if code != 235:
+            # 235 = Authentication successful
+            err_msg = resp.decode() if isinstance(resp, bytes) else str(resp)
+            raise smtplib.SMTPAuthenticationError(code, f"XOAUTH2 Başarısız: {err_msg}")
 
     def _base_headers(self, subject: str, to_address: str, msg_id: Optional[str] = None) -> dict:
         return {
@@ -376,7 +407,7 @@ class MailSender:
     # ------------------------------------------------------------------ #
     #  İç yardımcılar
     # ------------------------------------------------------------------ #
-    def _send(self, msg, to_address: str, max_retries: int = 2, sender_client: str = None) -> float:
+    def _send(self, msg, to_address: str, max_retries: int = 1, sender_client: str = None) -> float:
         """Mesaj gönder; hata olursa max_retries kez yeniden dene."""
         if sender_client:
             from client_profiles import apply_client_profile
@@ -385,36 +416,53 @@ class MailSender:
         last_err = None
         for attempt in range(max_retries + 1):
             try:
+                # SMTP bağlantısı ve gönderim
                 with self._connect() as smtp:
-                    # as_bytes() EMS'de base64 scan hatasına yol açıyor;
-                    # as_string() → encode daha güvenli
+                    # as_string() → encode daha güvenli (EMS/Z-Push uyumu için)
                     smtp.sendmail(
                         self.from_address, [to_address],
                         msg.as_string().encode("utf-8", "replace")
                     )
                 return time.time()
-            except smtplib.SMTPServerDisconnected as e:
+
+            except (smtplib.SMTPServerDisconnected, ConnectionError) as e:
                 last_err = e
-                logger.warning(f"SMTP bağlantısı koptu (deneme {attempt+1}/{max_retries+1}), {2**attempt}s sonra yeniden deneniyor: {e}")
-                time.sleep(2 ** attempt)  # 1s, 2s, ...
-            except smtplib.SMTPException as e:
-                # Auth/reject hataları — yeniden deneme faydasız
-                err_str = str(e).lower()
-                flags = []
-                if "spam" in err_str or "policy" in err_str or "reject" in err_str or "blocked" in err_str:
-                    flags.append("[SPAM/REJECT]")
-                if "relay" in err_str:
-                    flags.append("[RELAY_DENIED]")
-                
-                if flags:
-                    logger.error(f"🚨 SPOOF TRACE {' '.join(flags)}: Sahte istemci ({sender_client or 'Varsayılan'}) SMTP filtrelerine takıldı: {e}")
-                raise
-            except OSError as e:
-                last_err = e
-                logger.warning(f"Ağ hatası (deneme {attempt+1}/{max_retries+1}): {e}")
+                logger.warning(f"[RETRY] Bağlantı hatası ({attempt+1}/{max_retries+1}), {2**attempt}s bekliyor: {e}")
                 if attempt < max_retries:
                     time.sleep(2 ** attempt)
-        raise last_err  # type: ignore
+
+            except smtplib.SMTPResponseException as e:
+                # 5xx ve 4xx SMTP yanıtları (Spam, Block, Auth, Relay)
+                code = e.smtp_code
+                resp = e.smtp_error.decode("utf-8", "replace") if isinstance(e.smtp_error, bytes) else str(e.smtp_error)
+                err_lower = resp.lower()
+                
+                # Trace & Log Flags
+                tag = ""
+                if any(x in err_lower for x in ["spam", "suspicious", "policy", "blacklisted", "denied"]):
+                    tag = "🚨 [SPOOF_BLOCK: SPAM/POLICY]"
+                elif "relay" in err_lower:
+                    tag = "🛡️ [SPOOF_BLOCK: RELAY_DENIED]"
+                elif "auth" in err_lower or code == 535:
+                    tag = "🔑 [AUTH_ERROR]"
+                
+                if tag:
+                    logger.error(f"{tag} SMTP {code}: Sunucu mesajı reddetti! (İstemci: {sender_client or 'Varsayılan'})")
+                    logger.error(f"  Detay: {resp}")
+                
+                # Kalıcı hatalarda (5xx) tekrar deneme yapma
+                if 500 <= code <= 599:
+                    raise smtplib.SMTPException(f"{tag} {resp}") from e
+                
+                last_err = e
+                if attempt < max_retries:
+                    time.sleep(2 ** attempt)
+
+            except Exception as e:
+                logger.error(f"Beklenmeyen gönderim hatası: {e}")
+                raise
+        
+        raise last_err if last_err else Exception("Bilinmeyen SMTP hatası")
 
     @staticmethod
     def _guess_mime(filename: str) -> str:

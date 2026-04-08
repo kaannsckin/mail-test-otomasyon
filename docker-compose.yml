@@ -1,0 +1,12 @@
+services:
+  mail-test-app:
+    build: .
+    container_name: mail-test-automation
+    ports:
+      - "5005:5000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PORT=5000
+      - MAIL_AUTO_CONFIG_DIR=/app/data
+    restart: always

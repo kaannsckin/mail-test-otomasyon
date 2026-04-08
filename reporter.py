@@ -5,168 +5,210 @@ reporter.py — Test sonuçlarını HTML ve CSV olarak raporlar.
 import csv
 import json
 import logging
+import os
 from datetime import datetime
 from typing import List, Dict
+from jinja2 import Environment, FileSystemLoader, Template
 
 logger = logging.getLogger(__name__)
 
-
-def generate_html_report(results: List[dict], output_path: str):
-    """Test sonuçlarından profesyonel HTML rapor üretir."""
-    total = len(results)
-    passed = sum(1 for r in results if r.get("analysis", {}).get("passed", False))
-    failed = total - passed
-    pass_rate = round((passed / total * 100) if total > 0 else 0, 1)
-
-    # Kombinasyon bazlı grupla
-    by_combo = {}
-    for r in results:
-        key = r["combination"]
-        by_combo.setdefault(key, []).append(r)
-
-    combo_rows = ""
-    for combo, combo_results in by_combo.items():
-        c_total = len(combo_results)
-        c_passed = sum(1 for r in combo_results if r.get("analysis", {}).get("passed", False))
-        c_rate = round((c_passed / c_total * 100) if c_total > 0 else 0, 1)
-        status_class = "pass" if c_rate == 100 else ("partial" if c_rate > 0 else "fail")
-
-        scenario_rows = ""
-        for r in combo_results:
-            analysis = r.get("analysis", {})
-            sc_passed = analysis.get("passed", False)
-            sc_class = "pass" if sc_passed else "fail"
-            checks_html = ""
-            for ch in analysis.get("checks", []):
-                ch_icon = "✅" if ch.get("passed") else "❌"
-                checks_html += f'<li>{ch_icon} <b>{ch.get("name","")}</b>: {ch.get("detail","")}</li>'
-            issues = analysis.get("issues", [])
-            issues_html = "".join(f"<li>⚠️ {i}</li>" for i in issues) if issues else ""
-
-            scenario_rows += f"""
-            <tr class="{sc_class}-row">
-              <td><span class="badge {sc_class}">{('✅ PASS' if sc_passed else '❌ FAIL')}</span></td>
-              <td>{r['scenario_type']}</td>
-              <td class="summary-cell">{analysis.get('summary','')}</td>
-               <td>
-                <details>
-                  <summary>Kontroller ({len(analysis.get('checks',[]))})</summary>
-                  <ul class="checks-list">{checks_html}</ul>
-                  {f'<ul class="issues-list">{issues_html}</ul>' if issues_html else ''}
-                  {f'<div style="margin-top:10px;"><a href="{analysis.get("screenshot").replace("reports/","",1) if analysis.get("screenshot") else ""}" target="_blank" style="font-size:12px; color:#10b981; font-weight:bold; text-decoration:none;">📸 UI Snapshot Görüntüle</a></div>' if analysis.get("screenshot") else ''}
-                </details>
-              </td>
-              <td><span class="confidence confidence-{analysis.get('confidence','LOW').lower()}">{analysis.get('confidence','?')}</span></td>
-            </tr>"""
-
-        combo_rows += f"""
-        <div class="combo-card {status_class}-card">
-          <div class="combo-header">
-            <h3>🔀 {combo}</h3>
-            <div class="combo-stats">
-              <span class="stat-badge">{c_passed}/{c_total} PASS</span>
-              <span class="rate-badge {status_class}">{c_rate}%</span>
-            </div>
-          </div>
-          <table class="results-table">
-            <thead>
-              <tr>
-                <th>Sonuç</th><th>Senaryo</th><th>Özet</th><th>Kontrol Detayı</th><th>Güven</th>
-              </tr>
-            </thead>
-            <tbody>{scenario_rows}</tbody>
-          </table>
-        </div>"""
-
-    html = f"""<!DOCTYPE html>
+# Rapor şablonu (Jinja2)
+REPORT_TEMPLATE = """
+<!DOCTYPE html>
 <html lang="tr">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Mail Otomasyon Test Raporu</title>
-<style>
-  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{ font-family: 'Segoe UI', system-ui, sans-serif; background: #f0f2f5; color: #1a1a2e; }}
-  .header {{ background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-             color: white; padding: 32px 40px; }}
-  .header h1 {{ font-size: 28px; font-weight: 700; }}
-  .header .meta {{ color: #a8b2d8; margin-top: 8px; font-size: 14px; }}
-  .summary-bar {{ display: flex; gap: 20px; padding: 24px 40px; background: white;
-                  border-bottom: 1px solid #e2e8f0; flex-wrap: wrap; }}
-  .stat-card {{ background: #f8fafc; border-radius: 12px; padding: 16px 24px;
-                border-left: 4px solid #e2e8f0; min-width: 140px; }}
-  .stat-card.total {{ border-left-color: #6366f1; }}
-  .stat-card.pass  {{ border-left-color: #10b981; }}
-  .stat-card.fail  {{ border-left-color: #ef4444; }}
-  .stat-card.rate  {{ border-left-color: #f59e0b; }}
-  .stat-card .val {{ font-size: 32px; font-weight: 800; }}
-  .stat-card .lbl {{ font-size: 13px; color: #64748b; margin-top: 4px; }}
-  .content {{ padding: 32px 40px; }}
-  .combo-card {{ background: white; border-radius: 16px; margin-bottom: 24px;
-                 box-shadow: 0 2px 8px rgba(0,0,0,0.08); overflow: hidden; }}
-  .combo-header {{ display: flex; justify-content: space-between; align-items: center;
-                   padding: 16px 24px; border-bottom: 1px solid #f1f5f9; }}
-  .combo-header h3 {{ font-size: 16px; color: #1e293b; }}
-  .combo-stats {{ display: flex; gap: 10px; align-items: center; }}
-  .stat-badge {{ background: #e2e8f0; padding: 4px 12px; border-radius: 999px;
-                 font-size: 13px; font-weight: 600; }}
-  .rate-badge {{ padding: 4px 12px; border-radius: 999px; font-size: 13px; font-weight: 700; }}
-  .rate-badge.pass {{ background: #d1fae5; color: #065f46; }}
-  .rate-badge.partial {{ background: #fef3c7; color: #92400e; }}
-  .rate-badge.fail {{ background: #fee2e2; color: #991b1b; }}
-  .results-table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
-  .results-table th {{ background: #f8fafc; padding: 10px 16px; text-align: left;
-                       font-size: 12px; color: #64748b; text-transform: uppercase;
-                       letter-spacing: 0.5px; border-bottom: 1px solid #e2e8f0; }}
-  .results-table td {{ padding: 12px 16px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }}
-  .pass-row {{ background: #f0fdf4; }}
-  .fail-row {{ background: #fff5f5; }}
-  .badge {{ padding: 3px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; }}
-  .badge.pass {{ background: #d1fae5; color: #065f46; }}
-  .badge.fail {{ background: #fee2e2; color: #991b1b; }}
-  .summary-cell {{ max-width: 240px; }}
-  details summary {{ cursor: pointer; color: #6366f1; font-size: 13px; font-weight: 500; }}
-  .checks-list, .issues-list {{ margin-top: 8px; padding-left: 16px; font-size: 13px;
-                                 color: #374151; line-height: 1.8; }}
-  .issues-list {{ color: #b45309; }}
-  .confidence {{ padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; }}
-  .confidence-high {{ background: #d1fae5; color: #065f46; }}
-  .confidence-medium {{ background: #fef3c7; color: #92400e; }}
-  .confidence-low {{ background: #fee2e2; color: #991b1b; }}
-  .pass-card .combo-header {{ background: #f0fdf4; }}
-  .partial-card .combo-header {{ background: #fffbeb; }}
-  .fail-card .combo-header {{ background: #fff5f5; }}
-  @media print {{ body {{ background: white; }} .combo-card {{ box-shadow: none; }} }}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mail Otomasyon Test Raporu - {{ run_id }}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #6366f1; --primary-dark: #4f46e5;
+            --success: #10b981; --warning: #f59e0b; --danger: #ef4444;
+            --bg: #f8fafc; --surface: #ffffff; --text: #1e293b; --muted: #64748b;
+            --border: #e2e8f0;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+        
+        .header { background: #0f172a; color: white; padding: 40px; border-bottom: 4px solid var(--primary); }
+        .header-content { max-width: 1200px; margin: 0 auto; display: flex; justify-content: space-between; align-items: flex-end; }
+        .header h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.025em; }
+        .header .meta { color: #94a3b8; font-family: 'JetBrains Mono', monospace; font-size: 14px; margin-top: 8px; }
+        
+        .summary-bar { max-width: 1200px; margin: -30px auto 30px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; padding: 0 20px; }
+        .stat-card { background: var(--surface); border-radius: 16px; padding: 24px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); border: 1px solid var(--border); }
+        .stat-card .val { font-size: 36px; font-weight: 800; display: block; }
+        .stat-card .lbl { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+        .stat-card.pass .val { color: var(--success); }
+        .stat-card.fail .val { color: var(--danger); }
+        .stat-card.warn .val { color: var(--warning); }
+        
+        .content { max-width: 1200px; margin: 0 auto; padding: 0 20px 60px; }
+        .combo-section { margin-bottom: 40px; }
+        .combo-header { background: #f1f5f9; padding: 16px 24px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; border: 1px solid var(--border); margin-bottom: 16px; }
+        .combo-header h2 { font-size: 18px; font-weight: 700; color: #334155; }
+        
+        .results-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+        .result-item { background: var(--surface); border-radius: 12px; border: 1px solid var(--border); overflow: hidden; transition: transform 0.2s; }
+        .result-item:hover { transform: translateY(-2px); box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
+        .item-main { padding: 16px 24px; display: flex; align-items: center; gap: 20px; cursor: pointer; }
+        
+        .badge { padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 700; text-transform: uppercase; }
+        .badge.pass { background: #d1fae5; color: #065f46; }
+        .badge.fail { background: #fee2e2; color: #991b1b; }
+        .badge.skip { background: #f1f5f9; color: #475569; }
+        
+        .scenario-name { flex: 1; font-weight: 600; font-size: 15px; }
+        .summary-text { color: var(--muted); font-size: 14px; max-width: 400px; }
+        
+        .item-details { padding: 0 24px 24px; display: none; border-top: 1px solid var(--border); background: #fafafa; }
+        .item-details.active { display: block; }
+        
+        .checks-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-top: 20px; }
+        .check-box, .issue-box { padding: 12px; border-radius: 8px; border: 1px solid var(--border); font-size: 13px; }
+        .check-box.ok { border-left: 4px solid var(--success); }
+        .check-box.err { border-left: 4px solid var(--danger); }
+        .issue-box { border-left: 4px solid var(--warning); background: #fffbeb; }
+        
+        .screenshot-box { margin-top: 20px; border-radius: 12px; overflow: hidden; border: 1px solid var(--border); }
+        .screenshot-box img { max-width: 100%; display: block; }
+        
+        .confidence-label { font-size: 11px; font-weight: 800; color: var(--muted); background: #f1f5f9; padding: 2px 6px; border-radius: 4px; }
+        
+        @media print { .header { color: black; background: white; border-bottom: 2px solid black; } .stat-card { box-shadow: none; border: 1px solid #ccc; } .item-details { display: block !important; } }
+    </style>
 </head>
 <body>
-<div class="header">
-  <h1>📧 Mail Servis Otomasyon Test Raporu</h1>
-  <div class="meta">Oluşturulma: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')} &nbsp;|&nbsp; 
-  Claude API Destekli Analiz</div>
-</div>
+    <div class="header">
+        <div class="header-content">
+            <div>
+                <p class="meta">#{{ run_id }}</p>
+                <h1>Mail Otomasyon Raporu</h1>
+            </div>
+            <div class="meta" style="text-align: right">
+                {{ report_date }}<br>
+                Analiz: Claude AI Engine
+            </div>
+        </div>
+    </div>
 
-<div class="summary-bar">
-  <div class="stat-card total"><div class="val">{total}</div><div class="lbl">Toplam Senaryo</div></div>
-  <div class="stat-card pass"><div class="val" style="color:#10b981">{passed}</div><div class="lbl">✅ Başarılı</div></div>
-  <div class="stat-card fail"><div class="val" style="color:#ef4444">{failed}</div><div class="lbl">❌ Başarısız</div></div>
-  <div class="stat-card rate"><div class="val" style="color:#f59e0b">{pass_rate}%</div><div class="lbl">Başarı Oranı</div></div>
-  <div class="stat-card"><div class="val" style="font-size:20px">{len(by_combo)}</div><div class="lbl">Kombinasyon</div></div>
-</div>
+    <div class="summary-bar">
+        <div class="stat-card total"><span class="val">{{ total }}</span><span class="lbl">Toplam Test</span></div>
+        <div class="stat-card pass"><span class="val">{{ passed }}</span><span class="lbl">Başarılı</span></div>
+        <div class="stat-card fail"><span class="val">{{ failed }}</span><span class="lbl">Hatalı</span></div>
+        <div class="stat-card warn"><span class="val">{{ pass_rate }}%</span><span class="lbl">Başarı Oranı</span></div>
+    </div>
 
-<div class="content">
-{combo_rows}
-</div>
+    <div class="content">
+        {% for combo, results in groups.items() %}
+        <div class="combo-section">
+            <div class="combo-header">
+                <h2>🔀 {{ combo }}</h2>
+                <span class="badge {{ 'pass' if results|sum(attribute='analysis.passed') == results|length else 'fail' }}">
+                    {{ results|sum(attribute='analysis.passed') }} / {{ results|length }}
+                </span>
+            </div>
+            
+            <div class="results-grid">
+                {% for r in results %}
+                <div class="result-item">
+                    <div class="item-main" onclick="this.nextElementSibling.classList.toggle('active')">
+                        <span class="badge {{ 'pass' if r.analysis.passed else 'fail' }}">
+                            {{ 'PASS' if r.analysis.passed else 'FAIL' }}
+                        </span>
+                        <div class="scenario-name">{{ r.scenario_type }} <span class="confidence-label">{{ r.analysis.confidence }}</span></div>
+                        <div class="summary-text">{{ r.analysis.summary }}</div>
+                        <div style="color: var(--primary)">▼</div>
+                    </div>
+                    <div class="item-details">
+                        <div class="checks-grid">
+                            {% for check in r.analysis.checks %}
+                            <div class="check-box {{ 'ok' if check.passed else 'err' }}">
+                                <b>{{ check.name }}</b>: {{ check.detail }}
+                            </div>
+                            {% endfor %}
+                            
+                            {% for issue in r.analysis.issues %}
+                            <div class="issue-box">
+                                ⚠️ <b>Hata:</b> {{ issue }}
+                            </div>
+                            {% endfor %}
+                        </div>
+
+                        {% if r.analysis.screenshot %}
+                        <div class="checks-grid" style="grid-template-columns: 1fr {{ '1fr 1fr' if r.analysis.baseline else '' }};">
+                            <div class="screenshot-box">
+                                <p style="padding:10px; font-weight:700; border-bottom:1px solid #eee">📸 Mevcut Render</p>
+                                <img src="{{ r.analysis.screenshot|replace('reports/', '', 1) }}" alt="Screenshot">
+                            </div>
+                            {% if r.analysis.baseline %}
+                            <div class="screenshot-box">
+                                <p style="padding:10px; font-weight:700; border-bottom:1px solid #eee">🖼️ Baseline</p>
+                                <img src="/api/visual/diff-info?path={{ r.analysis.baseline|urlencode }}" alt="Baseline">
+                            </div>
+                            <div class="screenshot-box">
+                                <p style="padding:10px; font-weight:700; border-bottom:1px solid #eee">🔍 Fark (%{{ r.analysis.diff_percent|round(2) }})</p>
+                                <img src="/api/visual/diff-info?path={{ r.analysis.diff_screenshot|urlencode }}" alt="Diff">
+                            </div>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+                        
+                        <div style="margin-top:20px; font-size:12px; color:var(--muted)">
+                            <b>Test Zamanı:</b> {{ r.test_time }} | <b>İstemci:</b> {{ r.send_meta.sender_client }}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <footer style="text-align: center; padding: 40px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--border)">
+        Mail Otomasyon Test Sistemi &copy; 2026
+    </footer>
 </body>
-</html>"""
+</html>
+"""
+
+def generate_html_report(results: List[dict], output_path: str):
+    """Test sonuçlarından profesyonel HTML rapor üretir (Jinja2)."""
+    if not results:
+        logger.warning("Rapor üretilecek sonuç yok.")
+        return
+
+    total = len(results)
+    passed = sum(1 for r in results if r.get("analysis", {}).get("passed") is True)
+    failed = sum(1 for r in results if r.get("analysis", {}).get("passed") is False)
+    pass_rate = round((passed / total * 100) if total > 0 else 0, 1)
+
+    # Gruplandırma
+    groups = {}
+    for r in results:
+        combo = r.get("combination", "Genel")
+        groups.setdefault(combo, []).append(r)
+
+    # Jinja2 rendering
+    template = Template(REPORT_TEMPLATE)
+    html_content = template.render(
+        run_id=results[0].get("run_id", "Manual Run"),
+        report_date=datetime.now().strftime("%d %B %Y, %H:%M"),
+        total=total,
+        passed=passed,
+        failed=failed,
+        pass_rate=pass_rate,
+        groups=groups
+    )
 
     with open(output_path, "w", encoding="utf-8") as f:
-        f.write(html)
-    logger.info(f"HTML rapor oluşturuldu: {output_path}")
+        f.write(html_content)
+    logger.info(f"Yüksek kaliteli HTML raporu oluşturuldu: {output_path}")
 
 
 def generate_csv_results(results: List[dict], output_path: str):
-    """Test sonuçlarını CSV olarak kaydeder (Sheets'e aktarım için)."""
+    """Test sonuçlarını CSV olarak kaydeder."""
     with open(output_path, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f)
         writer.writerow([
