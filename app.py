@@ -8,21 +8,32 @@ from datetime import datetime
 from pathlib import Path
 
 import yaml
-from flask import Flask, Response, jsonify, render_template, request, send_file
+from flask import Flask, Response, jsonify, render_template, request, send_file, send_from_directory, stream_with_context
 from werkzeug.utils import secure_filename
+from oauth_manager import get_oauth_manager
 from auth_manager import mfa_manager, generate_totp, totp_remaining_seconds
+from apscheduler.schedulers.background import BackgroundScheduler
+from notifications import send_alert
 
 app = Flask(__name__)
-_BASE_DIR          = Path(os.environ.get("MAIL_AUTO_CONFIG_DIR", "")).resolve() \
-                     if os.environ.get("MAIL_AUTO_CONFIG_DIR") else Path(__file__).parent
-CONFIG_PATH        = _BASE_DIR / "config.yaml"
-REPORTS_DIR        = _BASE_DIR / "reports"
-LOGS_DIR           = _BASE_DIR / "logs"
-VERIFICATION_DIR   = _BASE_DIR / ".verifications"
-ATTACHMENTS_DIR    = _BASE_DIR / "attachments"
+# APP_ROOT: Kodların bulunduğu dizin (main.py, app.py vb.)
+_APP_ROOT          = Path(__file__).parent.resolve()
+# CONFIG_DIR: Verilerin/konfigürasyonun saklandığı dizin (Docker volume mapping için)
+_CONFIG_DIR        = Path(os.environ.get("MAIL_AUTO_CONFIG_DIR", "")).resolve() \
+                     if os.environ.get("MAIL_AUTO_CONFIG_DIR") else _APP_ROOT
+
+CONFIG_PATH        = _CONFIG_DIR / "config.yaml"
+REPORTS_DIR        = _CONFIG_DIR / "reports"
+LOGS_DIR           = _CONFIG_DIR / "logs"
+VERIFICATION_DIR   = _CONFIG_DIR / ".verifications"
+ATTACHMENTS_DIR    = _CONFIG_DIR / "attachments"
 REPORTS_DIR.mkdir(exist_ok=True)
 LOGS_DIR.mkdir(exist_ok=True)
 VERIFICATION_DIR.mkdir(exist_ok=True)
+
+# ── SCHEDULER ───────────────────────────────────────────────────
+scheduler = BackgroundScheduler()
+scheduler.start()
 
 run_state = {
     "running": False,
@@ -244,35 +255,47 @@ def _get_csv_path():
     return raw
 
 # ── RUNNER ──────────────────────────────────────────────────────
-@app.route("/api/run/start", methods=["POST"])
-def start_run():
-    # Zombie kontrolü: running=True ama process ölmüş mü?
+def _trigger_run(params: dict = None, is_autonomous: bool = False):
+    """
+    Subprocess ile main.py'yi çalıştıran merkezi motor.
+    """
     if run_state["running"]:
         proc = run_state.get("process")
         if proc and proc.poll() is not None:
-            # Process ölmüş ama state güncellenmemiş — temizle
             run_state.update({"running": False, "finished_at": datetime.now().isoformat(),
                               "exit_code": proc.returncode})
         else:
-            return jsonify({"ok": False, "error": "Zaten bir test çalışıyor"}), 400
-    body      = request.json or {}
-    cmd       = [sys.executable, "main.py"]
-    if body.get("combo") is not None: cmd += ["--combo", str(body["combo"])]
-    if body.get("scenario"):          cmd += ["--scenario", body["scenario"]]
-    if body.get("dry_run"):           cmd += ["--dry-run"]
-    if body.get("mode"):              cmd += ["--mode", body["mode"]]
-    if body.get("spoof_sender"):      cmd += ["--spoof-sender", body["spoof_sender"]]
-    run_state.update({"log_buffer": [], "running": True,
-                      "started_at": datetime.now().isoformat(),
-                      "finished_at": None, "exit_code": None})
-    def _run():
+            return False, "Zaten çalışan bir test var."
+
+    params = params or {}
+    main_py_path = _APP_ROOT / "main.py"
+    cmd = [sys.executable, str(main_py_path)]
+    if params.get("combo") is not None: cmd += ["--combo", str(params["combo"])]
+    if params.get("scenario"):          cmd += ["--scenario", params["scenario"]]
+    if params.get("dry_run"):           cmd += ["--dry-run"]
+    if params.get("mode"):              cmd += ["--mode", params["mode"]]
+    if params.get("spoof_sender"):      cmd += ["--spoof-sender", params["spoof_sender"]]
+
+    run_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}{'_auto' if is_autonomous else ''}"
+    run_state.update({
+        "log_buffer": [],
+        "running": True,
+        "started_at": datetime.now().isoformat(),
+        "finished_at": None,
+        "exit_code": None,
+        "process": None
+    })
+
+    def _run_thread():
         try:
             env = os.environ.copy()
             env["MAIL_AUTO_APP_MODE"] = "1"
-            proj_dir = str(_BASE_DIR)
+            env["MAIL_AUTO_RUN_ID"] = run_id
+            proj_dir = str(_APP_ROOT)
             env["PYTHONPATH"] = proj_dir + os.pathsep + env.get("PYTHONPATH", "")
+            
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    text=True, encoding="utf-8", cwd=_BASE_DIR,
+                                    text=True, encoding="utf-8", cwd=_APP_ROOT,
                                     env=env)
             run_state["process"] = proc
             for line in proc.stdout:
@@ -284,8 +307,80 @@ def start_run():
         finally:
             run_state.update({"running": False, "finished_at": datetime.now().isoformat()})
             run_state["log_buffer"].append("__DONE__")
-    threading.Thread(target=_run, daemon=True).start()
-    return jsonify({"ok": True, "cmd": " ".join(cmd)})
+            if is_autonomous:
+                _check_and_notify(run_id, run_state["exit_code"])
+
+    threading.Thread(target=_run_thread, daemon=True).start()
+    return True, cmd
+
+@app.route("/api/run/start", methods=["POST"])
+def start_run():
+    ok, result = _trigger_run(request.json)
+    if not ok:
+        return jsonify({"ok": False, "error": result}), 400
+    return jsonify({"ok": True, "cmd": " ".join(result)})
+
+# ── AUTOMATION LOGIC ───────────────────────────────────────────
+def autonomous_run_wrapper():
+    """Scheduler tarafından çağrılan sarmalayıcı."""
+    logging.info("🤖 Otonom test döngüsü tetiklendi.")
+    try:
+        if not CONFIG_PATH.exists(): return
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+        if not config.get("automation", {}).get("enabled", False):
+            return
+        # Otonom test tüm senaryoları kapsar (params boşsa tümü çalışır)
+        _trigger_run(is_autonomous=True)
+    except Exception as e:
+        logging.error(f"Otonom test hatası: {e}")
+
+def _check_and_notify(run_id, exit_code):
+    """Test bitiminde sonuçları kontrol eder ve gerekirse bildirim atar."""
+    try:
+        if not CONFIG_PATH.exists(): return
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+        
+        passed = (exit_code == 0)
+        auto_cfg = config.get("automation", {})
+        notif_cfg = auto_cfg.get("notifications", {})
+        
+        # Sadece hata durumunda bildirim ayarı kontrolü
+        if not passed or not notif_cfg.get("notify_on_fail_only", True):
+            summary = f"Otonom Test Tamamlandı: {'BAŞARILI' if passed else 'BAŞARISIZ'}"
+            details = f"Run ID: {run_id}\nExit Code: {exit_code}\nBitiş: {datetime.now().strftime('%H:%M:%S')}"
+            send_alert(summary, details, config)
+    except Exception as e:
+        logging.error(f"Bildirim gönderim hatası: {e}")
+
+@app.route("/api/automation/sync", methods=["POST"])
+def api_sync_scheduler():
+    """Config güncellendiğinde zamanlayıcıyı tazeler."""
+    sync_scheduler()
+    return jsonify({"ok": True})
+
+def sync_scheduler():
+    """Zamanlayıcıyı config'e göre günceller."""
+    scheduler.remove_all_jobs()
+    try:
+        if not CONFIG_PATH.exists(): return
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+        
+        auto = config.get("automation", {})
+        if auto.get("enabled", False):
+            interval = auto.get("schedule", {}).get("interval_minutes", 60)
+            scheduler.add_job(autonomous_run_wrapper, 'interval', minutes=interval, id='auto_run')
+            logging.info(f"📅 Scheduler aktif: Her {interval} dakikada bir.")
+        else:
+            logging.info("📅 Scheduler devre dışı (veya pasif).")
+    except Exception as e:
+        logging.error(f"Scheduler senkronizasyon hatası: {e}")
+
+# İlk açılışta başlat
+with app.app_context():
+    sync_scheduler()
 
 @app.route("/api/run/stop", methods=["POST"])
 def stop_run():
@@ -435,14 +530,140 @@ def upload_attachment():
         saved.append(safe_name)
     return jsonify({"ok": True, "saved": saved})
 
-@app.route("/api/attachments/<filename>", methods=["DELETE"])
+@app.route('/api/attachments/<filename>', methods=['DELETE'])
 def delete_attachment(filename):
-    safe_name = secure_filename(filename)
-    p = ATTACHMENTS_DIR / safe_name
-    if p.exists() and p.is_file():
-        p.unlink()
+    # get_config() Flask Response döndürür; doğrudan YAML oku
+    cfg = {}
+    if CONFIG_PATH.exists():
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+    att_dir = cfg.get('test', {}).get('test_attachment_path', 'attachments')
+    if os.path.isfile(att_dir): att_dir = os.path.dirname(att_dir)
+    path = os.path.join(att_dir, filename)
+    if os.path.exists(path):
+        os.remove(path)
         return jsonify({"ok": True})
-    return jsonify({"ok": False, "error": "Dosya bulunamadı"}), 404
+    return jsonify({"ok": False, "error": "Dosya bulunamadı"})
+
+# ------------------------------------------------------------------ #
+#  OAuth2 API (Sprint 7)
+# ------------------------------------------------------------------ #
+
+@app.route('/api/oauth/url', methods=['GET'])
+def get_oauth_url():
+    server = request.args.get('server') # outlook | gmail
+    # get_config() bir Flask Response döndürür; doğrudan YAML oku
+    config = {}
+    if CONFIG_PATH.exists():
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f) or {}
+    srv_cfg = config.get(server or '', {})
+    oa_cfg = srv_cfg.get('oauth2', {}) if isinstance(srv_cfg, dict) else {}
+    
+    # Redirect URI: Tarayıcının eriştiği adres olmalı
+    # Docker içinde localhost:5000 ama dışarıda localhost:5005 olabilir
+    # request.host_url genellikle doğru dış adresi verir (proxy doğru ayarlandıysa)
+    redirect_uri = f"{request.host_url.rstrip('/')}/api/oauth/callback"
+    
+    mgr = get_oauth_manager()
+    if server == 'outlook':
+        url = mgr.get_ms_auth_url(
+            oa_cfg.get('client_id'), 
+            oa_cfg.get('tenant_id', 'common'),
+            redirect_uri=redirect_uri
+        )
+    elif server == 'gmail':
+        url = mgr.get_google_auth_url(
+            oa_cfg.get('client_id'),
+            oa_cfg.get('client_secret'),
+            redirect_uri=redirect_uri
+        )
+    else:
+        return jsonify({"ok": False, "error": "Geçersiz sunucu"})
+    
+    return jsonify({"ok": True, "url": url})
+
+@app.route('/api/oauth/callback', methods=['GET'])
+def oauth_callback():
+    code = request.args.get('code')
+    
+    # Şimdilik: Eğer code '4/' ile başlıyorsa Google, değilse Microsoft varsayalım (kaba yöntem)
+    # Veya URL'e server parametresi eklemiştik (callback?server=outlook)
+    server = request.args.get('server') or ('gmail' if 'scope' in request.args or 'authuser' in request.args else 'outlook')
+    
+    redirect_uri = f"{request.host_url.rstrip('/')}/api/oauth/callback"
+    # get_config() Flask Response döndürür; doğrudan YAML oku
+    config = {}
+    if CONFIG_PATH.exists():
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f) or {}
+    srv_cfg = config.get(server or '', {})
+    oa_cfg = srv_cfg.get('oauth2', {}) if isinstance(srv_cfg, dict) else {}
+    
+    mgr = get_oauth_manager()
+    success = False
+    if server == 'outlook':
+        success = mgr.complete_ms_auth(oa_cfg.get('client_id'), code, redirect_uri, oa_cfg.get('tenant_id', 'common'))
+    elif server == 'gmail':
+        success = mgr.complete_google_auth(oa_cfg.get('client_id'), oa_cfg.get('client_secret'), code, redirect_uri)
+    
+    if success:
+        return """
+        <html><body style="font-family:sans-serif; text-align:center; padding:50px;">
+            <h1 style="color:#2ecc71;">✅ Yetkilendirme Başarılı!</h1>
+            <p>Token başarıyla alındı ve kaydedildi. Bu sekmeyi kapatabilirsiniz.</p>
+            <script>setTimeout(() => window.close(), 3000);</script>
+        </body></html>
+        """
+    else:
+        return """
+        <html><body style="font-family:sans-serif; text-align:center; padding:50px;">
+            <h1 style="color:#e74c3c;">❌ Yetkilendirme Hatası</h1>
+            <p>Token alınırken bir sorun oluştu. Logları kontrol edin.</p>
+        </body></html>
+        """
+
+@app.route('/api/oauth/status', methods=['GET'])
+def get_oauth_status():
+    mgr = get_oauth_manager()
+    return jsonify({
+        "outlook": "outlook" in mgr._tokens,
+        "gmail": "gmail" in mgr._tokens
+    })
+
+# ── VISUAL REGRESSION (Sprint 8) ──────────────────────────────
+@app.route("/api/visual/set-baseline", methods=["POST"])
+def set_visual_baseline():
+    """Mevcut bir test görselini o senaryo/kombinasyon için baseline olarak ata."""
+    data = request.json or {}
+    screenshot_path = data.get("screenshot_path")
+    scenario_key = data.get("scenario_key")
+    combo_label = data.get("combination_label", "")
+    
+    if not screenshot_path or not os.path.exists(screenshot_path):
+        return jsonify({"ok": False, "error": "Geçerli screenshot yolu bulunamadı"}), 400
+    
+    try:
+        baseline_dir = _CONFIG_DIR / "data" / "baselines"
+        baseline_dir.mkdir(parents=True, exist_ok=True)
+        
+        safe_label = combo_label.replace("/", "_").replace(" ", "_").replace("←", "_to_")
+        baseline_file = baseline_dir / f"{scenario_key}_{safe_label}.png"
+        
+        # Kopyala (shutil)
+        import shutil
+        shutil.copy2(screenshot_path, str(baseline_file))
+        return jsonify({"ok": True, "baseline_path": str(baseline_file)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.route("/api/visual/diff-info", methods=["GET"])
+def get_visual_diff():
+    # reports/diffs içindeki dosyaları sunmak için statik serve yeterli (zaten send_file kullanılıyor)
+    path = request.args.get("path")
+    if not path or not os.path.exists(path):
+        return jsonify({"ok": False, "error": "Dosya bulunamadı"}), 404
+    return send_file(path)
 
 @app.route("/")
 def index():

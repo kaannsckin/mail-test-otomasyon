@@ -7,9 +7,11 @@ import email
 import ssl
 import time
 import logging
+import requests
 from email.header import decode_header
 from typing import Optional
 from abc import ABC, abstractmethod
+from oauth_manager import get_oauth_manager
 
 logger = logging.getLogger(__name__)
 
@@ -145,9 +147,33 @@ class ImapReceiver(BaseReceiver):
             imap = imaplib.IMAP4_SSL(self.host, self.port, ssl_context=self._make_ssl_ctx())
         else:
             imap = imaplib.IMAP4(self.host, self.port)
-        imap.login(self.username, self.password)
+            
+        auth_method = self.config.get("auth_method", "password")
+        if auth_method == "oauth2":
+            self._authenticate_oauth2(imap)
+        else:
+            imap.login(self.username, self.password)
+            
         imap.select("INBOX")
         return imap
+
+    def _authenticate_oauth2(self, imap: imaplib.IMAP4):
+        """IMAP XOAUTH2 kimlik doğrulaması yapar."""
+        mgr = get_oauth_manager()
+        token = None
+        server_key = "outlook" if "office365" in self.host.lower() else "gmail" if "gmail" in self.host.lower() else None
+        
+        if server_key == "outlook":
+            oauth_cfg = self.config.get("oauth2", {})
+            token = mgr.get_ms_token(oauth_cfg.get("client_id"), oauth_cfg.get("tenant_id", "common"))
+        elif server_key == "gmail":
+            token = mgr.get_google_token()
+
+        if not token:
+            raise ConnectionError(f"OAuth2 Token alınamadı ({server_key}). Lütfen yetkilendirme akışını tamamlayın.")
+
+        auth_str = mgr.generate_xoauth2_string(self.username, token)
+        imap.authenticate('XOAUTH2', lambda x: auth_str)
 
     def wait_for_message(self, expected_msg_id: str, subject_prefix: str,
                          wait_seconds: int = 20, max_retries: int = 5,
@@ -208,12 +234,45 @@ class EwsReceiver(BaseReceiver):
         return None
 
 class GraphReceiver(BaseReceiver):
-    """Microsoft Graph API (OAuth) üzerinden alıcı simülasyonu stub."""
+    """Microsoft Graph API (OAuth) üzerinden mesajları çeken adaptör."""
     def wait_for_message(self, expected_msg_id: str, subject_prefix: str,
                          wait_seconds: int = 20, max_retries: int = 5,
                          retry_interval: int = 5) -> Optional[dict]:
-        logger.info(f"[Graph API] Mesaj HTTP ile Graph uç noktasından aranıyor: {expected_msg_id}")
-        # MSAL token alma bölgesi
-        # TODO: Implement Http Request
-        logger.warning("[Graph API] Adaptörü henüz tam entegre edilmedi (Mock modu).")
+        logger.info(f"[Graph API] Mesaj aranıyor: {expected_msg_id}")
+        time.sleep(wait_seconds)
+        
+        mgr = get_oauth_manager()
+        oauth_cfg = self.config.get("oauth2", {})
+        
+        for attempt in range(1, max_retries + 1):
+            token = mgr.get_ms_token(oauth_cfg.get("client_id"), oauth_cfg.get("tenant_id", "common"))
+            if not token:
+                logger.error("[Graph API] Token alınamadı!")
+                return None
+
+            # Graph API filter query
+            # internetMessageId sistem tarafından üretilen message-id header'ıdır
+            clean_id = expected_msg_id.strip()
+            url = f"https://graph.microsoft.com/v1.0/me/messages?$filter=internetMessageId eq '{clean_id}'&$select=id,subject,internetMessageId,from,toRecipients,receivedDateTime,hasAttachments"
+            
+            try:
+                headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+                resp = requests.get(url, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json().get("value", [])
+                    if data:
+                        # Mesaj bulundu, şimdi ham (MIME) içeriğini alalım
+                        msg_id = data[0]["id"]
+                        content_url = f"https://graph.microsoft.com/v1.0/me/messages/{msg_id}/$value"
+                        raw_resp = requests.get(content_url, headers=headers)
+                        if raw_resp.status_code == 200:
+                            raw = raw_resp.content
+                            parsed = email.message_from_bytes(raw)
+                            return self._extract_details(parsed, raw, msg_id)
+                else:
+                    logger.warning(f"[Graph API] Hata {resp.status_code}: {resp.text}")
+            except Exception as e:
+                logger.error(f"[Graph API] İstek hatası: {e}")
+
+            time.sleep(retry_interval)
         return None

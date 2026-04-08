@@ -107,8 +107,9 @@ Senaryo,Senaryo Tipi,Alan Sunucu,Alan İstemci,Gönderen Sunucu,Gönderen İstem
 
 # ── SCENARIO_TYPE_MAP ──────────────────────────────────────────
 class TestScenarioTypeMap:
-    def test_has_five_mappings(self):
-        assert len(SCENARIO_TYPE_MAP) == 5
+    def test_has_nine_mappings(self):
+        """Sprint 4 sonrası 9 senaryo tipi mevcut."""
+        assert len(SCENARIO_TYPE_MAP) == 9
 
     def test_plain_text_mapping(self):
         assert SCENARIO_TYPE_MAP["Sadece İçerik (Plain Text)"] == "plain_text"
@@ -121,6 +122,31 @@ class TestScenarioTypeMap:
 
     def test_reply_chain_mapping(self):
         assert SCENARIO_TYPE_MAP["Cevaplama & Bozulma Testi (Reply Chain)"] == "reply_chain"
+
+    def test_smime_mapping(self):
+        assert SCENARIO_TYPE_MAP["İmzalı Mesaj (S/MIME / PGP)"] == "smime"
+
+    def test_calendar_invite_mapping(self):
+        assert SCENARIO_TYPE_MAP["Takvim Daveti (iTIP / ICS)"] == "calendar_invite"
+
+    def test_i18n_mapping(self):
+        assert SCENARIO_TYPE_MAP["Uluslararası Alfabe ve Emoji Sınaması"] == "i18n"
+
+    def test_complex_html_mapping(self):
+        assert SCENARIO_TYPE_MAP["Rich CSS ve Media Query Sınaması"] == "complex_html"
+
+    def test_forward_mapping(self):
+        assert SCENARIO_TYPE_MAP["Forward (Mesaj İletme) Akışı"] == "forward"
+
+    def test_all_values_are_strings(self):
+        assert all(isinstance(v, str) for v in SCENARIO_TYPE_MAP.values())
+
+    def test_all_keys_are_strings(self):
+        assert all(isinstance(k, str) for k in SCENARIO_TYPE_MAP.keys())
+
+    def test_no_duplicate_values(self):
+        values = list(SCENARIO_TYPE_MAP.values())
+        assert len(values) == len(set(values)), "Duplicate scenario keys found!"
 
 
 # ── Dataclass testleri ─────────────────────────────────────────
