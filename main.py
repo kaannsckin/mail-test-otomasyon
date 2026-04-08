@@ -20,18 +20,42 @@ from datetime import datetime
 from email.utils import make_msgid
 from pathlib import Path
 
+_BASE_DIR = Path(os.environ.get("MAIL_AUTO_CONFIG_DIR", "")).resolve() \
+             if os.environ.get("MAIL_AUTO_CONFIG_DIR") else Path(__file__).parent
+
 # Proje modülleri
 from csv_parser import parse_csv, TestCombination
 from sender import MailSender
-from receiver import MailReceiver
+from receiver import create_receiver, BaseReceiver
 from analyzer import MailAnalyzer
+from llm_provider import create_provider
 from reporter import generate_html_report, generate_csv_results
-from message_templates import (
+from database import save_run
+from template_manager import (
     get_template,
     get_reply_original,
     resolve_inline_html,
     SIGNATURE_HTML,
 )
+
+# ------------------------------------------------------------------ #
+#  Mail address resolution
+# ------------------------------------------------------------------ #
+def resolve_mail_address(config: dict, server_name: str) -> str:
+    """
+    Sunucu adına göre mail adresini çözer.
+    Önce yeni `mail_addresses` bölümüne bakar; yoksa eski `test_address` alanına fallback yapar.
+    """
+    key = server_name.lower()
+    ma = config.get("mail_addresses", {})
+    if key in ma:
+        entry = ma[key]
+        if isinstance(entry, dict):
+            return entry.get("address", "")
+    # Legacy fallback
+    sc = config.get(key, {})
+    return sc.get("test_address", "")
+
 
 # ------------------------------------------------------------------ #
 #  CSV path resolution
@@ -76,9 +100,9 @@ def resolve_csv_path(csv_path: str) -> str:
 #  Logging kurulumu
 # ------------------------------------------------------------------ #
 def setup_logging(config: dict):
-    log_dir = Path("logs")
+    log_dir = _BASE_DIR / "logs"
     log_dir.mkdir(exist_ok=True)
-    log_file = config.get("logging", {}).get("file", "logs/automation.log")
+    log_file = _BASE_DIR / config.get("logging", {}).get("file", "logs/automation.log")
     level = getattr(logging, config.get("logging", {}).get("level", "INFO"))
 
     logging.basicConfig(
@@ -113,7 +137,7 @@ def get_server_config(config: dict, server_name: str) -> dict:
 # ------------------------------------------------------------------ #
 def prepare_test_files():
     """Yoksa örnek test dosyaları oluşturur."""
-    Path("test_files").mkdir(exist_ok=True)
+    (_BASE_DIR / "test_files").mkdir(exist_ok=True)
 
     pdf_path = "test_files/test_document.pdf"
     if not os.path.exists(pdf_path):
@@ -170,16 +194,19 @@ def _resolve_attachment_paths(test_config: dict) -> list[str]:
 
     paths_cfg = test_config.get("test_attachment_paths")
     if paths_cfg and isinstance(paths_cfg, list):
-        raw_list = paths_cfg
+        raw_list = [p for p in paths_cfg if p]  # boş string'leri filtrele
     else:
-        raw_list = [test_config.get("test_attachment_path", "test_files/test_document.pdf")]
+        raw = test_config.get("test_attachment_path") or "test_files/test_document.pdf"
+        raw_list = [raw]
 
     resolved: list[str] = []
     for raw in raw_list:
+        if not raw:
+            continue
         p = Path(raw)
-        if p.exists():
+        if p.is_file():                       # exists() değil: dizinleri hariç tut
             resolved.append(str(p))
-        elif (repo_root / p).exists():
+        elif (repo_root / p).is_file():
             resolved.append(str(repo_root / p))
         else:
             logger.warning(f"Ek dosya bulunamadı: {raw}")
@@ -190,11 +217,17 @@ def _resolve_attachment_paths(test_config: dict) -> list[str]:
 #  Subject builder helpers
 # ------------------------------------------------------------------ #
 SCENARIO_LABELS: dict[str, str] = {
-    "plain_text":   "Plain Text",
-    "attachment":   "Ek Dosya",
-    "inline_image": "Inline Görsel",
-    "reply_chain":  "Reply Chain",
-    "smime":        "S/MIME İmza",
+    "plain_text": "Düz Metin (UTF-8)",
+    "attachment": "Ekli Mesaj (Tek Dosya)",
+    "multi_attachment": "Çoklu Ek (Mixed MIME)",
+    "inline_image": "Gömülü Resim (CID)",
+    "smime": "İmzalı Mesaj (S/MIME / PGP)",
+    "reply_chain": "Yanıt Zinciri (Threading)",
+    "calendar_invite": "Takvim Daveti (iTIP/ICS)",
+    "i18n": "Uluslararası Alfabe",
+    "complex_html": "Zengin CSS ve Yerleşim",
+    "html_table": "HTML Tablo (Grid)",
+    "forward_chain": "İletilmiş Mesaj (Forward)",
 }
 
 LENGTH_LABELS: dict[str, str] = {
@@ -219,7 +252,6 @@ def _format_file_size(total_bytes: int) -> str:
 
 
 def _attachment_tag(paths: list[str]) -> str:
-    """Ek dosya bilgisini özet olarak döndürür. Ör: '3 Ek: PDF+CSV+TXT, 1.2MB'"""
     if not paths:
         return "Eksiz"
     existing = [p for p in paths if os.path.exists(p)]
@@ -275,7 +307,7 @@ def run_scenario(
     combo: TestCombination,
     combo_index: int,
     sender: MailSender,
-    receiver: MailReceiver,
+    receiver: BaseReceiver,
     analyzer: MailAnalyzer,
     test_config: dict,
 ) -> dict:
@@ -287,7 +319,13 @@ def run_scenario(
     wait = test_config.get("wait_seconds", 15)
     retries = test_config.get("max_retries", 3)
     retry_int = test_config.get("retry_interval", 5)
-    image_path = test_config.get("test_image_path", "test_files/test_image.png")
+
+    # Pasif modda IMAP beklemeyi kısalt — mail gelmediyse de doğrulama ekranı çıkar
+    if analyzer.mode == "passive":
+        wait = min(wait, 10)   # En fazla 10sn bekle
+        retries = 1             # Tek deneme yeterli
+        retry_int = 3
+    image_path = test_config.get("test_image_path") or "test_files/test_image.png"
 
     attachment_paths = _resolve_attachment_paths(test_config)
 
@@ -314,6 +352,7 @@ def run_scenario(
     body = f"{tmpl.body}\n\n[Run ID: {run_id}]"
 
     combination_meta = {
+        "label": combo.label,
         "sender_server": combo.sender_server,
         "sender_client": combo.sender_client,
         "receiver_server": combo.receiver_server,
@@ -328,26 +367,51 @@ def run_scenario(
         f"Kombo: {combo.label} | run_id={run_id}"
     )
 
+    # Şablonda özel ek dosyalar tanımlıysa bunları kullan, yoksa genel config'deki dosyaları kullan
+    final_attachments = []
+    if tmpl.attachments:
+        repo_root = Path(__file__).parent
+        attachments_dir = repo_root / "attachments"
+        for filename in tmpl.attachments:
+            p = attachments_dir / filename
+            if p.is_file():
+                final_attachments.append(str(p))
+            else:
+                logger.warning(f"Şablonda tanımlı dosya bulunamadı: {filename}")
+    
+    if not final_attachments:
+        final_attachments = attachment_paths
+
     try:
         if scenario_key == "plain_text":
-            send_meta = sender.send_plain_text(to_address, subject, body)
+            send_meta = sender.send_plain_text(to_address, subject, body, sender_client=combo.sender_client)
 
         elif scenario_key == "attachment":
             send_meta = sender.send_with_attachment(
-                to_address, subject, body, attachment_paths or "test_files/test_document.pdf",
+                to_address, subject, body, final_attachments or "test_files/test_document.pdf", sender_client=combo.sender_client
+            )
+
+        elif scenario_key == "multi_attachment":
+            # Birden fazla dosya gönder — yoksa fallback
+            multi_paths = final_attachments if len(final_attachments) > 1 else [
+                "test_files/test_document.pdf",
+                "test_files/test_image.png"
+            ]
+            send_meta = sender.send_with_attachment(
+                to_address, subject, body, multi_paths, sender_client=combo.sender_client
             )
 
         elif scenario_key == "inline_image":
             html_body = resolve_inline_html(tmpl.body, "{{CID}}")
             send_meta = sender.send_inline_image(
-                to_address, subject, image_path, html_body=html_body,
+                to_address, subject, image_path, html_body=html_body, sender_client=combo.sender_client
             )
 
         elif scenario_key == "smime":
             cert = test_config.get("smime_cert_path", "")
             key = test_config.get("smime_key_path", "")
             if cert and key and os.path.exists(cert) and os.path.exists(key):
-                send_meta = sender.send_smime_signed(to_address, subject, body, cert, key)
+                send_meta = sender.send_smime_signed(to_address, subject, body, cert, key, sender_client=combo.sender_client)
             else:
                 logger.warning("S/MIME sertifikası bulunamadı, senaryo atlanıyor.")
                 return {
@@ -375,7 +439,7 @@ def run_scenario(
             )
             orig_body = f"{orig_tmpl.body}\n\n[Run ID: {run_id}]"
 
-            original_meta = sender.send_plain_text(to_address, orig_subject, orig_body)
+            original_meta = sender.send_plain_text(to_address, orig_subject, orig_body, sender_client=combo.sender_client)
             time.sleep(5)
             send_meta = sender.send_reply(
                 to_address,
@@ -383,11 +447,28 @@ def run_scenario(
                 original_meta.get("msg_id", ""),
                 "",
                 body,
+                sender_client=combo.sender_client
             )
+
+        elif scenario_key == "calendar_invite":
+            send_meta = sender.send_calendar_invite(to_address, subject, body, sender_client=combo.sender_client)
+
+        elif scenario_key == "i18n":
+            i18n_subject = f"🌍 [I18N] {subject} - ÖÇŞĞÜİ ﷽ 漢字 🚀"
+            i18n_body = f"{body}\n\nUluslararası Alfabe Testi:\nTürkçe: ÖÇŞĞÜİöçşğüı\nArapça: ﷽\nAsya: 漢字\nEmoji: 🚀🔥🐞"
+            send_meta = sender.send_plain_text(to_address, i18n_subject, i18n_body, sender_client=combo.sender_client)
+
+        elif scenario_key == "complex_html" or scenario_key == "html_table":
+            # html_table senaryosu tmpl.body içindeki tabloyu kullanır
+            send_meta = sender.send_complex_html(to_address, subject, tmpl.body, sender_client=combo.sender_client)
+
+        elif scenario_key == "forward_chain":
+            orig_subject = f"Orijinal Mesaj Konusu - {run_id}"
+            orig_body = "Bu mesaj önceden iletilmiş ve zincirlenmiş bir alt formattır."
+            send_meta = sender.send_forward(to_address, orig_subject, sender.from_address, body, orig_body, sender_client=combo.sender_client)
 
         else:
             raise ValueError(f"Bilinmeyen senaryo tipi: {scenario_key}")
-
     except Exception as e:
         logger.error(f"Gönderim hatası ({scenario_key}): {e}", exc_info=True)
         return {
@@ -434,6 +515,59 @@ def run_scenario(
         scenario_key, send_meta, received, combination_meta
     )
 
+    # Playwright UI / DOM Snapshot
+    if received:
+        html_part = next((p for p in received.get("parts", []) if "html" in p.get("content_type", "").lower()), None)
+        if html_part and html_part.get("full_text"):
+            try:
+                from ui_tester import UITester
+                tester = UITester(headless=True)
+                screen_path = f"reports/screenshots/{scenario_key}_{uuid.uuid4().hex[:8]}.png"
+                success = tester.take_screenshot_from_html(html_part["full_text"], screen_path)
+                
+                if success:
+                    analysis["screenshot"] = screen_path
+                    
+                    # Visual Regression (Sprint 8)
+                    baseline_dir = _BASE_DIR / "data" / "baselines"
+                    baseline_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    # Baseline filename unique to combination + scenario
+                    safe_label = combo.label.replace("/", "_").replace(" ", "_").replace("←", "_to_")
+                    baseline_file = baseline_dir / f"{scenario_key}_{safe_label}.png"
+                    
+                    if baseline_file.exists():
+                        diff_dir = _BASE_DIR / "reports" / "diffs"
+                        diff_dir.mkdir(parents=True, exist_ok=True)
+                        diff_path = diff_dir / f"diff_{run_id}_{scenario_key}.png"
+                        
+                        comparison = tester.compare_screenshots(str(baseline_file), screen_path, str(diff_path))
+                        if "error" not in comparison:
+                            analysis["baseline"] = str(baseline_file)
+                            analysis["diff_screenshot"] = str(diff_path)
+                            analysis["diff_percent"] = comparison["diff_percent"]
+                            analysis["is_visual_match"] = comparison["is_match"]
+                            
+                            if not comparison["is_match"]:
+                                analysis["passed"] = False
+                                analysis["checks"].append({
+                                    "name": "Görsel Regresyon",
+                                    "passed": False,
+                                    "detail": f"Tasarım %{comparison['diff_percent']} oranında değişmiş!"
+                                })
+                                analysis["issues"].append(f"Görsel regresyon hatası (%{comparison['diff_percent']} fark)")
+                            else:
+                                analysis["checks"].append({
+                                    "name": "Görsel Regresyon",
+                                    "passed": True,
+                                    "detail": f"Tasarım baseline ile uyumlu (%{comparison['diff_percent']} fark)"
+                                })
+                    else:
+                        analysis["baseline"] = None
+                        logger.info(f"  ℹ Baseline bulunamadı, bu görsel ileride kullanılabilir.")
+            except Exception as e:
+                logger.warning(f"  UI Screenshot / Regresyon hatası: {e}")
+
     status = "✅ PASS" if analysis.get("passed") else "❌ FAIL"
     logger.info(
         f"◼ Sonuç: {status} | {combo.label} / {scenario_key} ({tmpl.length}) "
@@ -460,13 +594,17 @@ def run_scenario(
 # ------------------------------------------------------------------ #
 def main():
     parser = argparse.ArgumentParser(description="Mail Otomasyon Testi")
-    parser.add_argument("--config", default="config.yaml", help="Config dosyası yolu")
+    parser.add_argument("--config", default=str(_BASE_DIR / "config.yaml"), help="Config dosyası yolu")
     parser.add_argument("--csv", default=None, help="Test CSV dosyası yolu")
     parser.add_argument("--combo", type=int, default=None, help="Sadece N. kombinasyonu çalıştır (0-index)")
     parser.add_argument("--scenario", default=None,
                         help="Sadece belirtilen senaryo tipini çalıştır "
                              "(plain_text|attachment|inline_image|smime|reply_chain)")
+    parser.add_argument("--mode", default=None, choices=["active", "passive"],
+                        help="Analyzer modu: active (otomatik LLM) veya passive (manuel doğrulama)")
     parser.add_argument("--dry-run", action="store_true", help="Bağlantı testi, mail gönderme")
+    parser.add_argument("--spoof-sender", default=None, help="Tüm test kombinasyonları için gönderici istemciyi ez (Örn: Apple Mail, Outlook)")
+    parser.add_argument("--save-to-sent", action="store_true", help="EMS sunucusunda maili Sent klasörüne zorla kaydet (X-Mailer ekler)")
     args = parser.parse_args()
 
     # Config yükle
@@ -499,64 +637,185 @@ def main():
         combinations = [combinations[args.combo]]
         logger.info(f"Sadece kombinasyon #{args.combo} çalıştırılıyor: {combinations[0].label}")
 
+    # Spoofing (İstemci Ezme)
+    if args.spoof_sender:
+        logger.info(f"🎭 Spoofing Aktif: Tüm testlerde Sender Client '{args.spoof_sender}' olarak simüle edilecek.")
+        for cb in combinations:
+            cb.sender_client = args.spoof_sender
+
     # Dry-run
     if args.dry_run:
+        import imaplib, ssl as _ssl
         logger.info("DRY RUN — Bağlantı testleri:")
+        logger.info("-" * 50)
+        tested = set()
         for combo in combinations:
             for server_name in {combo.sender_server, combo.receiver_server}:
+                if server_name in tested:
+                    continue
+                tested.add(server_name)
                 try:
                     sc = get_server_config(config, server_name)
-                    sender = MailSender(sc)
-                    conn = sender._connect()
+                except ValueError as e:
+                    logger.error(f"  ❌ CONFIG: {server_name} — {e}")
+                    continue
+
+                # SMTP testi
+                smtp_host = sc.get("smtp_host","?")
+                smtp_port = sc.get("smtp_port","?")
+                smtp_mode = "SSL" if sc.get("smtp_use_ssl") else ("STARTTLS" if sc.get("smtp_use_tls", True) else "PLAIN")
+                try:
+                    sender_obj = MailSender(sc)
+                    conn = sender_obj._connect()
                     conn.quit()
-                    logger.info(f"  ✅ SMTP OK: {server_name} ({sc['smtp_host']})")
+                    logger.info(f"  ✅ SMTP  OK : {server_name} ({smtp_host}:{smtp_port} {smtp_mode})")
                 except Exception as e:
-                    logger.error(f"  ❌ SMTP FAIL: {server_name} — {e}")
+                    logger.error(f"  ❌ SMTP FAIL: {server_name} ({smtp_host}:{smtp_port} {smtp_mode}) — {e}")
+
+                # IMAP testi
+                imap_host = sc.get("imap_host","?")
+                imap_port = sc.get("imap_port","?")
+                imap_ssl  = sc.get("imap_use_ssl", True)
+                try:
+                    ssl_ctx = _ssl.create_default_context()
+                    if not sc.get("imap_verify_ssl", False):
+                        ssl_ctx.check_hostname = False
+                        ssl_ctx.verify_mode = _ssl.CERT_NONE
+                    if imap_ssl:
+                        imap = imaplib.IMAP4_SSL(imap_host, imap_port, ssl_context=ssl_ctx)
+                    else:
+                        imap = imaplib.IMAP4(imap_host, imap_port)
+                    imap.login(sc["username"], sc["password"])
+                    imap.logout()
+                    logger.info(f"  ✅ IMAP  OK : {server_name} ({imap_host}:{imap_port} {'SSL' if imap_ssl else 'PLAIN'})")
+                except Exception as e:
+                    logger.error(f"  ❌ IMAP FAIL: {server_name} ({imap_host}:{imap_port}) — {e}")
+
+        logger.info("-" * 50)
         return
 
-    # Analiz için Claude
-    anthropic_cfg = config.get("anthropic", {})
-    analyzer = MailAnalyzer(api_key=anthropic_cfg.get("api_key", ""))
+    # Analyzer mode (aktif/pasif)
+    analyzer_mode = args.mode or config.get("test", {}).get("analyzer_mode", "active")
+
+    if analyzer_mode == "passive":
+        # Pasif modda LLM provider gereksiz — API key istemeden devam et
+        analyzer = MailAnalyzer(provider=None, mode="passive")
+        logger.info("⚙️  Analyzer Mode: PASİF (Manuel Doğrulama)")
+        logger.info("    → CLI'da interactive input veya App üzerinden onay beklenir")
+    elif analyzer_mode == "auto":
+        # Otomatik (Kural Bazlı) modda LLM provider gereksiz
+        analyzer = MailAnalyzer(provider=None, mode="auto")
+        logger.info("⚙️  Analyzer Mode: OTOMATİK (Kural Bazlı)")
+        logger.info("    → MIME yapısı ve metadata üzerinden otomatik kontrol yapılır")
+    else:
+        # Aktif modda LLM Provider setup (Claude veya Google Gemini)
+        llm_cfg = config.get("llm", {})
+        provider_type = llm_cfg.get("provider", "google").lower()
+
+        if provider_type == "claude":
+            provider_cfg = llm_cfg.get("anthropic", {})
+            api_key = provider_cfg.get("api_key", "")
+            model = provider_cfg.get("model", "claude-sonnet-4-20250514")
+            if not api_key:
+                logger.error("Anthropic API key eksik. config.yaml'ı kontrol edin.")
+                sys.exit(1)
+        elif provider_type == "google":
+            # Desteklenen iki yapı: a) llm.api_key (düz) b) llm.google.api_key (iç içe)
+            api_key = llm_cfg.get("api_key", "") or llm_cfg.get("google", {}).get("api_key", "")
+            model = llm_cfg.get("model", "") or llm_cfg.get("google", {}).get("model", "gemini-2.0-flash")
+            if not api_key:
+                logger.error("❌ Google API key eksik. config.yaml'da llm.api_key altanı kontrol edin.")
+                sys.exit(1)
+        else:
+            logger.error(f"Bilinmeyen provider: {provider_type}")
+            sys.exit(1)
+
+        try:
+            provider = create_provider(provider_type, api_key, model)
+            analyzer = MailAnalyzer(provider, mode="active")
+            logger.info(f"✅ LLM Provider: {provider_type.upper()} ({model})")
+        except Exception as e:
+            logger.error(f"LLM Provider başlatma hatası: {e}")
+            sys.exit(1)
 
     all_results = []
-    Path("reports").mkdir(exist_ok=True)
+    run_uuid = str(uuid.uuid4())
+    # Raporlama klasörünü hazırla
+    (_BASE_DIR / "reports").mkdir(exist_ok=True)
+    (_BASE_DIR / "reports" / "screenshots").mkdir(exist_ok=True, parents=True)
 
     for combo_idx, combo in enumerate(combinations):
         logger.info(f"\n{'='*60}")
-        logger.info(f"Kombinasyon [{combo_idx+1}/{len(combinations)}]: {combo.label}")
+        logger.info(f"KOMBİNASYON [{combo_idx+1}/{len(combinations)}]: {combo.label}")
+        logger.info(f"  Gönderici : {combo.sender_server} / {combo.sender_client}")
+        logger.info(f"  Alıcı     : {combo.receiver_server} / {combo.receiver_client}")
+        logger.info(f"  Senaryo   : {len(combo.scenarios)} senaryo")
         logger.info(f"{'='*60}")
 
         # Sender/Receiver kurulumu
         try:
-            sender_config = get_server_config(config, combo.sender_server)
+            sender_config   = get_server_config(config, combo.sender_server)
             receiver_config = get_server_config(config, combo.receiver_server)
         except ValueError as e:
             logger.error(f"Config hatası: {e} — kombinasyon atlanıyor.")
             continue
 
-        sender = MailSender(sender_config)
-        receiver = MailReceiver(receiver_config)
+        logger.info(f"  SMTP → {sender_config.get('smtp_host')}:{sender_config.get('smtp_port')}"
+                    f"  (ssl={sender_config.get('smtp_use_ssl', False)}, tls={sender_config.get('smtp_use_tls', True)})")
+        logger.info(f"  IMAP → {receiver_config.get('imap_host')}:{receiver_config.get('imap_port')}")
+
+        # mail_addresses'den çözülen adresleri config dict'e inject et
+        sender_address   = resolve_mail_address(config, combo.sender_server)
+        receiver_address = resolve_mail_address(config, combo.receiver_server)
+        if sender_address:
+            sender_config["test_address"] = sender_address
+        if receiver_address:
+            receiver_config["test_address"] = receiver_address
+
+        sender   = MailSender(sender_config)
+        sender.save_to_sent = args.save_to_sent
+        receiver = create_receiver(receiver_config)
 
         scenarios_to_run = list(combo.scenarios.keys())
         if args.scenario:
             scenarios_to_run = [s for s in scenarios_to_run if s == args.scenario]
 
-        for sc_key in scenarios_to_run:
+        sc_total = len(scenarios_to_run)
+        for sc_idx, sc_key in enumerate(scenarios_to_run):
+            logger.info(f"\n  ── Senaryo [{sc_idx+1}/{sc_total}]: {sc_key} ──")
+            t_sc_start = time.time()
             try:
                 result = run_scenario(
                     sc_key, combo, combo_idx, sender, receiver, analyzer, test_config,
                 )
                 all_results.append(result)
+                elapsed = time.time() - t_sc_start
+                status  = "✅ PASS" if result.get("analysis", {}).get("passed") else \
+                          ("⏭ SKIP" if result.get("skipped") else "❌ FAIL")
+                logger.info(f"  {status} — {sc_key} ({elapsed:.1f}s)")
+
+                # Detaylı kontrol listesi
+                checks = result.get("analysis", {}).get("checks", [])
+                for chk in checks:
+                    chk_icon = "  ✓" if chk.get("passed") else "  ✗"
+                    logger.info(f"    {chk_icon} {chk.get('name','?')}: {chk.get('detail','')[:120]}")
+
+                issues = result.get("analysis", {}).get("issues", [])
+                for issue in issues:
+                    logger.warning(f"    ⚠ {issue}")
+
                 time.sleep(3)
             except Exception as e:
-                logger.error(f"Beklenmeyen hata ({sc_key}): {e}", exc_info=True)
+                logger.error(f"  Beklenmeyen hata ({sc_key}): {e}", exc_info=True)
 
-    # Raporla
+    # Raporla ve Veritabanına Yaz
     if all_results:
-        html_path = test_config.get("report_output", "reports/test_report.html")
-        csv_path_out = test_config.get("results_csv", "reports/test_results.csv")
-        generate_html_report(all_results, html_path)
-        generate_csv_results(all_results, csv_path_out)
+        save_run(run_uuid, all_results)
+        
+        html_path = _BASE_DIR / test_config.get("report_output", "reports/test_report.html")
+        csv_path_out = _BASE_DIR / test_config.get("results_csv", "reports/test_results.csv")
+        generate_html_report(all_results, str(html_path))
+        generate_csv_results(all_results, str(csv_path_out))
         logger.info(f"\n{'='*60}")
         logger.info(f"TEST TAMAMLANDI")
         total = len(all_results)

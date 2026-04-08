@@ -1,4 +1,21 @@
 pyyaml>=6.0
 requests>=2.31.0
 flask>=3.0.0
-pyOpenSSL>=23.0.0   # S/MIME testleri için (opsiyonel)
+pyOpenSSL>=23.0.0
+playwright>=1.40.0
+jinja2>=3.1.0
+apscheduler>=3.10.0
+msal>=1.26.0
+google-auth>=2.27.0
+google-auth-oauthlib>=1.2.0
+google-api-python-client>=2.116.0
+Pillow>=10.0.0
+numpy>=1.24.0
+
+# Dev / CI bağımlılıkları
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-timeout>=2.1.0
+flake8>=6.0.0
+beautifulsoup4>=4.12.0
+pyotp>=2.9.0

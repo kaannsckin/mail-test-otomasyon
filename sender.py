@@ -5,11 +5,13 @@ Her senaryo tipi için ayrı metot: plain, attachment, inline_image, smime, repl
 from __future__ import annotations
 
 import smtplib
+import ssl
 import uuid
 import time
 import os
 import base64
 import logging
+from datetime import datetime, timezone, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
@@ -18,6 +20,7 @@ from email import encoders
 from email.utils import formatdate, make_msgid
 from email.headerregistry import Address
 from typing import Optional
+from oauth_manager import get_oauth_manager
 
 logger = logging.getLogger(__name__)
 
@@ -30,20 +33,77 @@ class MailSender:
         self.use_tls = server_config.get("smtp_use_tls", True)
         self.username = server_config["username"]
         self.password = server_config["password"]
-        self.from_address = server_config["test_address"]
+        self.from_address = server_config.get("test_address") or server_config.get("username", "")
+
+    def _make_ssl_ctx(self) -> ssl.SSLContext:
+        """Self-signed / internal cert desteği. smtp_verify_ssl: false → doğrulama atla."""
+        verify = self.config.get("smtp_verify_ssl", False)
+        ctx = ssl.create_default_context()
+        if not verify:
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+        return ctx
 
     def _connect(self) -> smtplib.SMTP:
-        smtp = smtplib.SMTP(self.host, self.port, timeout=30)
-        smtp.ehlo()
-        if self.use_tls:
-            smtp.starttls()
+        # smtp_use_ssl: true  → Implicit SSL (SMTP_SSL) — sadece config'de açıkça belirtilince
+        # smtp_use_ssl: false → STARTTLS veya plain — port 465 bile olsa
+        use_ssl = self.config.get("smtp_use_ssl", False)
+        ssl_ctx = self._make_ssl_ctx()
+
+        if use_ssl:
+            # Implicit SSL (SMTP_SSL) — sunucu direkt TLS bekliyor
+            smtp = smtplib.SMTP_SSL(self.host, self.port, timeout=60, context=ssl_ctx)
             smtp.ehlo()
-        smtp.login(self.username, self.password)
-        logger.debug(f"SMTP bağlantısı kuruldu: {self.host}:{self.port}")
+        else:
+            # STARTTLS veya plain — port 465 bile olsa
+            smtp = smtplib.SMTP(self.host, self.port, timeout=60)
+            smtp.ehlo()
+            if self.use_tls:
+                smtp.starttls(context=ssl_ctx)
+                smtp.ehlo()
+
+        # size=N parametresini kaldır (bazı sunucular reddeder)
+        smtp.esmtp_features.pop("size", None)
+
+        auth_method = self.config.get("auth_method", "password")
+        if auth_method == "oauth2":
+            self._login_oauth2(smtp)
+        else:
+            smtp.login(self.username, self.password)
+            
+        logger.debug(f"SMTP bağlantısı kuruldu: {self.host}:{self.port} "
+                     f"({'implicit SSL' if use_ssl else 'STARTTLS' if self.use_tls else 'plain'}) "
+                     f"[{auth_method}]")
         return smtp
 
+    def _login_oauth2(self, smtp: smtplib.SMTP):
+        """XOAUTH2 üzerinden oturum açar."""
+        mgr = get_oauth_manager()
+        token = None
+        server_key = "outlook" if "office365" in self.host.lower() else "gmail" if "gmail" in self.host.lower() else None
+        
+        if not server_key:
+            raise ValueError(f"OAuth2 sadece Outlook ve Gmail sunucuları için desteklenmektedir (Host: {self.host})")
+
+        if server_key == "outlook":
+            oauth_cfg = self.config.get("oauth2", {})
+            token = mgr.get_ms_token(oauth_cfg.get("client_id"), oauth_cfg.get("tenant_id", "common"))
+        elif server_key == "gmail":
+            token = mgr.get_google_token()
+
+        if not token:
+            raise ConnectionError(f"OAuth2 Token alınamadı ({server_key}). Lütfen yetkilendirme akışını tamamlayın.")
+
+        auth_str = mgr.generate_xoauth2_string(self.username, token)
+        # XOAUTH2 standardı: AUTH XOAUTH2 base64str
+        code, resp = smtp.docmd("AUTH", "XOAUTH2 " + auth_str)
+        if code != 235:
+            # 235 = Authentication successful
+            err_msg = resp.decode() if isinstance(resp, bytes) else str(resp)
+            raise smtplib.SMTPAuthenticationError(code, f"XOAUTH2 Başarısız: {err_msg}")
+
     def _base_headers(self, subject: str, to_address: str, msg_id: Optional[str] = None) -> dict:
-        return {
+        headers = {
             "Message-ID": msg_id or make_msgid(),
             "Date": formatdate(localtime=True),
             "Subject": subject,
@@ -51,18 +111,21 @@ class MailSender:
             "To": to_address,
             "X-Test-Automation": "mail-otomasyon-v1",
         }
+        if getattr(self, "save_to_sent", False):
+            headers["X-Mailer"] = "Mail-Otomasyon-Agent"
+        return headers
 
     # ------------------------------------------------------------------ #
     #  Senaryo 1: Plain Text
     # ------------------------------------------------------------------ #
-    def send_plain_text(self, to_address: str, subject: str, body: str) -> dict:
+    def send_plain_text(self, to_address: str, subject: str, body: str, sender_client: str = None) -> dict:
         """UTF-8 plain-text mesaj gönderir."""
         msg = MIMEText(body, "plain", "utf-8")
         msg_id = make_msgid()
         for k, v in self._base_headers(subject, to_address, msg_id).items():
             msg[k] = v
 
-        sent_at = self._send(msg, to_address)
+        sent_at = self._send(msg, to_address, sender_client=sender_client)
         logger.info(f"[PLAIN] Gönderildi → {to_address} | msg_id={msg_id}")
         return {"msg_id": msg_id, "sent_at": sent_at, "scenario": "plain_text"}
 
@@ -70,7 +133,7 @@ class MailSender:
     #  Senaryo 2: Attachment (tek veya çoklu)
     # ------------------------------------------------------------------ #
     def send_with_attachment(self, to_address: str, subject: str, body: str,
-                             attachment_path: str | list[str]) -> dict:
+                             attachment_path: str | list[str], sender_client: str = None) -> dict:
         """Tek veya birden fazla dosya ekli mesaj gönderir."""
         paths = [attachment_path] if isinstance(attachment_path, str) else list(attachment_path)
 
@@ -96,7 +159,7 @@ class MailSender:
             msg.attach(part)
             attached_files.append({"name": filename, "size": os.path.getsize(p)})
 
-        sent_at = self._send(msg, to_address)
+        sent_at = self._send(msg, to_address, sender_client=sender_client)
         names = ", ".join(a["name"] for a in attached_files)
         logger.info(f"[ATTACH] Gönderildi → {to_address} | dosyalar={names}")
         return {
@@ -112,7 +175,7 @@ class MailSender:
     #  Senaryo 3: Inline Image (Embedded HTML)
     # ------------------------------------------------------------------ #
     def send_inline_image(self, to_address: str, subject: str,
-                          image_path: str, html_body: str | None = None) -> dict:
+                          image_path: str, html_body: str | None = None, sender_client: str = None) -> dict:
         """CID referanslı inline resim içeren HTML mesaj gönderir.
 
         html_body verilirse {{CID}} yer tutucusu otomatik doldurulur.
@@ -138,12 +201,19 @@ class MailSender:
             )
 
         alt_part = MIMEMultipart("alternative")
-        alt_part.attach(MIMEText(
+        plain_part = MIMEText(
             "Inline resim testi — bu mesajı görüntülemek için HTML destekli istemci gereklidir. "
             "Türkçe: ğüşıöçĞÜŞİÖÇ",
             "plain", "utf-8",
-        ))
-        alt_part.attach(MIMEText(html_content, "html", "utf-8"))
+        )
+        html_part = MIMEText(html_content, "html", "utf-8")
+        # EMS sunucusu base64'ü yanlış yorumlamaması için QP encoding zorla
+        html_part.replace_header("Content-Transfer-Encoding", "quoted-printable")
+        import quopri
+        encoded = quopri.encodestring(html_content.encode("utf-8")).decode("ascii")
+        html_part.set_payload(encoded)
+        alt_part.attach(plain_part)
+        alt_part.attach(html_part)
         msg.attach(alt_part)
 
         with open(image_path, "rb") as f:
@@ -152,7 +222,7 @@ class MailSender:
         img.add_header("Content-Disposition", "inline", filename=os.path.basename(image_path))
         msg.attach(img)
 
-        sent_at = self._send(msg, to_address)
+        sent_at = self._send(msg, to_address, sender_client=sender_client)
         logger.info(f"[INLINE] Gönderildi → {to_address} | cid={cid}")
         return {"msg_id": msg_id, "sent_at": sent_at, "scenario": "inline_image", "cid": cid}
 
@@ -160,7 +230,7 @@ class MailSender:
     #  Senaryo 4: S/MIME İmzalı Mesaj
     # ------------------------------------------------------------------ #
     def send_smime_signed(self, to_address: str, subject: str, body: str,
-                          cert_path: str, key_path: str) -> dict:
+                          cert_path: str, key_path: str, sender_client: str = None) -> dict:
         """
         S/MIME imzalı mesaj gönderir.
         Gereksinim: openssl kütüphanesi ve test sertifikası.
@@ -179,6 +249,10 @@ class MailSender:
         msg_id = make_msgid()
         inner = MIMEText(body, "plain", "utf-8")
         inner["Content-Type"] = "text/plain; charset=utf-8"
+        
+        if sender_client:
+            from client_profiles import apply_client_profile
+            inner = apply_client_profile(inner, sender_client)
 
         # openssl smime ile imzala
         import subprocess
@@ -209,11 +283,7 @@ class MailSender:
             signed_content = f.read()
         os.unlink(signed_path)
 
-        with smtplib.SMTP(self.host, self.port, timeout=30) as smtp:
-            smtp.ehlo()
-            if self.use_tls:
-                smtp.starttls()
-            smtp.login(self.username, self.password)
+        with self._connect() as smtp:
             smtp.sendmail(self.from_address, [to_address], signed_content)
 
         sent_at = time.time()
@@ -225,7 +295,7 @@ class MailSender:
     # ------------------------------------------------------------------ #
     def send_reply(self, to_address: str, original_subject: str,
                    original_msg_id: str, original_references: str,
-                   reply_body: str) -> dict:
+                   reply_body: str, sender_client: str = None) -> dict:
         """Orijinal mesaja thread zinciri korunarak cevap verir."""
         subject = f"Re: {original_subject}" if not original_subject.startswith("Re:") else original_subject
         msg = MIMEMultipart("alternative")
@@ -243,7 +313,7 @@ class MailSender:
         full_body = f"{reply_body}\n\n{quoted_body}"
         msg.attach(MIMEText(full_body, "plain", "utf-8"))
 
-        sent_at = self._send(msg, to_address)
+        sent_at = self._send(msg, to_address, sender_client=sender_client)
         logger.info(f"[REPLY] Gönderildi → {to_address} | in-reply-to={original_msg_id}")
         return {
             "msg_id": msg_id,
@@ -254,12 +324,148 @@ class MailSender:
         }
 
     # ------------------------------------------------------------------ #
+    #  Yeni Senaryolar: Calendar, Rich HTML, Forward
+    # ------------------------------------------------------------------ #
+    def send_calendar_invite(self, to_address: str, subject: str, body: str, sender_client: str = None) -> dict:
+        """vCalendar (iTIP) daveti gönderir."""
+        msg = MIMEMultipart("alternative")
+        msg_id = make_msgid()
+        for k, v in self._base_headers(subject, to_address, msg_id).items():
+            msg[k] = v
+
+        msg.attach(MIMEText(body, "plain", "utf-8"))
+
+        # Benzersiz ICS UID ve Zaman Mühürleri oluştur
+        # Start time: Yarın saat 10:00 (basit UTC zulu zamanı)
+        dtstamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        dtstart = (datetime.now(timezone.utc) + timedelta(days=1)).replace(hour=10, minute=0, second=0).strftime("%Y%m%dT%H%M%SZ")
+        dtend = (datetime.now(timezone.utc) + timedelta(days=1)).replace(hour=11, minute=0, second=0).strftime("%Y%m%dT%H%M%SZ")
+        uid = f"invite_{uuid.uuid4().hex}@test.local"
+
+        ics_content = f"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Mail Otomasyon//TR\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:{uid}\r\nDTSTAMP:{dtstamp}\r\nDTSTART:{dtstart}\r\nDTEND:{dtend}\r\nSUMMARY:{subject}\r\nDESCRIPTION:{body}\r\nORGANIZER;CN=Test Gönderici:mailto:{self.from_address}\r\nATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:{to_address}\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+
+        cal_part = MIMEText(ics_content, "calendar", "utf-8")
+        cal_part.set_param("method", "REQUEST")
+        msg.attach(cal_part)
+
+        sent_at = self._send(msg, to_address, sender_client=sender_client)
+        logger.info(f"[CALENDAR] Takvim Daveti Gönderildi → {to_address}")
+        return {"msg_id": msg_id, "sent_at": sent_at, "scenario": "calendar_invite"}
+
+    def send_complex_html(self, to_address: str, subject: str, html_body: str, sender_client: str = None) -> dict:
+        """Geniş CSS ve I18N destekli kompleks HTML yollar."""
+        msg = MIMEMultipart("alternative")
+        msg_id = make_msgid()
+        for k, v in self._base_headers(subject, to_address, msg_id).items():
+            msg[k] = v
+
+        # Fallback düz metin
+        text_body = "Bu mesaj zengin HTML içeriğine sahiptir. Lütfen destekleyen bir istemci kullanın.\n\n"
+        plain_part = MIMEText(text_body, "plain", "utf-8")
+        html_part = MIMEText(html_body, "html", "utf-8")
+        # EMS sunucusu base64'ü yanlış yorumlamaması için QP encoding zorla
+        html_part.replace_header("Content-Transfer-Encoding", "quoted-printable")
+        import quopri
+        encoded = quopri.encodestring(html_body.encode("utf-8")).decode("ascii")
+        html_part.set_payload(encoded)
+        msg.attach(plain_part)
+        msg.attach(html_part)
+
+        sent_at = self._send(msg, to_address, sender_client=sender_client)
+        logger.info(f"[COMPLEX_HTML] Zengin Formatlı HTML Gönderildi → {to_address}")
+        return {"msg_id": msg_id, "sent_at": sent_at, "scenario": "complex_html"}
+
+    def send_forward(self, to_address: str, original_subject: str, original_from: str, forward_body: str, original_body: str, sender_client: str = None) -> dict:
+        """Forwarded (İletilmiş) mesaj senaryosu."""
+        msg = MIMEMultipart("alternative")
+        msg_id = make_msgid()
+        # İletilen mesajlarda genel konvansiyon başa Fwd: (veya FW:) eklenmesidir
+        subject = f"Fwd: {original_subject}"
+        for k, v in self._base_headers(subject, to_address, msg_id).items():
+            msg[k] = v
+
+        orig_date = datetime.now().strftime("%a, %d %b %Y %H:%M")
+        
+        # Standart bir istemcinin Forward string formasyonunu taklit et
+        forward_wrapper = (
+            f"{forward_body}\n\n"
+            "---------- Forwarded message ---------\n"
+            f"From: {original_from}\n"
+            f"Date: {orig_date}\n"
+            f"Subject: {original_subject}\n"
+            f"To: {to_address}\n\n"
+            f"{original_body}"
+        )
+
+        msg.attach(MIMEText(forward_wrapper, "plain", "utf-8"))
+        
+        sent_at = self._send(msg, to_address, sender_client=sender_client)
+        logger.info(f"[FORWARD] İletilmiş Mesaj Gönderildi → {to_address}")
+        return {"msg_id": msg_id, "sent_at": sent_at, "scenario": "forward"}
+
+    def send_html_table(self, to_address: str, subject: str, html_body: str, sender_client: str = None) -> dict:
+        """Tablo içeren HTML mesajı gönderir. Complex HTML ile benzerdir ancak senaryo ayrımı sağlar."""
+        return self.send_complex_html(to_address, subject, html_body, sender_client=sender_client)
+
+    # ------------------------------------------------------------------ #
     #  İç yardımcılar
     # ------------------------------------------------------------------ #
-    def _send(self, msg, to_address: str) -> float:
-        with self._connect() as smtp:
-            smtp.sendmail(self.from_address, [to_address], msg.as_bytes())
-        return time.time()
+    def _send(self, msg, to_address: str, max_retries: int = 1, sender_client: str = None) -> float:
+        """Mesaj gönder; hata olursa max_retries kez yeniden dene."""
+        if sender_client:
+            from client_profiles import apply_client_profile
+            msg = apply_client_profile(msg, sender_client)
+            
+        last_err = None
+        for attempt in range(max_retries + 1):
+            try:
+                # SMTP bağlantısı ve gönderim
+                with self._connect() as smtp:
+                    import email.policy
+                    smtp.sendmail(
+                        self.from_address, [to_address],
+                        msg.as_bytes(policy=email.policy.SMTP)
+                    )
+                return time.time()
+
+            except (smtplib.SMTPServerDisconnected, ConnectionError) as e:
+                last_err = e
+                logger.warning(f"[RETRY] Bağlantı hatası ({attempt+1}/{max_retries+1}), {2**attempt}s bekliyor: {e}")
+                if attempt < max_retries:
+                    time.sleep(2 ** attempt)
+
+            except smtplib.SMTPResponseException as e:
+                # 5xx ve 4xx SMTP yanıtları (Spam, Block, Auth, Relay)
+                code = e.smtp_code
+                resp = e.smtp_error.decode("utf-8", "replace") if isinstance(e.smtp_error, bytes) else str(e.smtp_error)
+                err_lower = resp.lower()
+                
+                # Trace & Log Flags
+                tag = ""
+                if any(x in err_lower for x in ["spam", "suspicious", "policy", "blacklisted", "denied"]):
+                    tag = "🚨 [SPOOF_BLOCK: SPAM/POLICY]"
+                elif "relay" in err_lower:
+                    tag = "🛡️ [SPOOF_BLOCK: RELAY_DENIED]"
+                elif "auth" in err_lower or code == 535:
+                    tag = "🔑 [AUTH_ERROR]"
+                
+                if tag:
+                    logger.error(f"{tag} SMTP {code}: Sunucu mesajı reddetti! (İstemci: {sender_client or 'Varsayılan'})")
+                    logger.error(f"  Detay: {resp}")
+                
+                # Kalıcı hatalarda (5xx) tekrar deneme yapma
+                if 500 <= code <= 599:
+                    raise smtplib.SMTPException(f"{tag} {resp}") from e
+                
+                last_err = e
+                if attempt < max_retries:
+                    time.sleep(2 ** attempt)
+
+            except Exception as e:
+                logger.error(f"Beklenmeyen gönderim hatası: {e}")
+                raise
+        
+        raise last_err if last_err else Exception("Bilinmeyen SMTP hatası")
 
     @staticmethod
     def _guess_mime(filename: str) -> str:
