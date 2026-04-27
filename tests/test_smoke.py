@@ -423,7 +423,7 @@ class TestCsvParser:
     def test_parse_csv_combination_count(self, project_root):
         from csv_parser import parse_csv
         combos = parse_csv(str(project_root / "mail_test_checklist.csv"))
-        assert len(combos) == 10, f"10 kombinasyon bekleniyor, {len(combos)} bulundu"
+        assert len(combos) == 18, f"18 kombinasyon bekleniyor, {len(combos)} bulundu"
 
     def test_parse_csv_all_five_scenario_types(self, project_root):
         from csv_parser import parse_csv
@@ -439,7 +439,7 @@ class TestCsvParser:
         from csv_parser import parse_csv
         combos = parse_csv(str(project_root / "mail_test_checklist.csv"))
         total = sum(len(s.steps) for c in combos for s in c.scenarios.values())
-        assert total == 250, f"250 adım bekleniyor, {total} bulundu"
+        assert total == 450, f"450 adım bekleniyor, {total} bulundu"
 
     def test_parse_csv_each_scenario_has_5_steps(self, project_root):
         from csv_parser import parse_csv
@@ -475,7 +475,7 @@ class TestCsvParser:
         from csv_parser import parse_csv
         combos = parse_csv(str(project_root / "mail_test_checklist.csv"))
         labels = [c.label for c in combos]
-        assert len(set(labels)) == 10, "Tüm etiketler benzersiz olmalı"
+        assert len(set(labels)) == 18, "Tüm etiketler benzersiz olmalı"
 
 
 # ═══════════════════════════════════════════════════════════════════
