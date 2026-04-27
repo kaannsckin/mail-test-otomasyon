@@ -379,7 +379,7 @@ def run_scenario(
             time.sleep(5)
             send_meta = sender.send_reply(
                 to_address,
-                original_meta.get("msg_id", "").replace("Message-ID: ", ""),
+                orig_subject,
                 original_meta.get("msg_id", ""),
                 "",
                 body,
