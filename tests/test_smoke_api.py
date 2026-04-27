@@ -240,7 +240,7 @@ class TestCombinationsEndpoint:
         resp = flask_client.get("/api/combinations")
         data = resp.get_json()
         assert data["ok"] is True
-        assert len(data["combinations"]) == 10
+        assert len(data["combinations"]) == 18
 
     def test_combinations_structure(self, flask_client, tmp_path, monkeypatch):
         import app as app_module

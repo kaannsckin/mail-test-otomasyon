@@ -323,4 +323,259 @@ Sunucu","Gönderen
 247,Cevaplama & Bozulma Testi (Reply Chain),Outlook,Outlook,EMS,iOS,Thread yapısı (In-Reply-To / References) korundu mu?,⬜ Bekliyor,
 248,Cevaplama & Bozulma Testi (Reply Chain),Outlook,Outlook,EMS,iOS,Alıntı (quote) bölümü bozulmadı mı?,⬜ Bekliyor,
 249,Cevaplama & Bozulma Testi (Reply Chain),Outlook,Outlook,EMS,iOS,Encoding farklılıklarında karakter bozulması var mı?,⬜ Bekliyor,
-250,Cevaplama & Bozulma Testi (Reply Chain),Outlook,Outlook,EMS,iOS,Birden fazla client'tan cevap sonrası içerik stabil mi?,⬜ Bekliyor,
+250,Cevaplama & Bozulma Testi (Reply Chain),Outlook,Outlook,EMS,iOS,Birden fazla client'tan cevap sonrası içerik stabil mi?,⬜ Bekliyor,""
+🔀  Kombinasyon:  Alan → Gmail / iOS     Gönderen → Gmail / Android
+  Senaryo 1: Sadece İçerik (Plain Text)
+251,Sadece İçerik (Plain Text),Gmail,iOS,Gmail,Android,Mesaj oluştur ve gönder,⬜ Bekliyor,
+252,Sadece İçerik (Plain Text),Gmail,iOS,Gmail,Android,Alıcı tarafında mesaj alındı mı kontrol et,⬜ Bekliyor,
+253,Sadece İçerik (Plain Text),Gmail,iOS,Gmail,Android,Mesaj içeriği bozulmadan iletildi mi?,⬜ Bekliyor,
+254,Sadece İçerik (Plain Text),Gmail,iOS,Gmail,Android,Karakter seti / encoding doğru mu?,⬜ Bekliyor,
+255,Sadece İçerik (Plain Text),Gmail,iOS,Gmail,Android,"Header bilgileri tam mı? (From, To, Subject)",⬜ Bekliyor,
+  Senaryo 2: Eklentili Mesaj (Attachment)
+256,Eklentili Mesaj (Attachment),Gmail,iOS,Gmail,Android,Dosya eklentili mesaj gönder,⬜ Bekliyor,
+257,Eklentili Mesaj (Attachment),Gmail,iOS,Gmail,Android,Eklenti alıcıya iletildi mi?,⬜ Bekliyor,
+258,Eklentili Mesaj (Attachment),Gmail,iOS,Gmail,Android,Eklenti boyutu ve adı korundu mu?,⬜ Bekliyor,
+259,Eklentili Mesaj (Attachment),Gmail,iOS,Gmail,Android,MIME type doğru iletildi mi?,⬜ Bekliyor,
+260,Eklentili Mesaj (Attachment),Gmail,iOS,Gmail,Android,Eklenti açılabilir/indirilebilir mi?,⬜ Bekliyor,
+  Senaryo 3: Inline Resim (Embedded Image)
+261,Inline Resim (Embedded Image),Gmail,iOS,Gmail,Android,Inline resim içeren HTML mesaj gönder,⬜ Bekliyor,
+262,Inline Resim (Embedded Image),Gmail,iOS,Gmail,Android,Resim alıcıda görüntülendi mi? (inline),⬜ Bekliyor,
+263,Inline Resim (Embedded Image),Gmail,iOS,Gmail,Android,CID referansları doğru çözümlendi mi?,⬜ Bekliyor,
+264,Inline Resim (Embedded Image),Gmail,iOS,Gmail,Android,Resim bozulma / kayıp var mı?,⬜ Bekliyor,
+265,Inline Resim (Embedded Image),Gmail,iOS,Gmail,Android,HTML yapısı korundu mu?,⬜ Bekliyor,
+  Senaryo 4: İmzalı Mesaj (S/MIME / PGP)
+266,İmzalı Mesaj (S/MIME / PGP),Gmail,iOS,Gmail,Android,Dijital imzalı mesaj gönder,⬜ Bekliyor,
+267,İmzalı Mesaj (S/MIME / PGP),Gmail,iOS,Gmail,Android,İmza alıcıda doğrulandı mı?,⬜ Bekliyor,
+268,İmzalı Mesaj (S/MIME / PGP),Gmail,iOS,Gmail,Android,Sertifika zinciri tam mı?,⬜ Bekliyor,
+269,İmzalı Mesaj (S/MIME / PGP),Gmail,iOS,Gmail,Android,İmza bütünlüğü bozulmadı mı?,⬜ Bekliyor,
+270,İmzalı Mesaj (S/MIME / PGP),Gmail,iOS,Gmail,Android,İmza kaldırılmadan iletildi mi?,⬜ Bekliyor,
+  Senaryo 5: Cevaplama & Bozulma Testi (Reply Chain)
+271,Cevaplama & Bozulma Testi (Reply Chain),Gmail,iOS,Gmail,Android,Orijinal mesajı farklı client'tan yanıtla,⬜ Bekliyor,
+272,Cevaplama & Bozulma Testi (Reply Chain),Gmail,iOS,Gmail,Android,Thread yapısı (In-Reply-To / References) korundu mu?,⬜ Bekliyor,
+273,Cevaplama & Bozulma Testi (Reply Chain),Gmail,iOS,Gmail,Android,Alıntı (quote) bölümü bozulmadı mı?,⬜ Bekliyor,
+274,Cevaplama & Bozulma Testi (Reply Chain),Gmail,iOS,Gmail,Android,Encoding farklılıklarında karakter bozulması var mı?,⬜ Bekliyor,
+275,Cevaplama & Bozulma Testi (Reply Chain),Gmail,iOS,Gmail,Android,Birden fazla client'tan cevap sonrası içerik stabil mi?,⬜ Bekliyor,
+""
+🔀  Kombinasyon:  Alan → Gmail / Android     Gönderen → Gmail / Outlook
+  Senaryo 1: Sadece İçerik (Plain Text)
+276,Sadece İçerik (Plain Text),Gmail,Android,Gmail,Outlook,Mesaj oluştur ve gönder,⬜ Bekliyor,
+277,Sadece İçerik (Plain Text),Gmail,Android,Gmail,Outlook,Alıcı tarafında mesaj alındı mı kontrol et,⬜ Bekliyor,
+278,Sadece İçerik (Plain Text),Gmail,Android,Gmail,Outlook,Mesaj içeriği bozulmadan iletildi mi?,⬜ Bekliyor,
+279,Sadece İçerik (Plain Text),Gmail,Android,Gmail,Outlook,Karakter seti / encoding doğru mu?,⬜ Bekliyor,
+280,Sadece İçerik (Plain Text),Gmail,Android,Gmail,Outlook,"Header bilgileri tam mı? (From, To, Subject)",⬜ Bekliyor,
+  Senaryo 2: Eklentili Mesaj (Attachment)
+281,Eklentili Mesaj (Attachment),Gmail,Android,Gmail,Outlook,Dosya eklentili mesaj gönder,⬜ Bekliyor,
+282,Eklentili Mesaj (Attachment),Gmail,Android,Gmail,Outlook,Eklenti alıcıya iletildi mi?,⬜ Bekliyor,
+283,Eklentili Mesaj (Attachment),Gmail,Android,Gmail,Outlook,Eklenti boyutu ve adı korundu mu?,⬜ Bekliyor,
+284,Eklentili Mesaj (Attachment),Gmail,Android,Gmail,Outlook,MIME type doğru iletildi mi?,⬜ Bekliyor,
+285,Eklentili Mesaj (Attachment),Gmail,Android,Gmail,Outlook,Eklenti açılabilir/indirilebilir mi?,⬜ Bekliyor,
+  Senaryo 3: Inline Resim (Embedded Image)
+286,Inline Resim (Embedded Image),Gmail,Android,Gmail,Outlook,Inline resim içeren HTML mesaj gönder,⬜ Bekliyor,
+287,Inline Resim (Embedded Image),Gmail,Android,Gmail,Outlook,Resim alıcıda görüntülendi mi? (inline),⬜ Bekliyor,
+288,Inline Resim (Embedded Image),Gmail,Android,Gmail,Outlook,CID referansları doğru çözümlendi mi?,⬜ Bekliyor,
+289,Inline Resim (Embedded Image),Gmail,Android,Gmail,Outlook,Resim bozulma / kayıp var mı?,⬜ Bekliyor,
+290,Inline Resim (Embedded Image),Gmail,Android,Gmail,Outlook,HTML yapısı korundu mu?,⬜ Bekliyor,
+  Senaryo 4: İmzalı Mesaj (S/MIME / PGP)
+291,İmzalı Mesaj (S/MIME / PGP),Gmail,Android,Gmail,Outlook,Dijital imzalı mesaj gönder,⬜ Bekliyor,
+292,İmzalı Mesaj (S/MIME / PGP),Gmail,Android,Gmail,Outlook,İmza alıcıda doğrulandı mı?,⬜ Bekliyor,
+293,İmzalı Mesaj (S/MIME / PGP),Gmail,Android,Gmail,Outlook,Sertifika zinciri tam mı?,⬜ Bekliyor,
+294,İmzalı Mesaj (S/MIME / PGP),Gmail,Android,Gmail,Outlook,İmza bütünlüğü bozulmadı mı?,⬜ Bekliyor,
+295,İmzalı Mesaj (S/MIME / PGP),Gmail,Android,Gmail,Outlook,İmza kaldırılmadan iletildi mi?,⬜ Bekliyor,
+  Senaryo 5: Cevaplama & Bozulma Testi (Reply Chain)
+296,Cevaplama & Bozulma Testi (Reply Chain),Gmail,Android,Gmail,Outlook,Orijinal mesajı farklı client'tan yanıtla,⬜ Bekliyor,
+297,Cevaplama & Bozulma Testi (Reply Chain),Gmail,Android,Gmail,Outlook,Thread yapısı (In-Reply-To / References) korundu mu?,⬜ Bekliyor,
+298,Cevaplama & Bozulma Testi (Reply Chain),Gmail,Android,Gmail,Outlook,Alıntı (quote) bölümü bozulmadı mı?,⬜ Bekliyor,
+299,Cevaplama & Bozulma Testi (Reply Chain),Gmail,Android,Gmail,Outlook,Encoding farklılıklarında karakter bozulması var mı?,⬜ Bekliyor,
+300,Cevaplama & Bozulma Testi (Reply Chain),Gmail,Android,Gmail,Outlook,Birden fazla client'tan cevap sonrası içerik stabil mi?,⬜ Bekliyor,
+""
+🔀  Kombinasyon:  Alan → Outlook / iOS     Gönderen → EMS / Android
+  Senaryo 1: Sadece İçerik (Plain Text)
+301,Sadece İçerik (Plain Text),Outlook,iOS,EMS,Android,Mesaj oluştur ve gönder,⬜ Bekliyor,
+302,Sadece İçerik (Plain Text),Outlook,iOS,EMS,Android,Alıcı tarafında mesaj alındı mı kontrol et,⬜ Bekliyor,
+303,Sadece İçerik (Plain Text),Outlook,iOS,EMS,Android,Mesaj içeriği bozulmadan iletildi mi?,⬜ Bekliyor,
+304,Sadece İçerik (Plain Text),Outlook,iOS,EMS,Android,Karakter seti / encoding doğru mu?,⬜ Bekliyor,
+305,Sadece İçerik (Plain Text),Outlook,iOS,EMS,Android,"Header bilgileri tam mı? (From, To, Subject)",⬜ Bekliyor,
+  Senaryo 2: Eklentili Mesaj (Attachment)
+306,Eklentili Mesaj (Attachment),Outlook,iOS,EMS,Android,Dosya eklentili mesaj gönder,⬜ Bekliyor,
+307,Eklentili Mesaj (Attachment),Outlook,iOS,EMS,Android,Eklenti alıcıya iletildi mi?,⬜ Bekliyor,
+308,Eklentili Mesaj (Attachment),Outlook,iOS,EMS,Android,Eklenti boyutu ve adı korundu mu?,⬜ Bekliyor,
+309,Eklentili Mesaj (Attachment),Outlook,iOS,EMS,Android,MIME type doğru iletildi mi?,⬜ Bekliyor,
+310,Eklentili Mesaj (Attachment),Outlook,iOS,EMS,Android,Eklenti açılabilir/indirilebilir mi?,⬜ Bekliyor,
+  Senaryo 3: Inline Resim (Embedded Image)
+311,Inline Resim (Embedded Image),Outlook,iOS,EMS,Android,Inline resim içeren HTML mesaj gönder,⬜ Bekliyor,
+312,Inline Resim (Embedded Image),Outlook,iOS,EMS,Android,Resim alıcıda görüntülendi mi? (inline),⬜ Bekliyor,
+313,Inline Resim (Embedded Image),Outlook,iOS,EMS,Android,CID referansları doğru çözümlendi mi?,⬜ Bekliyor,
+314,Inline Resim (Embedded Image),Outlook,iOS,EMS,Android,Resim bozulma / kayıp var mı?,⬜ Bekliyor,
+315,Inline Resim (Embedded Image),Outlook,iOS,EMS,Android,HTML yapısı korundu mu?,⬜ Bekliyor,
+  Senaryo 4: İmzalı Mesaj (S/MIME / PGP)
+316,İmzalı Mesaj (S/MIME / PGP),Outlook,iOS,EMS,Android,Dijital imzalı mesaj gönder,⬜ Bekliyor,
+317,İmzalı Mesaj (S/MIME / PGP),Outlook,iOS,EMS,Android,İmza alıcıda doğrulandı mı?,⬜ Bekliyor,
+318,İmzalı Mesaj (S/MIME / PGP),Outlook,iOS,EMS,Android,Sertifika zinciri tam mı?,⬜ Bekliyor,
+319,İmzalı Mesaj (S/MIME / PGP),Outlook,iOS,EMS,Android,İmza bütünlüğü bozulmadı mı?,⬜ Bekliyor,
+320,İmzalı Mesaj (S/MIME / PGP),Outlook,iOS,EMS,Android,İmza kaldırılmadan iletildi mi?,⬜ Bekliyor,
+  Senaryo 5: Cevaplama & Bozulma Testi (Reply Chain)
+321,Cevaplama & Bozulma Testi (Reply Chain),Outlook,iOS,EMS,Android,Orijinal mesajı farklı client'tan yanıtla,⬜ Bekliyor,
+322,Cevaplama & Bozulma Testi (Reply Chain),Outlook,iOS,EMS,Android,Thread yapısı (In-Reply-To / References) korundu mu?,⬜ Bekliyor,
+323,Cevaplama & Bozulma Testi (Reply Chain),Outlook,iOS,EMS,Android,Alıntı (quote) bölümü bozulmadı mı?,⬜ Bekliyor,
+324,Cevaplama & Bozulma Testi (Reply Chain),Outlook,iOS,EMS,Android,Encoding farklılıklarında karakter bozulması var mı?,⬜ Bekliyor,
+325,Cevaplama & Bozulma Testi (Reply Chain),Outlook,iOS,EMS,Android,Birden fazla client'tan cevap sonrası içerik stabil mi?,⬜ Bekliyor,
+""
+🔀  Kombinasyon:  Alan → Outlook / iOS     Gönderen → Gmail / Android
+  Senaryo 1: Sadece İçerik (Plain Text)
+326,Sadece İçerik (Plain Text),Outlook,iOS,Gmail,Android,Mesaj oluştur ve gönder,⬜ Bekliyor,
+327,Sadece İçerik (Plain Text),Outlook,iOS,Gmail,Android,Alıcı tarafında mesaj alındı mı kontrol et,⬜ Bekliyor,
+328,Sadece İçerik (Plain Text),Outlook,iOS,Gmail,Android,Mesaj içeriği bozulmadan iletildi mi?,⬜ Bekliyor,
+329,Sadece İçerik (Plain Text),Outlook,iOS,Gmail,Android,Karakter seti / encoding doğru mu?,⬜ Bekliyor,
+330,Sadece İçerik (Plain Text),Outlook,iOS,Gmail,Android,"Header bilgileri tam mı? (From, To, Subject)",⬜ Bekliyor,
+  Senaryo 2: Eklentili Mesaj (Attachment)
+331,Eklentili Mesaj (Attachment),Outlook,iOS,Gmail,Android,Dosya eklentili mesaj gönder,⬜ Bekliyor,
+332,Eklentili Mesaj (Attachment),Outlook,iOS,Gmail,Android,Eklenti alıcıya iletildi mi?,⬜ Bekliyor,
+333,Eklentili Mesaj (Attachment),Outlook,iOS,Gmail,Android,Eklenti boyutu ve adı korundu mu?,⬜ Bekliyor,
+334,Eklentili Mesaj (Attachment),Outlook,iOS,Gmail,Android,MIME type doğru iletildi mi?,⬜ Bekliyor,
+335,Eklentili Mesaj (Attachment),Outlook,iOS,Gmail,Android,Eklenti açılabilir/indirilebilir mi?,⬜ Bekliyor,
+  Senaryo 3: Inline Resim (Embedded Image)
+336,Inline Resim (Embedded Image),Outlook,iOS,Gmail,Android,Inline resim içeren HTML mesaj gönder,⬜ Bekliyor,
+337,Inline Resim (Embedded Image),Outlook,iOS,Gmail,Android,Resim alıcıda görüntülendi mi? (inline),⬜ Bekliyor,
+338,Inline Resim (Embedded Image),Outlook,iOS,Gmail,Android,CID referansları doğru çözümlendi mi?,⬜ Bekliyor,
+339,Inline Resim (Embedded Image),Outlook,iOS,Gmail,Android,Resim bozulma / kayıp var mı?,⬜ Bekliyor,
+340,Inline Resim (Embedded Image),Outlook,iOS,Gmail,Android,HTML yapısı korundu mu?,⬜ Bekliyor,
+  Senaryo 4: İmzalı Mesaj (S/MIME / PGP)
+341,İmzalı Mesaj (S/MIME / PGP),Outlook,iOS,Gmail,Android,Dijital imzalı mesaj gönder,⬜ Bekliyor,
+342,İmzalı Mesaj (S/MIME / PGP),Outlook,iOS,Gmail,Android,İmza alıcıda doğrulandı mı?,⬜ Bekliyor,
+343,İmzalı Mesaj (S/MIME / PGP),Outlook,iOS,Gmail,Android,Sertifika zinciri tam mı?,⬜ Bekliyor,
+344,İmzalı Mesaj (S/MIME / PGP),Outlook,iOS,Gmail,Android,İmza bütünlüğü bozulmadı mı?,⬜ Bekliyor,
+345,İmzalı Mesaj (S/MIME / PGP),Outlook,iOS,Gmail,Android,İmza kaldırılmadan iletildi mi?,⬜ Bekliyor,
+  Senaryo 5: Cevaplama & Bozulma Testi (Reply Chain)
+346,Cevaplama & Bozulma Testi (Reply Chain),Outlook,iOS,Gmail,Android,Orijinal mesajı farklı client'tan yanıtla,⬜ Bekliyor,
+347,Cevaplama & Bozulma Testi (Reply Chain),Outlook,iOS,Gmail,Android,Thread yapısı (In-Reply-To / References) korundu mu?,⬜ Bekliyor,
+348,Cevaplama & Bozulma Testi (Reply Chain),Outlook,iOS,Gmail,Android,Alıntı (quote) bölümü bozulmadı mı?,⬜ Bekliyor,
+349,Cevaplama & Bozulma Testi (Reply Chain),Outlook,iOS,Gmail,Android,Encoding farklılıklarında karakter bozulması var mı?,⬜ Bekliyor,
+350,Cevaplama & Bozulma Testi (Reply Chain),Outlook,iOS,Gmail,Android,Birden fazla client'tan cevap sonrası içerik stabil mi?,⬜ Bekliyor,
+""
+🔀  Kombinasyon:  Alan → Outlook / Android     Gönderen → EMS / iOS
+  Senaryo 1: Sadece İçerik (Plain Text)
+351,Sadece İçerik (Plain Text),Outlook,Android,EMS,iOS,Mesaj oluştur ve gönder,⬜ Bekliyor,
+352,Sadece İçerik (Plain Text),Outlook,Android,EMS,iOS,Alıcı tarafında mesaj alındı mı kontrol et,⬜ Bekliyor,
+353,Sadece İçerik (Plain Text),Outlook,Android,EMS,iOS,Mesaj içeriği bozulmadan iletildi mi?,⬜ Bekliyor,
+354,Sadece İçerik (Plain Text),Outlook,Android,EMS,iOS,Karakter seti / encoding doğru mu?,⬜ Bekliyor,
+355,Sadece İçerik (Plain Text),Outlook,Android,EMS,iOS,"Header bilgileri tam mı? (From, To, Subject)",⬜ Bekliyor,
+  Senaryo 2: Eklentili Mesaj (Attachment)
+356,Eklentili Mesaj (Attachment),Outlook,Android,EMS,iOS,Dosya eklentili mesaj gönder,⬜ Bekliyor,
+357,Eklentili Mesaj (Attachment),Outlook,Android,EMS,iOS,Eklenti alıcıya iletildi mi?,⬜ Bekliyor,
+358,Eklentili Mesaj (Attachment),Outlook,Android,EMS,iOS,Eklenti boyutu ve adı korundu mu?,⬜ Bekliyor,
+359,Eklentili Mesaj (Attachment),Outlook,Android,EMS,iOS,MIME type doğru iletildi mi?,⬜ Bekliyor,
+360,Eklentili Mesaj (Attachment),Outlook,Android,EMS,iOS,Eklenti açılabilir/indirilebilir mi?,⬜ Bekliyor,
+  Senaryo 3: Inline Resim (Embedded Image)
+361,Inline Resim (Embedded Image),Outlook,Android,EMS,iOS,Inline resim içeren HTML mesaj gönder,⬜ Bekliyor,
+362,Inline Resim (Embedded Image),Outlook,Android,EMS,iOS,Resim alıcıda görüntülendi mi? (inline),⬜ Bekliyor,
+363,Inline Resim (Embedded Image),Outlook,Android,EMS,iOS,CID referansları doğru çözümlendi mi?,⬜ Bekliyor,
+364,Inline Resim (Embedded Image),Outlook,Android,EMS,iOS,Resim bozulma / kayıp var mı?,⬜ Bekliyor,
+365,Inline Resim (Embedded Image),Outlook,Android,EMS,iOS,HTML yapısı korundu mu?,⬜ Bekliyor,
+  Senaryo 4: İmzalı Mesaj (S/MIME / PGP)
+366,İmzalı Mesaj (S/MIME / PGP),Outlook,Android,EMS,iOS,Dijital imzalı mesaj gönder,⬜ Bekliyor,
+367,İmzalı Mesaj (S/MIME / PGP),Outlook,Android,EMS,iOS,İmza alıcıda doğrulandı mı?,⬜ Bekliyor,
+368,İmzalı Mesaj (S/MIME / PGP),Outlook,Android,EMS,iOS,Sertifika zinciri tam mı?,⬜ Bekliyor,
+369,İmzalı Mesaj (S/MIME / PGP),Outlook,Android,EMS,iOS,İmza bütünlüğü bozulmadı mı?,⬜ Bekliyor,
+370,İmzalı Mesaj (S/MIME / PGP),Outlook,Android,EMS,iOS,İmza kaldırılmadan iletildi mi?,⬜ Bekliyor,
+  Senaryo 5: Cevaplama & Bozulma Testi (Reply Chain)
+371,Cevaplama & Bozulma Testi (Reply Chain),Outlook,Android,EMS,iOS,Orijinal mesajı farklı client'tan yanıtla,⬜ Bekliyor,
+372,Cevaplama & Bozulma Testi (Reply Chain),Outlook,Android,EMS,iOS,Thread yapısı (In-Reply-To / References) korundu mu?,⬜ Bekliyor,
+373,Cevaplama & Bozulma Testi (Reply Chain),Outlook,Android,EMS,iOS,Alıntı (quote) bölümü bozulmadı mı?,⬜ Bekliyor,
+374,Cevaplama & Bozulma Testi (Reply Chain),Outlook,Android,EMS,iOS,Encoding farklılıklarında karakter bozulması var mı?,⬜ Bekliyor,
+375,Cevaplama & Bozulma Testi (Reply Chain),Outlook,Android,EMS,iOS,Birden fazla client'tan cevap sonrası içerik stabil mi?,⬜ Bekliyor,
+""
+🔀  Kombinasyon:  Alan → Outlook / Android     Gönderen → Gmail / iOS
+  Senaryo 1: Sadece İçerik (Plain Text)
+376,Sadece İçerik (Plain Text),Outlook,Android,Gmail,iOS,Mesaj oluştur ve gönder,⬜ Bekliyor,
+377,Sadece İçerik (Plain Text),Outlook,Android,Gmail,iOS,Alıcı tarafında mesaj alındı mı kontrol et,⬜ Bekliyor,
+378,Sadece İçerik (Plain Text),Outlook,Android,Gmail,iOS,Mesaj içeriği bozulmadan iletildi mi?,⬜ Bekliyor,
+379,Sadece İçerik (Plain Text),Outlook,Android,Gmail,iOS,Karakter seti / encoding doğru mu?,⬜ Bekliyor,
+380,Sadece İçerik (Plain Text),Outlook,Android,Gmail,iOS,"Header bilgileri tam mı? (From, To, Subject)",⬜ Bekliyor,
+  Senaryo 2: Eklentili Mesaj (Attachment)
+381,Eklentili Mesaj (Attachment),Outlook,Android,Gmail,iOS,Dosya eklentili mesaj gönder,⬜ Bekliyor,
+382,Eklentili Mesaj (Attachment),Outlook,Android,Gmail,iOS,Eklenti alıcıya iletildi mi?,⬜ Bekliyor,
+383,Eklentili Mesaj (Attachment),Outlook,Android,Gmail,iOS,Eklenti boyutu ve adı korundu mu?,⬜ Bekliyor,
+384,Eklentili Mesaj (Attachment),Outlook,Android,Gmail,iOS,MIME type doğru iletildi mi?,⬜ Bekliyor,
+385,Eklentili Mesaj (Attachment),Outlook,Android,Gmail,iOS,Eklenti açılabilir/indirilebilir mi?,⬜ Bekliyor,
+  Senaryo 3: Inline Resim (Embedded Image)
+386,Inline Resim (Embedded Image),Outlook,Android,Gmail,iOS,Inline resim içeren HTML mesaj gönder,⬜ Bekliyor,
+387,Inline Resim (Embedded Image),Outlook,Android,Gmail,iOS,Resim alıcıda görüntülendi mi? (inline),⬜ Bekliyor,
+388,Inline Resim (Embedded Image),Outlook,Android,Gmail,iOS,CID referansları doğru çözümlendi mi?,⬜ Bekliyor,
+389,Inline Resim (Embedded Image),Outlook,Android,Gmail,iOS,Resim bozulma / kayıp var mı?,⬜ Bekliyor,
+390,Inline Resim (Embedded Image),Outlook,Android,Gmail,iOS,HTML yapısı korundu mu?,⬜ Bekliyor,
+  Senaryo 4: İmzalı Mesaj (S/MIME / PGP)
+391,İmzalı Mesaj (S/MIME / PGP),Outlook,Android,Gmail,iOS,Dijital imzalı mesaj gönder,⬜ Bekliyor,
+392,İmzalı Mesaj (S/MIME / PGP),Outlook,Android,Gmail,iOS,İmza alıcıda doğrulandı mı?,⬜ Bekliyor,
+393,İmzalı Mesaj (S/MIME / PGP),Outlook,Android,Gmail,iOS,Sertifika zinciri tam mı?,⬜ Bekliyor,
+394,İmzalı Mesaj (S/MIME / PGP),Outlook,Android,Gmail,iOS,İmza bütünlüğü bozulmadı mı?,⬜ Bekliyor,
+395,İmzalı Mesaj (S/MIME / PGP),Outlook,Android,Gmail,iOS,İmza kaldırılmadan iletildi mi?,⬜ Bekliyor,
+  Senaryo 5: Cevaplama & Bozulma Testi (Reply Chain)
+396,Cevaplama & Bozulma Testi (Reply Chain),Outlook,Android,Gmail,iOS,Orijinal mesajı farklı client'tan yanıtla,⬜ Bekliyor,
+397,Cevaplama & Bozulma Testi (Reply Chain),Outlook,Android,Gmail,iOS,Thread yapısı (In-Reply-To / References) korundu mu?,⬜ Bekliyor,
+398,Cevaplama & Bozulma Testi (Reply Chain),Outlook,Android,Gmail,iOS,Alıntı (quote) bölümü bozulmadı mı?,⬜ Bekliyor,
+399,Cevaplama & Bozulma Testi (Reply Chain),Outlook,Android,Gmail,iOS,Encoding farklılıklarında karakter bozulması var mı?,⬜ Bekliyor,
+400,Cevaplama & Bozulma Testi (Reply Chain),Outlook,Android,Gmail,iOS,Birden fazla client'tan cevap sonrası içerik stabil mi?,⬜ Bekliyor,
+""
+🔀  Kombinasyon:  Alan → EMS / Android     Gönderen → Outlook / iOS
+  Senaryo 1: Sadece İçerik (Plain Text)
+401,Sadece İçerik (Plain Text),EMS,Android,Outlook,iOS,Mesaj oluştur ve gönder,⬜ Bekliyor,
+402,Sadece İçerik (Plain Text),EMS,Android,Outlook,iOS,Alıcı tarafında mesaj alındı mı kontrol et,⬜ Bekliyor,
+403,Sadece İçerik (Plain Text),EMS,Android,Outlook,iOS,Mesaj içeriği bozulmadan iletildi mi?,⬜ Bekliyor,
+404,Sadece İçerik (Plain Text),EMS,Android,Outlook,iOS,Karakter seti / encoding doğru mu?,⬜ Bekliyor,
+405,Sadece İçerik (Plain Text),EMS,Android,Outlook,iOS,"Header bilgileri tam mı? (From, To, Subject)",⬜ Bekliyor,
+  Senaryo 2: Eklentili Mesaj (Attachment)
+406,Eklentili Mesaj (Attachment),EMS,Android,Outlook,iOS,Dosya eklentili mesaj gönder,⬜ Bekliyor,
+407,Eklentili Mesaj (Attachment),EMS,Android,Outlook,iOS,Eklenti alıcıya iletildi mi?,⬜ Bekliyor,
+408,Eklentili Mesaj (Attachment),EMS,Android,Outlook,iOS,Eklenti boyutu ve adı korundu mu?,⬜ Bekliyor,
+409,Eklentili Mesaj (Attachment),EMS,Android,Outlook,iOS,MIME type doğru iletildi mi?,⬜ Bekliyor,
+410,Eklentili Mesaj (Attachment),EMS,Android,Outlook,iOS,Eklenti açılabilir/indirilebilir mi?,⬜ Bekliyor,
+  Senaryo 3: Inline Resim (Embedded Image)
+411,Inline Resim (Embedded Image),EMS,Android,Outlook,iOS,Inline resim içeren HTML mesaj gönder,⬜ Bekliyor,
+412,Inline Resim (Embedded Image),EMS,Android,Outlook,iOS,Resim alıcıda görüntülendi mi? (inline),⬜ Bekliyor,
+413,Inline Resim (Embedded Image),EMS,Android,Outlook,iOS,CID referansları doğru çözümlendi mi?,⬜ Bekliyor,
+414,Inline Resim (Embedded Image),EMS,Android,Outlook,iOS,Resim bozulma / kayıp var mı?,⬜ Bekliyor,
+415,Inline Resim (Embedded Image),EMS,Android,Outlook,iOS,HTML yapısı korundu mu?,⬜ Bekliyor,
+  Senaryo 4: İmzalı Mesaj (S/MIME / PGP)
+416,İmzalı Mesaj (S/MIME / PGP),EMS,Android,Outlook,iOS,Dijital imzalı mesaj gönder,⬜ Bekliyor,
+417,İmzalı Mesaj (S/MIME / PGP),EMS,Android,Outlook,iOS,İmza alıcıda doğrulandı mı?,⬜ Bekliyor,
+418,İmzalı Mesaj (S/MIME / PGP),EMS,Android,Outlook,iOS,Sertifika zinciri tam mı?,⬜ Bekliyor,
+419,İmzalı Mesaj (S/MIME / PGP),EMS,Android,Outlook,iOS,İmza bütünlüğü bozulmadı mı?,⬜ Bekliyor,
+420,İmzalı Mesaj (S/MIME / PGP),EMS,Android,Outlook,iOS,İmza kaldırılmadan iletildi mi?,⬜ Bekliyor,
+  Senaryo 5: Cevaplama & Bozulma Testi (Reply Chain)
+421,Cevaplama & Bozulma Testi (Reply Chain),EMS,Android,Outlook,iOS,Orijinal mesajı farklı client'tan yanıtla,⬜ Bekliyor,
+422,Cevaplama & Bozulma Testi (Reply Chain),EMS,Android,Outlook,iOS,Thread yapısı (In-Reply-To / References) korundu mu?,⬜ Bekliyor,
+423,Cevaplama & Bozulma Testi (Reply Chain),EMS,Android,Outlook,iOS,Alıntı (quote) bölümü bozulmadı mı?,⬜ Bekliyor,
+424,Cevaplama & Bozulma Testi (Reply Chain),EMS,Android,Outlook,iOS,Encoding farklılıklarında karakter bozulması var mı?,⬜ Bekliyor,
+425,Cevaplama & Bozulma Testi (Reply Chain),EMS,Android,Outlook,iOS,Birden fazla client'tan cevap sonrası içerik stabil mi?,⬜ Bekliyor,
+""
+🔀  Kombinasyon:  Alan → Gmail / iOS     Gönderen → Outlook / Android
+  Senaryo 1: Sadece İçerik (Plain Text)
+426,Sadece İçerik (Plain Text),Gmail,iOS,Outlook,Android,Mesaj oluştur ve gönder,⬜ Bekliyor,
+427,Sadece İçerik (Plain Text),Gmail,iOS,Outlook,Android,Alıcı tarafında mesaj alındı mı kontrol et,⬜ Bekliyor,
+428,Sadece İçerik (Plain Text),Gmail,iOS,Outlook,Android,Mesaj içeriği bozulmadan iletildi mi?,⬜ Bekliyor,
+429,Sadece İçerik (Plain Text),Gmail,iOS,Outlook,Android,Karakter seti / encoding doğru mu?,⬜ Bekliyor,
+430,Sadece İçerik (Plain Text),Gmail,iOS,Outlook,Android,"Header bilgileri tam mı? (From, To, Subject)",⬜ Bekliyor,
+  Senaryo 2: Eklentili Mesaj (Attachment)
+431,Eklentili Mesaj (Attachment),Gmail,iOS,Outlook,Android,Dosya eklentili mesaj gönder,⬜ Bekliyor,
+432,Eklentili Mesaj (Attachment),Gmail,iOS,Outlook,Android,Eklenti alıcıya iletildi mi?,⬜ Bekliyor,
+433,Eklentili Mesaj (Attachment),Gmail,iOS,Outlook,Android,Eklenti boyutu ve adı korundu mu?,⬜ Bekliyor,
+434,Eklentili Mesaj (Attachment),Gmail,iOS,Outlook,Android,MIME type doğru iletildi mi?,⬜ Bekliyor,
+435,Eklentili Mesaj (Attachment),Gmail,iOS,Outlook,Android,Eklenti açılabilir/indirilebilir mi?,⬜ Bekliyor,
+  Senaryo 3: Inline Resim (Embedded Image)
+436,Inline Resim (Embedded Image),Gmail,iOS,Outlook,Android,Inline resim içeren HTML mesaj gönder,⬜ Bekliyor,
+437,Inline Resim (Embedded Image),Gmail,iOS,Outlook,Android,Resim alıcıda görüntülendi mi? (inline),⬜ Bekliyor,
+438,Inline Resim (Embedded Image),Gmail,iOS,Outlook,Android,CID referansları doğru çözümlendi mi?,⬜ Bekliyor,
+439,Inline Resim (Embedded Image),Gmail,iOS,Outlook,Android,Resim bozulma / kayıp var mı?,⬜ Bekliyor,
+440,Inline Resim (Embedded Image),Gmail,iOS,Outlook,Android,HTML yapısı korundu mu?,⬜ Bekliyor,
+  Senaryo 4: İmzalı Mesaj (S/MIME / PGP)
+441,İmzalı Mesaj (S/MIME / PGP),Gmail,iOS,Outlook,Android,Dijital imzalı mesaj gönder,⬜ Bekliyor,
+442,İmzalı Mesaj (S/MIME / PGP),Gmail,iOS,Outlook,Android,İmza alıcıda doğrulandı mı?,⬜ Bekliyor,
+443,İmzalı Mesaj (S/MIME / PGP),Gmail,iOS,Outlook,Android,Sertifika zinciri tam mı?,⬜ Bekliyor,
+444,İmzalı Mesaj (S/MIME / PGP),Gmail,iOS,Outlook,Android,İmza bütünlüğü bozulmadı mı?,⬜ Bekliyor,
+445,İmzalı Mesaj (S/MIME / PGP),Gmail,iOS,Outlook,Android,İmza kaldırılmadan iletildi mi?,⬜ Bekliyor,
+  Senaryo 5: Cevaplama & Bozulma Testi (Reply Chain)
+446,Cevaplama & Bozulma Testi (Reply Chain),Gmail,iOS,Outlook,Android,Orijinal mesajı farklı client'tan yanıtla,⬜ Bekliyor,
+447,Cevaplama & Bozulma Testi (Reply Chain),Gmail,iOS,Outlook,Android,Thread yapısı (In-Reply-To / References) korundu mu?,⬜ Bekliyor,
+448,Cevaplama & Bozulma Testi (Reply Chain),Gmail,iOS,Outlook,Android,Alıntı (quote) bölümü bozulmadı mı?,⬜ Bekliyor,
+449,Cevaplama & Bozulma Testi (Reply Chain),Gmail,iOS,Outlook,Android,Encoding farklılıklarında karakter bozulması var mı?,⬜ Bekliyor,
+450,Cevaplama & Bozulma Testi (Reply Chain),Gmail,iOS,Outlook,Android,Birden fazla client'tan cevap sonrası içerik stabil mi?,⬜ Bekliyor,
