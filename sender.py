@@ -92,7 +92,7 @@ class MailSender:
                 part.set_payload(f.read())
             encoders.encode_base64(part)
             part.add_header("Content-Disposition", f'attachment; filename="{filename}"')
-            part.add_header("Content-Type", self._guess_mime(filename))
+            part.replace_header("Content-Type", self._guess_mime(filename))
             msg.attach(part)
             attached_files.append({"name": filename, "size": os.path.getsize(p)})
 
@@ -178,7 +178,6 @@ class MailSender:
         # İmzalı MIME oluştur
         msg_id = make_msgid()
         inner = MIMEText(body, "plain", "utf-8")
-        inner["Content-Type"] = "text/plain; charset=utf-8"
 
         # openssl smime ile imzala
         import subprocess
