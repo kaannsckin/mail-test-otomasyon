@@ -12,11 +12,12 @@ from flask import Flask, Response, jsonify, render_template, request, send_file
 from auth_manager import mfa_manager, generate_totp, totp_remaining_seconds
 
 app = Flask(__name__)
-CONFIG_PATH   = Path("config.yaml")
-REPORTS_DIR   = Path("reports")
-LOGS_DIR      = Path("logs")
-REPORTS_DIR.mkdir(exist_ok=True)
-LOGS_DIR.mkdir(exist_ok=True)
+_data_dir     = Path(os.environ.get("DATA_DIR", "."))
+CONFIG_PATH   = _data_dir / os.environ.get("CONFIG_FILENAME", "config.yaml")
+REPORTS_DIR   = _data_dir / "reports"
+LOGS_DIR      = _data_dir / "logs"
+REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 run_state = {
     "running": False,
