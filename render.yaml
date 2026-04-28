@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: mail-test-otomasyon
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app -w 1 --threads 4 -b 0.0.0.0:$PORT --timeout 120
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: DATA_DIR
+        value: /data
+    disk:
+      name: app-data
+      mountPath: /data
+      sizeGB: 1
