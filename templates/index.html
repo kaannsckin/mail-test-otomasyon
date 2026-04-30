@@ -372,6 +372,26 @@ input.has-value{border-color:rgba(0,255,148,.4)}
         </div>
       </div>
 
+      <div class="card">
+        <div class="card-header"><span class="card-title">📂 Config Dosyası İçe / Dışa Aktar</span></div>
+        <div class="card-body">
+          <div style="display:flex;gap:1rem;align-items:flex-end;flex-wrap:wrap">
+            <div class="form-group" style="flex:1;min-width:220px;margin:0">
+              <label>config.yaml Yükle</label>
+              <input type="file" id="configFileInput" accept=".yaml,.yml"
+                     style="padding:.4rem .6rem;width:100%"
+                     onchange="importConfigFile(this)">
+            </div>
+            <button class="btn btn-ghost" onclick="exportConfig()" style="white-space:nowrap">
+              ⬇ config.yaml İndir
+            </button>
+          </div>
+          <p style="margin:.6rem 0 0;font-size:.82rem;color:var(--text-muted)">
+            Mevcut bir <code>config.yaml</code> dosyasını yükleyerek tüm ayarları tek seferde içe aktarabilirsiniz.
+          </p>
+        </div>
+      </div>
+
       <div class="btn-row">
         <button class="btn btn-primary" onclick="saveConfig()">💾 Kaydet</button>
         <button class="btn btn-ghost" onclick="loadConfig()">↺ Yenile</button>
@@ -1173,10 +1193,7 @@ document.querySelectorAll('.nav-item').forEach(el => {
 });
 
 // ── CONFIG ─────────────────────────────────────────────────────────
-async function loadConfig() {
-  const res = await fetch('/api/config').then(r => r.json());
-  if (!res.ok) { toast('Config yüklenemedi', 'err'); return; }
-  const c = res.config;
+function fillForm(c) {
   const set = (id, v) => { const el = document.getElementById(id); if (!el) return; el.type === 'checkbox' ? el.checked = !!v : el.value = v ?? ''; };
   for (const s of ['ems','gmail','outlook']) {
     const d = c[s] || {};
@@ -1186,7 +1203,6 @@ async function loadConfig() {
     set(`${s}_password`, d.password ? '••••••••' : '');
     set(`${s}_test_address`, d.test_address); set(`${s}_label`, d.label);
     if (s === 'ems') { set('ems_smtp_use_tls', d.smtp_use_tls); set('ems_imap_use_ssl', d.imap_use_ssl); }
-    // Auth method
     if (d.auth_method) {
       authMethods[s] = d.auth_method;
       const card = document.querySelector(`#authGrid-${s} [data-method="${d.auth_method}"]`);
@@ -1203,6 +1219,12 @@ async function loadConfig() {
   set('test_retry_interval', t.retry_interval); set('test_subject_prefix', t.subject_prefix);
   set('test_attachment_path', t.test_attachment_path); set('test_image_path', t.test_image_path);
   set('test_csv_input', t.csv_input);
+}
+
+async function loadConfig() {
+  const res = await fetch('/api/config').then(r => r.json());
+  if (!res.ok) { toast('Config yüklenemedi', 'err'); return; }
+  fillForm(res.config);
 }
 
 function buildConfig() {
@@ -1246,6 +1268,26 @@ async function saveConfig() {
     body: JSON.stringify({config: buildConfig()}),
   }).then(r => r.json());
   res.ok ? toast('✅ Konfigürasyon kaydedildi','ok') : toast('Kayıt hatası: '+res.error,'err');
+}
+
+async function importConfigFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const form = new FormData();
+  form.append('file', file);
+  toast('📂 Config yükleniyor...', 'info');
+  const res = await fetch('/api/config/import', {method:'POST', body: form}).then(r => r.json());
+  if (res.ok) {
+    toast('✅ Config başarıyla yüklendi', 'ok');
+    fillForm(res.config);
+  } else {
+    toast('❌ Yükleme hatası: ' + res.error, 'err');
+  }
+  input.value = '';
+}
+
+function exportConfig() {
+  window.location.href = '/api/config/export';
 }
 
 async function saveSecurityConfig() {
