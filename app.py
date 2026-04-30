@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 import yaml
-from flask import Flask, Response, jsonify, render_template, request, send_file
+from flask import Flask, Response, jsonify, render_template, request, send_file, send_from_directory
 from auth_manager import mfa_manager, generate_totp, totp_remaining_seconds
 
 app = Flask(__name__)
@@ -56,6 +56,30 @@ def save_config():
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.route("/api/config/import", methods=["POST"])
+def import_config():
+    if "file" not in request.files:
+        return jsonify({"ok": False, "error": "Dosya bulunamadı"}), 400
+    f = request.files["file"]
+    if not f.filename.endswith((".yaml", ".yml")):
+        return jsonify({"ok": False, "error": "Yalnızca .yaml / .yml dosyaları kabul edilir"}), 400
+    try:
+        content = f.read().decode("utf-8")
+        data = yaml.safe_load(content)
+        if not isinstance(data, dict):
+            return jsonify({"ok": False, "error": "Geçersiz YAML yapısı"}), 400
+        with open(CONFIG_PATH, "w", encoding="utf-8") as out:
+            yaml.dump(data, out, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        return jsonify({"ok": True, "config": data})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.route("/api/config/export", methods=["GET"])
+def export_config():
+    if not CONFIG_PATH.exists():
+        return jsonify({"ok": False, "error": "Henüz kaydedilmiş config yok"}), 404
+    return send_file(CONFIG_PATH, as_attachment=True, download_name="config.yaml", mimetype="text/yaml")
 
 @app.route("/api/config/test-connection", methods=["POST"])
 def test_connection():
