@@ -1255,11 +1255,13 @@ function fillForm(c) {
 async function loadConfig() {
   const cached = lsLoad();
   if (cached) fillForm(cached);
-  const res = await fetch('/api/config').then(r => r.json());
-  if (res.ok && res.config) {
-    fillForm(res.config);
-    lsSave(res.config);
-  }
+  try {
+    const res = await fetch('/api/config').then(r => r.json());
+    if (res.ok && res.config) {
+      fillForm(res.config);
+      lsSave(res.config);
+    }
+  } catch(e) { /* sunucu yoksa localStorage ile devam et */ }
 }
 
 function buildConfig() {
