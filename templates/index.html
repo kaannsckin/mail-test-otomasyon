@@ -1151,6 +1151,37 @@ python main.py --csv /yol/baska.csv    # Farklı CSV dosyası kullan</div>
 <div class="toast-container" id="toasts"></div>
 
 <script>
+// ── LOCAL STORAGE ──────────────────────────────────────────────────
+const LS_KEY = 'mail_otomasyon_config';
+function lsLoad() {
+  try { const s = localStorage.getItem(LS_KEY); return s ? JSON.parse(s) : null; } catch(e) { return null; }
+}
+function lsSave(cfg) {
+  const prev = lsLoad() || {};
+  const out = JSON.parse(JSON.stringify(cfg));
+  for (const s of ['ems','gmail','outlook']) {
+    if (!out[s]) continue;
+    if (!out[s].password   && prev[s]?.password)   out[s].password   = prev[s].password;
+    if (!out[s].totp_secret && prev[s]?.totp_secret) out[s].totp_secret = prev[s].totp_secret;
+  }
+  if (out.anthropic && !out.anthropic.api_key && prev.anthropic?.api_key)
+    out.anthropic.api_key = prev.anthropic.api_key;
+  try { localStorage.setItem(LS_KEY, JSON.stringify(out)); } catch(e) {}
+}
+// Builds full config merging form values with stored passwords from localStorage
+function buildConfigFull() {
+  const cfg = buildConfig();
+  const saved = lsLoad() || {};
+  for (const s of ['ems','gmail','outlook']) {
+    if (!cfg[s]) continue;
+    if (!cfg[s].password    && saved[s]?.password)    cfg[s].password    = saved[s].password;
+    if (!cfg[s].totp_secret && saved[s]?.totp_secret) cfg[s].totp_secret = saved[s].totp_secret;
+  }
+  if (cfg.anthropic && !cfg.anthropic.api_key && saved.anthropic?.api_key)
+    cfg.anthropic.api_key = saved.anthropic.api_key;
+  return cfg;
+}
+
 // ── STATE ──────────────────────────────────────────────────────────
 let selectedCombos = new Set();
 let selectedScenario = 'all';
@@ -1222,9 +1253,13 @@ function fillForm(c) {
 }
 
 async function loadConfig() {
+  const cached = lsLoad();
+  if (cached) fillForm(cached);
   const res = await fetch('/api/config').then(r => r.json());
-  if (!res.ok) { toast('Config yüklenemedi', 'err'); return; }
-  fillForm(res.config);
+  if (res.ok && res.config) {
+    fillForm(res.config);
+    lsSave(res.config);
+  }
 }
 
 function buildConfig() {
@@ -1263,9 +1298,11 @@ function buildConfig() {
 }
 
 async function saveConfig() {
+  const cfg = buildConfigFull();
+  lsSave(cfg);
   const res = await fetch('/api/config', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({config: buildConfig()}),
+    body: JSON.stringify({config: cfg}),
   }).then(r => r.json());
   res.ok ? toast('✅ Konfigürasyon kaydedildi','ok') : toast('Kayıt hatası: '+res.error,'err');
 }
@@ -1279,6 +1316,7 @@ async function importConfigFile(input) {
   const res = await fetch('/api/config/import', {method:'POST', body: form}).then(r => r.json());
   if (res.ok) {
     toast('✅ Config başarıyla yüklendi', 'ok');
+    lsSave(res.config);
     fillForm(res.config);
   } else {
     toast('❌ Yükleme hatası: ' + res.error, 'err');
@@ -1348,7 +1386,7 @@ async function previewTotp(srv) {
 
 async function checkSecurity(srv) {
   toast(`🛡 ${srv.toUpperCase()} güvenlik testi...`, 'info');
-  const cfg = buildConfig();
+  const cfg = buildConfigFull();
   const res = await fetch('/api/config/test-connection', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({server: srv, server_config: cfg[srv]}),
@@ -1371,7 +1409,7 @@ async function checkSecurity(srv) {
 
 async function testConn(srv) {
   toast(`🔌 ${srv.toUpperCase()} test ediliyor...`, 'info');
-  const cfg = buildConfig();
+  const cfg = buildConfigFull();
   const res = await fetch('/api/config/test-connection', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({server: srv, server_config: cfg[srv]}),
@@ -1403,7 +1441,7 @@ async function submitConnMFA() {
   if (!code || !connMfaServer) return;
   closeConnMfaModal();
   toast(`🔌 ${connMfaServer.toUpperCase()} 2FA ile test ediliyor...`, 'info');
-  const cfg = buildConfig();
+  const cfg = buildConfigFull();
   const res = await fetch('/api/config/test-connection', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({server: connMfaServer, mfa_code: code, server_config: cfg[connMfaServer]}),
@@ -1524,7 +1562,7 @@ document.querySelectorAll('.pill:not(.disabled)').forEach(p => {
 
 // ── RUNNER ─────────────────────────────────────────────────────────
 async function startRun() {
-  const body = { dry_run: document.getElementById('runMode').value === 'dry_run' };
+  const body = { dry_run: document.getElementById('runMode').value === 'dry_run', config: buildConfigFull() };
   if (!selectedCombos.has('all') && selectedCombos.size > 0) body.combo = [...selectedCombos][0];
   if (selectedScenario !== 'all') body.scenario = selectedScenario;
   const res = await fetch('/api/run/start', {
@@ -1547,7 +1585,8 @@ async function stopRun() {
 
 async function quickRun() {
   const res = await fetch('/api/run/start', {
-    method:'POST', headers:{'Content-Type':'application/json'}, body:'{}',
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({config: buildConfigFull()}),
   }).then(r => r.json());
   if (!res.ok) { toast('❌ '+res.error,'err'); return; }
   toast('▶ Tüm testler başlatıldı', 'ok');

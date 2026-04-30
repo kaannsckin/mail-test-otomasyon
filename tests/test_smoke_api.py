@@ -26,8 +26,8 @@ class TestConfigGet:
         resp = flask_client.get("/api/config")
         data = resp.get_json()
         assert resp.status_code == 200
-        assert data["ok"] is False
-        assert "bulunamadı" in data["error"]
+        assert data["ok"] is True
+        assert data["config"] is None
 
     def test_get_config_with_file(self, flask_client, tmp_path, monkeypatch):
         import app as app_module

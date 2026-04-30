@@ -35,7 +35,7 @@ def get_config():
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
         return jsonify({"ok": True, "config": data})
-    return jsonify({"ok": False, "error": "config.yaml bulunamadı"})
+    return jsonify({"ok": True, "config": None})
 
 @app.route("/api/config", methods=["POST"])
 def save_config():
@@ -224,8 +224,14 @@ def _get_csv_path():
 def start_run():
     if run_state["running"]:
         return jsonify({"ok": False, "error": "Zaten bir test çalışıyor"}), 400
-    body      = request.json or {}
-    cmd       = [sys.executable, "main.py"]
+    body = request.json or {}
+    if body.get("config"):
+        try:
+            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+                yaml.dump(body["config"], f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"Config yazılamadı: {e}"}), 500
+    cmd = [sys.executable, "main.py"]
     if body.get("combo") is not None: cmd += ["--combo", str(body["combo"])]
     if body.get("scenario"):          cmd += ["--scenario", body["scenario"]]
     if body.get("dry_run"):           cmd += ["--dry-run"]
