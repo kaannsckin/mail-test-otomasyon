@@ -299,4 +299,5 @@ if __name__ == "__main__":
             port += 1
 
     print(f"\n🚀 Mail Otomasyon Arayüzü: http://localhost:{port}\n")
-    app.run(debug=True, host="0.0.0.0", port=port, threaded=True)
+    debug = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
+    app.run(debug=debug, host="0.0.0.0", port=port, threaded=True)
