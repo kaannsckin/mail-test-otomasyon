@@ -1306,9 +1306,10 @@ async function previewTotp(srv) {
 
 async function checkSecurity(srv) {
   toast(`🛡 ${srv.toUpperCase()} güvenlik testi...`, 'info');
+  const cfg = buildConfig();
   const res = await fetch('/api/config/test-connection', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({server: srv}),
+    body: JSON.stringify({server: srv, server_config: cfg[srv]}),
   }).then(r => r.json());
   const badges = document.getElementById(`secBadges-${srv}`);
   if (res.ok) {
@@ -1328,9 +1329,10 @@ async function checkSecurity(srv) {
 
 async function testConn(srv) {
   toast(`🔌 ${srv.toUpperCase()} test ediliyor...`, 'info');
+  const cfg = buildConfig();
   const res = await fetch('/api/config/test-connection', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({server: srv}),
+    body: JSON.stringify({server: srv, server_config: cfg[srv]}),
   }).then(r => r.json());
   if (res.ok) toast(res.message, 'ok');
   else if (res.needs_mfa) openConnMfaModal(srv, res);
@@ -1359,9 +1361,10 @@ async function submitConnMFA() {
   if (!code || !connMfaServer) return;
   closeConnMfaModal();
   toast(`🔌 ${connMfaServer.toUpperCase()} 2FA ile test ediliyor...`, 'info');
+  const cfg = buildConfig();
   const res = await fetch('/api/config/test-connection', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({server: connMfaServer, mfa_code: code}),
+    body: JSON.stringify({server: connMfaServer, mfa_code: code, server_config: cfg[connMfaServer]}),
   }).then(r => r.json());
   res.ok ? toast(res.message, 'ok') : toast('❌ ' + res.error, 'err');
 }

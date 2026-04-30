@@ -59,14 +59,25 @@ def save_config():
 
 @app.route("/api/config/test-connection", methods=["POST"])
 def test_connection():
-    server_key = request.json.get("server")
-    mfa_code   = request.json.get("mfa_code", "")
+    server_key    = request.json.get("server")
+    mfa_code      = request.json.get("mfa_code", "")
+    body_sc       = request.json.get("server_config") or {}
     try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            config = yaml.safe_load(f)
-        sc = config.get(server_key, {})
+        if CONFIG_PATH.exists():
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f) or {}
+            sc = config.get(server_key, {})
+        else:
+            sc = {}
+        # Merge: file values take precedence for passwords; form values fill the rest
+        if body_sc:
+            merged = dict(body_sc)
+            for key in ("password", "totp_secret"):
+                if sc.get(key):
+                    merged[key] = sc[key]
+            sc = merged
         if not sc:
-            return jsonify({"ok": False, "error": f"'{server_key}' config'de tanımlı değil"})
+            return jsonify({"ok": False, "error": f"'{server_key}' için config bulunamadı — önce ayarları kaydedin"})
 
         auth_method = sc.get("auth_method", "password")
         totp_secret = sc.get("totp_secret", "")
