@@ -372,6 +372,26 @@ input.has-value{border-color:rgba(0,255,148,.4)}
         </div>
       </div>
 
+      <div class="card">
+        <div class="card-header"><span class="card-title">📂 Config Dosyası İçe / Dışa Aktar</span></div>
+        <div class="card-body">
+          <div style="display:flex;gap:1rem;align-items:flex-end;flex-wrap:wrap">
+            <div class="form-group" style="flex:1;min-width:220px;margin:0">
+              <label>config.yaml Yükle</label>
+              <input type="file" id="configFileInput" accept=".yaml,.yml"
+                     style="padding:.4rem .6rem;width:100%"
+                     onchange="importConfigFile(this)">
+            </div>
+            <button class="btn btn-ghost" onclick="exportConfig()" style="white-space:nowrap">
+              ⬇ config.yaml İndir
+            </button>
+          </div>
+          <p style="margin:.6rem 0 0;font-size:.82rem;color:var(--text-muted)">
+            Mevcut bir <code>config.yaml</code> dosyasını yükleyerek tüm ayarları tek seferde içe aktarabilirsiniz.
+          </p>
+        </div>
+      </div>
+
       <div class="btn-row">
         <button class="btn btn-primary" onclick="saveConfig()">💾 Kaydet</button>
         <button class="btn btn-ghost" onclick="loadConfig()">↺ Yenile</button>
@@ -1123,6 +1143,30 @@ python main.py --csv /yol/baska.csv    # Farklı CSV dosyası kullan</div>
 <div class="toast-container" id="toasts"></div>
 
 <script>
+// ── LOCAL STORAGE ──────────────────────────────────────────────────
+// Yalnızca secret İÇERMEYEN alanlar tarayıcıda saklanır (form doldurma
+// kolaylığı için). Şifre/TOTP/API key sunucu tarafında config.yaml'da
+// tutulur; boş/maskeli gönderildiğinde backend kayıtlı değeri korur.
+const LS_KEY = 'mail_otomasyon_config';
+function lsLoad() {
+  try { const s = localStorage.getItem(LS_KEY); return s ? JSON.parse(s) : null; } catch(e) { return null; }
+}
+function lsSave(cfg) {
+  const out = JSON.parse(JSON.stringify(cfg));
+  for (const s of ['ems','gmail','outlook']) {
+    if (!out[s]) continue;
+    delete out[s].password;
+    delete out[s].totp_secret;
+  }
+  if (out.anthropic) delete out.anthropic.api_key;
+  try { localStorage.setItem(LS_KEY, JSON.stringify(out)); } catch(e) {}
+}
+// Form değerlerini döndürür — secret'lar boş/maskeliyse backend dosyadaki
+// kayıtlı değeri kullanır (localStorage'dan secret birleştirme YAPILMAZ).
+function buildConfigFull() {
+  return buildConfig();
+}
+
 // ── STATE ──────────────────────────────────────────────────────────
 let selectedCombos = new Set();
 let selectedScenario = 'all';
@@ -1166,10 +1210,7 @@ document.querySelectorAll('.nav-item').forEach(el => {
 });
 
 // ── CONFIG ─────────────────────────────────────────────────────────
-async function loadConfig() {
-  const res = await fetch('/api/config').then(r => r.json());
-  if (!res.ok) { toast('Config yüklenemedi', 'err'); return; }
-  const c = res.config;
+function fillForm(c) {
   const set = (id, v) => { const el = document.getElementById(id); if (!el) return; el.type === 'checkbox' ? el.checked = !!v : el.value = v ?? ''; };
   for (const s of ['ems','gmail','outlook']) {
     const d = c[s] || {};
@@ -1179,7 +1220,6 @@ async function loadConfig() {
     set(`${s}_password`, d.password ? '••••••••' : '');
     set(`${s}_test_address`, d.test_address); set(`${s}_label`, d.label);
     if (s === 'ems') { set('ems_smtp_use_tls', d.smtp_use_tls); set('ems_imap_use_ssl', d.imap_use_ssl); }
-    // Auth method
     if (d.auth_method) {
       authMethods[s] = d.auth_method;
       const card = document.querySelector(`#authGrid-${s} [data-method="${d.auth_method}"]`);
@@ -1196,6 +1236,18 @@ async function loadConfig() {
   set('test_retry_interval', t.retry_interval); set('test_subject_prefix', t.subject_prefix);
   set('test_attachment_path', t.test_attachment_path); set('test_image_path', t.test_image_path);
   set('test_csv_input', t.csv_input);
+}
+
+async function loadConfig() {
+  const cached = lsLoad();
+  if (cached) fillForm(cached);
+  try {
+    const res = await fetch('/api/config').then(r => r.json());
+    if (res.ok && res.config) {
+      fillForm(res.config);
+      lsSave(res.config);
+    }
+  } catch(e) { /* sunucu yoksa localStorage ile devam et */ }
 }
 
 function buildConfig() {
@@ -1234,11 +1286,34 @@ function buildConfig() {
 }
 
 async function saveConfig() {
+  const cfg = buildConfigFull();
+  lsSave(cfg);
   const res = await fetch('/api/config', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({config: buildConfig()}),
+    body: JSON.stringify({config: cfg}),
   }).then(r => r.json());
   res.ok ? toast('✅ Konfigürasyon kaydedildi','ok') : toast('Kayıt hatası: '+res.error,'err');
+}
+
+async function importConfigFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const form = new FormData();
+  form.append('file', file);
+  toast('📂 Config yükleniyor...', 'info');
+  const res = await fetch('/api/config/import', {method:'POST', body: form}).then(r => r.json());
+  if (res.ok) {
+    toast('✅ Config başarıyla yüklendi', 'ok');
+    lsSave(res.config);
+    fillForm(res.config);
+  } else {
+    toast('❌ Yükleme hatası: ' + res.error, 'err');
+  }
+  input.value = '';
+}
+
+function exportConfig() {
+  window.location.href = '/api/config/export';
 }
 
 async function saveSecurityConfig() {
@@ -1299,9 +1374,10 @@ async function previewTotp(srv) {
 
 async function checkSecurity(srv) {
   toast(`🛡 ${srv.toUpperCase()} güvenlik testi...`, 'info');
+  const cfg = buildConfigFull();
   const res = await fetch('/api/config/test-connection', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({server: srv}),
+    body: JSON.stringify({server: srv, server_config: cfg[srv]}),
   }).then(r => r.json());
   const badges = document.getElementById(`secBadges-${srv}`);
   if (res.ok) {
@@ -1321,9 +1397,10 @@ async function checkSecurity(srv) {
 
 async function testConn(srv) {
   toast(`🔌 ${srv.toUpperCase()} test ediliyor...`, 'info');
+  const cfg = buildConfigFull();
   const res = await fetch('/api/config/test-connection', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({server: srv}),
+    body: JSON.stringify({server: srv, server_config: cfg[srv]}),
   }).then(r => r.json());
   if (res.ok) toast(res.message, 'ok');
   else if (res.needs_mfa) openConnMfaModal(srv, res);
@@ -1352,9 +1429,10 @@ async function submitConnMFA() {
   if (!code || !connMfaServer) return;
   closeConnMfaModal();
   toast(`🔌 ${connMfaServer.toUpperCase()} 2FA ile test ediliyor...`, 'info');
+  const cfg = buildConfigFull();
   const res = await fetch('/api/config/test-connection', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({server: connMfaServer, mfa_code: code}),
+    body: JSON.stringify({server: connMfaServer, mfa_code: code, server_config: cfg[connMfaServer]}),
   }).then(r => r.json());
   res.ok ? toast(res.message, 'ok') : toast('❌ ' + res.error, 'err');
 }
@@ -1472,7 +1550,7 @@ document.querySelectorAll('.pill:not(.disabled)').forEach(p => {
 
 // ── RUNNER ─────────────────────────────────────────────────────────
 async function startRun() {
-  const body = { dry_run: document.getElementById('runMode').value === 'dry_run' };
+  const body = { dry_run: document.getElementById('runMode').value === 'dry_run', config: buildConfigFull() };
   if (!selectedCombos.has('all') && selectedCombos.size > 0) body.combo = [...selectedCombos][0];
   if (selectedScenario !== 'all') body.scenario = selectedScenario;
   const res = await fetch('/api/run/start', {
@@ -1495,7 +1573,8 @@ async function stopRun() {
 
 async function quickRun() {
   const res = await fetch('/api/run/start', {
-    method:'POST', headers:{'Content-Type':'application/json'}, body:'{}',
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({config: buildConfigFull()}),
   }).then(r => r.json());
   if (!res.ok) { toast('❌ '+res.error,'err'); return; }
   toast('▶ Tüm testler başlatıldı', 'ok');

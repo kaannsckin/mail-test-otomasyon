@@ -8,20 +8,26 @@ from datetime import datetime
 from pathlib import Path
 
 import yaml
-from flask import Flask, Response, jsonify, render_template, request, send_from_directory
+from flask import Flask, Response, jsonify, render_template, request, send_file, send_from_directory
 from auth_manager import mfa_manager, generate_totp, totp_remaining_seconds
 
 BASE_DIR = Path(__file__).parent
 
 app = Flask(__name__, template_folder=str(BASE_DIR / "templates"))
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0  # tarayıcı bayat JS/CSS önbelleklemesin
 
 
 def _data_dir() -> Path:
     """Yazılabilir veri dizini (config.yaml, reports/, logs/).
 
-    Yerelde ve Railway'de repo kökü kullanılır (README akışıyla uyumlu);
-    Vercel gibi salt-okunur dosya sistemlerinde /tmp'e düşülür.
+    Öncelik: DATA_DIR ortam değişkeni → yerelde/Railway'de repo kökü
+    (README akışıyla uyumlu) → Vercel gibi salt-okunur FS'lerde /tmp.
     """
+    override = os.environ.get("DATA_DIR")
+    if override:
+        d = Path(override)
+        d.mkdir(parents=True, exist_ok=True)
+        return d
     if os.environ.get("VERCEL") or not os.access(BASE_DIR, os.W_OK):
         d = Path(os.environ.get("TMPDIR", "/tmp")) / "mail_otomasyon"
         d.mkdir(parents=True, exist_ok=True)
@@ -30,11 +36,11 @@ def _data_dir() -> Path:
 
 
 DATA_DIR      = _data_dir()
-CONFIG_PATH   = DATA_DIR / "config.yaml"
+CONFIG_PATH   = DATA_DIR / os.environ.get("CONFIG_FILENAME", "config.yaml")
 REPORTS_DIR   = DATA_DIR / "reports"
 LOGS_DIR      = DATA_DIR / "logs"
-REPORTS_DIR.mkdir(exist_ok=True)
-LOGS_DIR.mkdir(exist_ok=True)
+REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 run_state = {
     "running": False,
@@ -73,21 +79,24 @@ def _is_unset(value) -> bool:
         return True
     return isinstance(value, str) and set(value) == {"•"}
 
+def _mask_secrets(data: dict) -> dict:
+    """Secret'lar tarayıcıya düz metin gitmesin — UI yalnızca dolu/boş bilgisine bakar."""
+    for srv in ("ems", "gmail", "outlook"):
+        if isinstance(data.get(srv), dict):
+            for key in ("password", "totp_secret"):
+                if data[srv].get(key):
+                    data[srv][key] = SECRET_MASK
+    if isinstance(data.get("anthropic"), dict) and data["anthropic"].get("api_key"):
+        data["anthropic"]["api_key"] = SECRET_MASK
+    return data
+
 @app.route("/api/config", methods=["GET"])
 def get_config():
     if CONFIG_PATH.exists():
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
-        # Secret'lar tarayıcıya düz metin gitmesin — UI yalnızca dolu/boş bilgisine bakar.
-        for srv in ("ems", "gmail", "outlook"):
-            if isinstance(data.get(srv), dict):
-                for key in ("password", "totp_secret"):
-                    if data[srv].get(key):
-                        data[srv][key] = SECRET_MASK
-        if isinstance(data.get("anthropic"), dict) and data["anthropic"].get("api_key"):
-            data["anthropic"]["api_key"] = SECRET_MASK
-        return jsonify({"ok": True, "config": data})
-    return jsonify({"ok": False, "error": "config.yaml bulunamadı"})
+        return jsonify({"ok": True, "config": _mask_secrets(data)})
+    return jsonify({"ok": True, "config": None})
 
 @app.route("/api/config", methods=["POST"])
 def save_config():
@@ -111,16 +120,52 @@ def save_config():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
+@app.route("/api/config/import", methods=["POST"])
+def import_config():
+    if "file" not in request.files:
+        return jsonify({"ok": False, "error": "Dosya bulunamadı"}), 400
+    f = request.files["file"]
+    if not f.filename.endswith((".yaml", ".yml")):
+        return jsonify({"ok": False, "error": "Yalnızca .yaml / .yml dosyaları kabul edilir"}), 400
+    try:
+        content = f.read().decode("utf-8")
+        data = yaml.safe_load(content)
+        if not isinstance(data, dict):
+            return jsonify({"ok": False, "error": "Geçersiz YAML yapısı"}), 400
+        with open(CONFIG_PATH, "w", encoding="utf-8") as out:
+            yaml.dump(data, out, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        return jsonify({"ok": True, "config": _mask_secrets(data)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.route("/api/config/export", methods=["GET"])
+def export_config():
+    if not CONFIG_PATH.exists():
+        return jsonify({"ok": False, "error": "Henüz kaydedilmiş config yok"}), 404
+    return send_file(CONFIG_PATH, as_attachment=True, download_name="config.yaml", mimetype="text/yaml")
+
 @app.route("/api/config/test-connection", methods=["POST"])
 def test_connection():
-    server_key = request.json.get("server")
-    mfa_code   = request.json.get("mfa_code", "")
+    server_key    = request.json.get("server")
+    mfa_code      = request.json.get("mfa_code", "")
+    body_sc       = request.json.get("server_config") or {}
     try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            config = yaml.safe_load(f)
-        sc = config.get(server_key, {})
+        if CONFIG_PATH.exists():
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f) or {}
+            sc = config.get(server_key, {})
+        else:
+            sc = {}
+        # Form değerleri kaydedilmeden test edilebilir; secret alanı boş/maskeli
+        # geldiyse dosyadaki kayıtlı değer kullanılır.
+        if body_sc:
+            merged = dict(body_sc)
+            for key in ("password", "totp_secret"):
+                if _is_unset(merged.get(key)) and sc.get(key):
+                    merged[key] = sc[key]
+            sc = merged
         if not sc:
-            return jsonify({"ok": False, "error": f"'{server_key}' config'de tanımlı değil"})
+            return jsonify({"ok": False, "error": f"'{server_key}' için config bulunamadı — önce ayarları kaydedin"})
 
         auth_method = sc.get("auth_method", "password")
         totp_secret = sc.get("totp_secret", "")
@@ -343,7 +388,9 @@ def latest_results():
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    resp = app.make_response(render_template("index.html"))
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    return resp
 
 if __name__ == "__main__":
     env_port = os.environ.get("PORT")
