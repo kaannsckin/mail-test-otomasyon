@@ -133,6 +133,42 @@ class TestBasicAuth:
 
 
 # ═══════════════════════════════════════════════════════════════════
+#  Deploy: healthcheck + serverless koruması
+# ═══════════════════════════════════════════════════════════════════
+
+class TestDeploy:
+
+    def test_health_endpoint(self, flask_client):
+        data = flask_client.get("/api/health").get_json()
+        assert data["ok"] is True
+        assert data["serverless"] is False
+
+    def test_health_bypasses_basic_auth(self, flask_client, monkeypatch):
+        """Platform healthcheck'leri kimlik bilgisi gönderemez — 401 olmamalı."""
+        monkeypatch.setenv("UI_PASSWORD", "parola123")
+        assert flask_client.get("/api/health").status_code == 200
+        assert flask_client.get("/api/run/status").status_code == 401  # diğerleri korumalı
+
+    def test_run_start_blocked_on_serverless(self, flask_client, monkeypatch):
+        monkeypatch.setenv("VERCEL", "1")
+        resp = flask_client.post("/api/run/start", json={"dry_run": True})
+        assert resp.status_code == 400
+        assert "serverless" in resp.get_json()["error"]
+
+    def test_config_still_works_on_serverless(self, flask_client, monkeypatch):
+        monkeypatch.setenv("VERCEL", "1")
+        assert flask_client.get("/api/config").get_json()["ok"] is True
+
+    def test_paas_host_detection(self, monkeypatch):
+        import app as app_module
+        for marker in ("RAILWAY_ENVIRONMENT", "RENDER", "DYNO"):
+            monkeypatch.delenv(marker, raising=False)
+        assert app_module._default_host() == "127.0.0.1"
+        monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
+        assert app_module._default_host() == "0.0.0.0"
+
+
+# ═══════════════════════════════════════════════════════════════════
 #  /api/reports — path traversal
 # ═══════════════════════════════════════════════════════════════════
 

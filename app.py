@@ -51,11 +51,30 @@ run_state = {
     "exit_code": None,
 }
 
+# ── PLATFORM ────────────────────────────────────────────────────
+def _is_serverless() -> bool:
+    """Vercel gibi serverless ortamlar: arka plan süreci yaşatamaz."""
+    return bool(os.environ.get("VERCEL"))
+
+
+# Railway/Render/Heroku/Fly/Cloud Run gibi PaaS'larda dış trafik için
+# 0.0.0.0'a bind gerekir; bu platformlar kendilerini env ile belli eder.
+_PAAS_MARKERS = ("RAILWAY_ENVIRONMENT", "RENDER", "DYNO", "FLY_APP_NAME", "K_SERVICE")
+
+
+def _default_host() -> str:
+    if any(os.environ.get(m) for m in _PAAS_MARKERS):
+        return "0.0.0.0"
+    return "127.0.0.1"
+
+
 # ── AUTH (opsiyonel) ───────────────────────────────────────────
 # UI_PASSWORD ayarlanırsa tüm istekler HTTP Basic Auth gerektirir.
 # Ayarlanmazsa mevcut davranış korunur (yalnızca localhost'ta kullan).
 @app.before_request
 def _require_basic_auth():
+    if request.path == "/api/health":
+        return None  # platform healthcheck'leri kimlik bilgisi gönderemez
     password = os.environ.get("UI_PASSWORD", "")
     if not password:
         return None
@@ -289,9 +308,23 @@ def _get_csv_path():
 
     return raw
 
+# ── HEALTH ──────────────────────────────────────────────────────
+@app.route("/api/health")
+def health():
+    return jsonify({"ok": True, "status": "healthy", "serverless": _is_serverless()})
+
 # ── RUNNER ──────────────────────────────────────────────────────
 @app.route("/api/run/start", methods=["POST"])
 def start_run():
+    if _is_serverless():
+        return jsonify({
+            "ok": False,
+            "error": ("Bu platform (Vercel/serverless) uzun süreli test koşusunu "
+                      "desteklemiyor — istekler 60 sn ile sınırlı ve arka plan "
+                      "süreci yaşatılamıyor. Konfigürasyon arayüzü çalışır; test "
+                      "koşusu için Railway, Render veya Docker kullanın "
+                      "(README → Web'de Yayınlama)."),
+        }), 400
     if run_state["running"]:
         return jsonify({"ok": False, "error": "Zaten bir test çalışıyor"}), 400
     body      = request.json or {}
@@ -401,8 +434,9 @@ def index():
 if __name__ == "__main__":
     env_port = os.environ.get("PORT")
     desired_port = int(env_port) if env_port else 5000
-    # Varsayılan yalnızca yerel erişim; ağdan erişim için HOST=0.0.0.0 ayarla.
-    host = os.environ.get("HOST", "127.0.0.1")
+    # Yerelde varsayılan 127.0.0.1 (güvenli); PaaS'ta otomatik 0.0.0.0.
+    # Elle geçersiz kılmak için HOST env değişkeni.
+    host = os.environ.get("HOST", _default_host())
     # Werkzeug debugger uzaktan kod çalıştırmaya izin verir — varsayılan kapalı.
     debug = os.environ.get("FLASK_DEBUG", "").lower() in ("1", "true", "yes")
 

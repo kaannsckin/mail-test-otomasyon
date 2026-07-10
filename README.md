@@ -232,6 +232,41 @@ Her test çalışmasının ardından iki dosya üretilir:
 
 ---
 
+## 🌐 Web'de Yayınlama (Deploy)
+
+Uygulama arka planda uzun süren test süreçleri çalıştırdığı için **kalıcı
+konteyner** sunan platformlar tam işlevlidir; serverless platformlarda yalnızca
+arayüz/konfigürasyon çalışır:
+
+| Platform | Test Koşusu | Config Kalıcılığı | Not |
+| --- | --- | --- | --- |
+| **Railway** (önerilen) | ✅ | Volume ekleyin (`/data` + `DATA_DIR=/data`) | `railway.toml` hazır, healthcheck dahil |
+| **Render** | ✅ | ✅ 1 GB disk `render.yaml`'da tanımlı | Ücretsiz planda uyku moduna geçer |
+| **Docker / VPS** | ✅ | ✅ `./data` volume | `docker compose up -d` yeterli |
+| **Vercel** | ❌ (60 sn serverless sınırı) | ❌ (/tmp geçici) | Arayüz demo olarak çalışır; koşu başlatınca yönlendirme mesajı verir |
+
+Tüm platformlarda:
+
+1. Repoyu GitHub'dan bağlayın — yapılandırma dosyaları (`railway.toml`,
+   `render.yaml`, `vercel.json`, `Dockerfile`) hazır.
+2. **`UI_PASSWORD` env değişkenini mutlaka ayarlayın** — internete açık
+   arayüz parolasız kalmasın.
+3. PaaS ortamları otomatik algılanır ve `0.0.0.0`'a bind edilir; yerelde
+   varsayılan `127.0.0.1` olarak kalır.
+4. Healthcheck: `GET /api/health` (kimlik doğrulamasız, platform sağlık
+   kontrolleri için).
+
+```bash
+# Docker ile
+docker compose up -d      # → http://localhost:5005
+```
+
+> Deploy edilen sunucunun SMTP (587/465) ve IMAP (993) portlarına **dışarı
+> çıkışına** izin verdiğinden emin olun; bazı ücretsiz planlar mail portlarını
+> kapatır.
+
+---
+
 ## 🚢 GitHub'a Yükleme
 
 ```bash
