@@ -25,6 +25,9 @@ logs/
 reports/
 test_files/
 
+# Yerel test ekleri — kurumsal/gerçek dokümanlar repoya girmesin
+attachments/
+
 # Old output copies
 mnt/
 
