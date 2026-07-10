@@ -26,6 +26,7 @@ class MessageTemplate:
     subject_tag: str
     body: str
     length: str  # "short" | "medium" | "long"
+    attachments: list[str] | None = None  # filenames in attachments/
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -34,81 +35,53 @@ class MessageTemplate:
 PLAIN_TEXT_TEMPLATES: List[MessageTemplate] = [
     # --- KISA ---
     MessageTemplate(
-        subject_tag="Kısa Bilgilendirme",
+        subject_tag="Düz Metin İletim Testi",
         length="short",
         body=(
             "Merhaba,\n\n"
-            "Posta sunucusu geçiş testleri kapsamında bu mesaj gönderilmektedir.\n"
-            "Türkçe karakter kontrolü: ğüşıöçĞÜŞİÖÇ\n"
+            "Bu mesaj, alıcı istemcinin temel SMTP düz metin (Plain Text) e-postaları "
+            "UTF-8 standartlarında alıp almadığını doğrulamak amacıyla gönderilmiştir.\n"
+            "Test Amacı: Karakter seti bütünlüğü ve iletim hızı.\n"
+            "Türkçe karakterler: ğüşıöçĞÜŞİÖÇ\n"
             + SIGNATURE_BLOCK
         ),
     ),
     # --- ORTA ---
     MessageTemplate(
-        subject_tag="Haftalık Durum Güncellemesi",
+        subject_tag="Protokol Doğrulama - UTF-8 / Plain Text",
         length="medium",
         body=(
-            "Merhaba,\n\n"
-            "Bu hafta gerçekleştirilen mail sunucu geçiş çalışmalarına ilişkin "
-            "güncel durum aşağıdaki gibidir:\n\n"
-            "1. SMTP relay yapılandırması tamamlandı.\n"
-            "2. IMAP klasör eşleme testleri devam ediyor.\n"
-            "3. SPF/DKIM/DMARC kayıtları DNS'e eklendi; yayılım bekleniyor.\n"
-            "4. Mobil istemci (iOS/Android) bağlantı testleri planlandı.\n\n"
-            "Herhangi bir sorun tespit etmeniz halinde lütfen bu mesajı "
-            "yanıtlayarak bildiriniz.\n\n"
-            "Türkçe özel karakterler: çalışma, güncelleme, şifreleme, ışık, "
-            "ölçüm, üretim — ĞÜŞİÖÇ"
+            "Sayın Yetkili,\n\n"
+            "E-posta altyapı geçiş çalışmaları kapsamında, alıcı istemcinin "
+            "standard RFC 5322 uyumluluğu test edilmektedir.\n\n"
+            "Senaryo Detayı:\n"
+            "- Mesaj Tipi: Plain Text (Düz Metin)\n"
+            "- Kodlama: UTF-8 (7-bit / 8-bit)\n"
+            "- Kontrol: ĞÜŞİÖÇ karakterlerinin bozulmadan iletimi.\n\n"
+            "Bu mesajın içeriği, sunucu tarafındaki MIME transformasyonlarının "
+            "doğruluğunu teyit etmek için tasarlanmıştır.\n"
             + SIGNATURE_BLOCK
         ),
     ),
     # --- UZUN ---
     MessageTemplate(
-        subject_tag="Safir Posta Geçiş Projesi - Detaylı Teknik Rapor",
+        subject_tag="Teknik Analiz: Plain Text Protokol Uyumluluğu",
         length="long",
         body=(
-            "Sayın Yetkili,\n\n"
-            "Aşağıda Safir Posta Sunucusu Geçiş Projesi kapsamında yürütülen "
-            "teknik çalışmalara ilişkin detaylı raporu bulabilirsiniz.\n\n"
-
-            "== 1. Proje Kapsamı ==\n"
-            "Mevcut EMS (Enterprise Mail Server) altyapısından Safir Posta "
-            "çözümüne geçiş sürecinde; tüm kullanıcı hesapları, adres "
-            "defterleri, takvim verileri ve arşiv posta kutuları taşınacaktır. "
-            "Geçiş boyunca mevcut sistem paralel çalışmaya devam edecek, "
-            "kullanıcılar kesinti yaşamayacaktır.\n\n"
-
-            "== 2. Tamamlanan İşler ==\n"
-            "- MX, SPF, DKIM ve DMARC DNS kayıtları güncellendi.\n"
-            "- SMTP relay (port 587/TLS) ve IMAP (port 993/SSL) bağlantıları "
-            "doğrulandı.\n"
-            "- Active Directory LDAP entegrasyonu ile kullanıcı provisioning "
-            "otomatize edildi.\n"
-            "- iOS Mail, Android Gmail, Outlook Desktop ve Outlook Web "
-            "istemcilerinde bağlantı testleri başarıyla tamamlandı.\n"
-            "- 2FA/TOTP kimlik doğrulama akışı entegre edildi.\n\n"
-
-            "== 3. Devam Eden İşler ==\n"
-            "- Eklentili mesaj (attachment) iletim testleri farklı dosya "
-            "formatlarında (PDF, CSV, DOCX) tekrarlanıyor.\n"
-            "- Inline resim (CID embedded) mesajların istemciler arası "
-            "görüntülenme uyumluluğu kontrol ediliyor.\n"
-            "- Reply chain / thread bütünlüğü testleri çoklu istemci "
-            "senaryolarında yürütülüyor.\n\n"
-
-            "== 4. Riskler ve Aksiyonlar ==\n"
-            "- Bazı eski istemcilerde UTF-8 encoding uyumsuzluğu "
-            "gözlemlendi; charset header'ları güçlendirildi.\n"
-            "- Büyük ek dosyalarda (>10 MB) zaman aşımı riski mevcut; "
-            "SMTP timeout değeri 60 saniyeye çıkarıldı.\n"
-            "- S/MIME dijital imza altyapısı kurumda henüz aktif "
-            "olmadığından, bu senaryolar manuel teste bırakıldı.\n\n"
-
-            "Türkçe karakter doğrulama satırı:\n"
-            "ğüşıöç ĞÜŞIÖÇ — çalışıyor, güncelleniyor, şifreleniyor, "
-            "ışıklandırılıyor, ölçülüyor, üretiliyor.\n\n"
-
-            "Sorularınız için lütfen bu mesajı yanıtlayınız."
+            "Sayın Teknik Ekip,\n\n"
+            "Posta sunucusu (EMS/Safir) geçiş sürecinde, alıcı tarafındaki istemcilerin "
+            "metin tabanlı içerikleri işleme kapasitesi ölçülmektedir.\n\n"
+            "== Test ve Analiz Kapsamı ==\n"
+            "Bu uzun formatlı düz metin mesajı; ağ üzerindeki paket segmentasyonu ve "
+            "SMTP sunucusundaki satır sonu (CRLF) dönüşümlerini test eder. "
+            "Özellikle 80 karakterden uzun satırların istemci tarafından nasıl "
+            "wrap edildiği (sarılmış) ve Türkçe karakterlerin bu süreçte "
+            "zarar görüp görmediği incelenmektedir.\n\n"
+            "== Doğrulama Parametreleri ==\n"
+            "1. UTF-8 Karakter seti: ğüşıöç ĞÜŞIÖÇ (Tam Set)\n"
+            "2. Satır uzunluğu toleransı: Mesajın görsel bütünlüğü korunmalıdır.\n"
+            "3. Header / Body ayırımı devitasyonu: MIME boundary tespiti.\n\n"
+            "Bu otomatik üretilmiş bir içeriktir. Lütfen kontrol sonrası teyit ediniz."
             + SIGNATURE_BLOCK
         ),
     ),
@@ -120,71 +93,51 @@ PLAIN_TEXT_TEMPLATES: List[MessageTemplate] = [
 ATTACHMENT_TEMPLATES: List[MessageTemplate] = [
     # --- KISA ---
     MessageTemplate(
-        subject_tag="Ek Dosya İletimi",
+        subject_tag="Ek Dosya Protokol Testi",
         length="short",
         body=(
             "Merhaba,\n\n"
-            "İlgili doküman ekte yer almaktadır. İncelemenizi rica ederim.\n"
+            "Bu mesaj, alıcı istemcinin 'Content-Disposition' header'larını ve "
+            "Base64 kodlanmış eklentileri doğru işleyip işlemediğini test eder.\n"
+            "Test Amacı: Dosya iletim bütünlüğü.\n"
             "Türkçe karakter: ğüşıöçĞÜŞİÖÇ"
             + SIGNATURE_BLOCK
         ),
     ),
     # --- ORTA ---
     MessageTemplate(
-        subject_tag="Talep Sistemi Broşürü ve Gereksinim Dokümanı",
+        subject_tag="Eklenti İletim Kararlılık Sınaması",
         length="medium",
         body=(
-            "Merhaba,\n\n"
-            "Ticket Talep Sistemi'ne ait güncel bilgilendirme broşürü ve "
-            "dashboard gereksinim dokümanı ekte sunulmuştur.\n\n"
-            "Broşürde sistem kullanım adımları, talep oluşturma ve takip "
-            "süreçleri açıklanmaktadır. Gereksinim dokümanında ise dashboard "
-            "modülü için planlanan bileşenler listelenmiştir.\n\n"
-            "Eklerin boyut ve MIME type bilgilerinin alıcıda doğru "
-            "görüntülendiğini teyit ediniz.\n\n"
-            "Özel karakter testi: çözüm → şifreleme → güncelleme → ışık "
-            "→ ölçüm → üretim"
+            "Sayın Yetkili,\n\n"
+            "Posta altyapısı testleri kapsamında eklenti iletimi gerçekleşmektedir.\n\n"
+            "Kontrol Noktaları:\n"
+            "- Eklenti dosya adındaki Türkçe karakterlerin (ğüşıöç) korunması.\n"
+            "- MIME boundary (sınır) belirteçlerinin alıcıda doğru ayrıştırılması.\n"
+            "- Content-Transfer-Encoding: base64 doğrulaması.\n\n"
+            "Lütfen ekteki dosyanın ismini ve boyutunu kontrol ediniz."
             + SIGNATURE_BLOCK
         ),
     ),
     # --- UZUN ---
     MessageTemplate(
-        subject_tag="Safir Posta Destek Raporu ve Ekler",
+        subject_tag="Teknik Rapor: Eklenti ve MIME Yapısı Analizi",
         length="long",
         body=(
-            "Sayın Yetkili,\n\n"
-            "Aşağıda Safir Posta geçiş sürecine ilişkin destek raporunun "
-            "detayları ve ilgili ek dosyalar yer almaktadır.\n\n"
-
-            "== Ek Dosya Listesi ==\n"
-            "1. Ticket_Talep_Sistemi_Bilgilendirme_Brosuru_v3.pdf\n"
-            "   → Talep sistemi kullanıcı kılavuzu (PDF, ~500 KB)\n"
-            "2. SAFİR POSTA (Destek Bilgem) 2026-01-28.csv\n"
-            "   → Destek taleplerinin dönemsel CSV dökümü\n"
-            "3. requirements_dashboard.txt\n"
-            "   → Dashboard modülü bağımlılık listesi\n\n"
-
-            "== Test Amacı ==\n"
-            "Bu mesaj, farklı dosya formatlarının (PDF, CSV, TXT) çoklu "
-            "ek olarak gönderildiğinde MIME yapısının, dosya adlarının, "
-            "boyutlarının ve Content-Disposition header'larının alıcı "
-            "tarafında bozulmadan iletilip iletilmediğini doğrulamak "
-            "amacıyla gönderilmektedir.\n\n"
-
-            "Özellikle kontrol edilecek noktalar:\n"
-            "- Dosya adındaki Türkçe ve özel karakterler korunuyor mu?\n"
-            "  (SAFİR → İ harfi, parantez, boşluk)\n"
-            "- PDF dosyası alıcıda açılabiliyor mu?\n"
-            "- CSV dosyası metin editörü veya tablo uygulamasında "
-            "doğru parse ediliyor mu?\n"
-            "- TXT dosyasının encoding'i (UTF-8) bozulmuyor mu?\n\n"
-
-            "Karakter seti doğrulama:\n"
-            "ğüşıöç ĞÜŞIÖÇ — tüm Türkçe karakterlerin bu satırda "
-            "ve ek dosya adlarında korunması beklenmektedir.\n\n"
-
-            "Testler tamamlandığında sonuçları bu thread üzerinden "
-            "paylaşmanızı rica ederim."
+            "Teknik Ekibe,\n\n"
+            "Bu mesaj, e-posta istemcilerinin ekli dosyaları (attachment) RFC 2183 "
+            "standartlarına göre nasıl kapsüllediğini ölçümlemek için tasarlanmıştır.\n\n"
+            "== Senaryo ve Beklenti ==\n"
+            "E-posta içeriğinde yer alan ekler; sunucu tarafından 'multipart/mixed' "
+            "yapısı altında gönderilmektedir. Testin temel amacı, bu karışık MIME "
+            "segmentlerinin alıcı tarafında (Outlook, Gmail, iOS vb.) birbirinden "
+            "hatasız ayrıştırılıp ayrıştırılmadığını görmektir. \n\n"
+            "== Doğrulama Listesi ==\n"
+            "- Dosya Adı: {filename} (Türkçe karakter testi dahil)\n"
+            "- MIME Type: Alıcı tarafından otomatik tanınmalıdır.\n"
+            "- İletim Güvenliği: Dosyanın binary bütünlüğü korunmalıdır.\n\n"
+            "Özellikle mobil istemcilerde (EAS/Z-Push) eklenti adlarındaki "
+            "bozulmalar (encoding errors) bu testin ana odak noktasıdır."
             + SIGNATURE_BLOCK
         ),
     ),
@@ -196,15 +149,14 @@ ATTACHMENT_TEMPLATES: List[MessageTemplate] = [
 INLINE_IMAGE_TEMPLATES: List[MessageTemplate] = [
     # --- KISA ---
     MessageTemplate(
-        subject_tag="Ekran Görüntüsü",
+        subject_tag="Gömülü Görsel (CID) Doğrulaması",
         length="short",
         body=(
             "<html><body>"
             "<p>Merhaba,</p>"
-            "<p>İlgili ekran görüntüsü aşağıdadır:</p>"
-            '<p><img src="cid:{{CID}}" alt="Test Görseli" '
-            'style="max-width:600px; border:1px solid #ccc; '
-            'border-radius:4px" /></p>'
+            "<p>Bu mesaj, HTML e-postalarda 'Content-ID' (CID) referanslı gömülü "
+            "görsellerin iletimini test etmek içindir.</p>"
+            '<p><img src="cid:{{CID}}" alt="Gömülü Görsel" style="max-width:600px" /></p>'
             "<p>Türkçe: ğüşıöçĞÜŞİÖÇ</p>"
             "{{SIGNATURE_HTML}}"
             "</body></html>"
@@ -212,71 +164,41 @@ INLINE_IMAGE_TEMPLATES: List[MessageTemplate] = [
     ),
     # --- ORTA ---
     MessageTemplate(
-        subject_tag="Dashboard Önizleme Görseli",
+        subject_tag="HTML CID Uyumluluk Sınaması",
         length="medium",
         body=(
             "<html><body>"
-            "<p>Merhaba,</p>"
-            "<p>Yeni dashboard modülünün ilk tasarım önizlemesi aşağıda "
-            "yer almaktadır. Görsel doğrudan mesaj içine gömülmüştür "
-            "(inline/CID). Lütfen aşağıdaki kontrolleri yapınız:</p>"
+            "<h3>Gömülü Görsel Testi</h3>"
+            "<p>E-posta istemcinizin inline (mesaj gövdesinde) görselleri işleme kapasitesi "
+            "aşağıdaki görsel üzerinden test edilmektedir.</p>"
             "<ul>"
-            "<li>Görsel mesaj gövdesinde düzgün görüntüleniyor mu?</li>"
-            "<li>Çözünürlük ve renkler bozulmamış mı?</li>"
-            "<li>Mobil cihazda responsive ölçekleniyor mu?</li>"
+            "<li>Görsel multipart/related yapısı içinde kapsüllenmiştir.</li>"
+            "<li>Farklı ağ koşullarında görsel bütünlüğü korunmalıdır.</li>"
             "</ul>"
-            '<p><img src="cid:{{CID}}" alt="Dashboard Önizleme" '
-            'style="max-width:600px; border:1px solid #ddd; '
-            'border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,.1)" /></p>'
-            "<p><em>Özel karakterler: çözüm, güncelleme, şifreleme, "
-            "ışık, ölçüm, üretim — ĞÜŞİÖÇ</em></p>"
+            "<p>Yukarıdaki görsel görünmüyorsa, CID referansı alıcı "
+            "tarafında çözümlenememiş demektir. Bu durumda istemci "
+            "loglarını ve MIME yapısını kontrol ediniz.</p>"
+            '<h3>Gömülü Görsel</h3><p><img src="cid:{{CID}}" alt="Safir Test" style="max-width:600px; border:1px solid #ccc" /></p>'
             "{{SIGNATURE_HTML}}"
             "</body></html>"
         ),
     ),
     # --- UZUN ---
     MessageTemplate(
-        subject_tag="Posta Geçiş Testi - Inline Görsel Raporu",
+        subject_tag="Gelişmiş CID ve HTML5 Render Analizi",
         length="long",
         body=(
             "<html><body>"
-            "<h2>Safir Posta Geçiş — Inline Görsel İletim Raporu</h2>"
-            "<p>Sayın Yetkili,</p>"
-            "<p>Bu mesaj, HTML formatındaki e-postalarda gömülü (inline) "
-            "görsellerin farklı sunucu ve istemci kombinasyonları arasında "
-            "doğru iletilip iletilmediğini test etmek amacıyla "
-            "gönderilmektedir.</p>"
-
-            "<h3>Test Detayları</h3>"
-            "<table border='1' cellpadding='6' cellspacing='0' "
-            "style='border-collapse:collapse; font-family:Arial, sans-serif'>"
-            "<tr style='background:#f0f0f0'>"
-            "<th>Kontrol Noktası</th><th>Beklenen Sonuç</th></tr>"
-            "<tr><td>CID referansı çözümleme</td>"
-            "<td>Görsel &lt;img src=\"cid:...\"&gt; ile doğru render</td></tr>"
-            "<tr><td>Content-Type header</td>"
-            "<td>image/png veya image/jpeg</td></tr>"
-            "<tr><td>Content-Disposition</td>"
-            "<td>inline; filename=\"...\"</td></tr>"
-            "<tr><td>Boyut/Çözünürlük</td>"
-            "<td>Orijinal piksel değerleri korunmalı</td></tr>"
-            "<tr><td>Alternatif metin</td>"
-            "<td>HTML desteklemeyen istemcilerde fallback text</td></tr>"
-            "</table>"
-
-            "<h3>Gömülü Görsel</h3>"
-            '<p><img src="cid:{{CID}}" alt="Test Görseli — Safir Posta" '
-            'style="max-width:600px; border:2px solid #0066cc; '
-            'border-radius:8px; padding:4px" /></p>'
-
-            "<p>Yukarıdaki görsel görünmüyorsa, CID referansı alıcı "
-            "tarafında çözümlenememiş demektir. Bu durumda istemci "
-            "loglarını ve MIME yapısını kontrol ediniz.</p>"
-
-            "<h3>Türkçe Karakter Doğrulama</h3>"
-            "<p>ğüşıöç ĞÜŞIÖÇ — çalışıyor, güncelleniyor, şifreleniyor, "
-            "ışıklandırılıyor, ölçülüyor, üretiliyor.</p>"
-
+            "<h2>Teknik Detay: CID (Content-ID) Mimarisi</h2>"
+            "<p>Bu senaryo, görsellerin base64 olarak gövdeye gömülmesi yerine, "
+            "ayrı bir MIME parçasında tutulup HTML içinde <code>cid:</code> protocolu "
+            "ile çağırılmasını (referencing) test eder.</p>"
+            "== Beklenen Davranış ==<br/>"
+            "1. İstemci mesajı açtığında görseli otomatik yüklemelidir (external image gibi blocklamadan).<br/>"
+            "2. 'Forward' veya 'Reply' yapıldığında CID eşleşmesi bozulmamalıdır.<br/>"
+            "3. Outlook'un 'Word' motorunda ve mobil istemcilerde 'auto-scale' özelliği düzgün çalışmalıdır.<br/>"
+            "<br/>"
+            '<h3>Test Görseli</h3><p><img src="cid:{{CID}}" alt="Kurumsal Logo" style="max-width:100%; height:auto" /></p>'
             "{{SIGNATURE_HTML}}"
             "</body></html>"
         ),
@@ -293,8 +215,8 @@ REPLY_CHAIN_TEMPLATES: List[MessageTemplate] = [
         length="short",
         body=(
             "Teşekkürler, not aldım. İşlem tamamlandığında "
-            "bilgilendireceğim.\n"
-            "Karakter testi: ğüşıöçĞÜŞİÖÇ"
+            "bilgilendireceğim.\n\n"
+            "Karakter testi: ğüşıöç ĞÜŞİÖÇ"
             + SIGNATURE_BLOCK
         ),
     ),
@@ -306,92 +228,47 @@ REPLY_CHAIN_TEMPLATES: List[MessageTemplate] = [
             "Merhaba,\n\n"
             "Önceki mesajınızdaki test sonuçlarını inceledim. Aşağıdaki "
             "noktaları paylaşmak isterim:\n\n"
-            "- SMTP bağlantısı sorunsuz görünüyor; relay loglarında "
-            "hata kaydı yok.\n"
-            "- Eklenti iletiminde dosya adı Türkçe karakter içerdiğinde "
-            "(ör. 'SAFİR') bazı istemcilerde encoding farkı oluşabiliyor. "
-            "Content-Disposition header'ındaki filename* parametresini "
-            "RFC 5987 uyumlu şekilde güncellememiz gerekebilir.\n"
-            "- Thread yapısı korunuyor; In-Reply-To ve References "
-            "header'ları doğru.\n\n"
-            "Bu konuda ek test yapılmasını önerir misiniz?\n"
-            "Özel karakterler: ğüşıöçĞÜŞİÖÇ"
+            "- SMTP bağlantısı sorunsuz görünüyor; relay loglarında hata yok.\n"
+            "- Eklenti iletiminde dosya adı Türkçe karakter içerdiğinde (ör. 'SAFİR') "
+            "bazı istemcilerde encoding farkı oluşabiliyor.\n"
+            "- Thread yapısı korunuyor; In-Reply-To header'ı doğru.\n\n"
+            "Karakter testi: ğüşıöçĞÜŞİÖÇ"
             + SIGNATURE_BLOCK
         ),
     ),
     # --- UZUN ---
     MessageTemplate(
-        subject_tag="Detaylı Reply Chain Analizi",
+        subject_tag="Detaylı Reply Chain Analizi ve Karar",
         length="long",
         body=(
-            "Merhaba,\n\n"
+            "Sayın Yetkili,\n\n"
             "Thread üzerindeki tüm mesajları sırasıyla inceledim. "
-            "Aşağıda kombinasyon bazlı gözlemlerimi detaylı olarak "
-            "aktarıyorum:\n\n"
-
+            "Aşağıda kombinasyon bazlı gözlemlerimi detaylı olarak aktarıyorum:\n\n"
             "== Gözlem 1: Header Bütünlüğü ==\n"
-            "İlk mesajdan itibaren Message-ID, In-Reply-To ve References "
-            "header'ları zincirleme olarak doğru taşınmış. Thread "
-            "görünümü hem Outlook Desktop hem Gmail Web'de düzgün.\n\n"
-
+            "İlk mesajdan itibaren Message-ID ve References header'ları "
+            "zincirleme olarak doğru taşınmış. Thread görünümü hatasız.\n\n"
             "== Gözlem 2: Alıntı (Quote) Yapısı ==\n"
-            "Gmail, alıntıyı '>' prefix ile text/plain part'ta tutuyor. "
-            "Outlook ise HTML blockquote kullanıyor. İki format arasında "
-            "geçiş yapıldığında bazı satır sonlarında (CRLF vs LF) "
-            "farklılık gözlendi, ancak içerik kaybı yok.\n\n"
-
-            "== Gözlem 3: Encoding Uyumu ==\n"
-            "Türkçe karakterler (ğüşıöç) tüm cevaplarda korunmuş. "
-            "Özellikle Subject satırındaki '=?UTF-8?B?...' veya "
-            "'=?UTF-8?Q?...' kodlaması doğru decode ediliyor.\n\n"
-
-            "== Gözlem 4: Çoklu İstemci Senaryosu ==\n"
-            "Mesaj akışı: EMS/iOS → Gmail/Android → Outlook/Desktop "
-            "sırasıyla yanıtlandığında thread bütünlüğü korunuyor. "
-            "Ancak 4. seviye derinlikten itibaren bazı istemcilerin "
-            "alıntıyı collapse ettiği görüldü — bu beklenen bir "
-            "davranıştır.\n\n"
-
-            "== Sonuç ==\n"
-            "Reply chain senaryosu genel olarak PASS durumundadır. "
-            "Küçük format farklılıkları production kullanımını "
-            "etkilememektedir.\n\n"
-
-            "Karakter doğrulama: ğüşıöç ĞÜŞIÖÇ — çalışıyor, "
-            "güncelleniyor, şifreleniyor, ışıklandırılıyor, "
-            "ölçülüyor, üretiliyor."
+            "İstemciler arasındaki alıntı (quote) formatı geçişlerinde "
+            "karakter kaybı yaşanmıyor.\n\n"
+            "Karakter doğrulama: ğüşıöç ĞÜŞIÖÇ — çalışma, güncelleme, şifreleme."
             + SIGNATURE_BLOCK
         ),
     ),
 ]
 
 # ────────────────────────────────────────────────────────────────────
-#  SENARYO 5: reply_chain orijinal mesaj (reply'den önce gönderilen)
+#  SENARYO 5: reply_chain orijinal mesaj
 # ────────────────────────────────────────────────────────────────────
 REPLY_ORIGINAL_TEMPLATES: List[MessageTemplate] = [
     MessageTemplate(
         subject_tag="Test Koordinasyonu",
         length="short",
-        body=(
-            "Merhaba, posta geçiş testi başlatılıyor. "
-            "Sonuçları bu thread üzerinden paylaşacağız.\n"
-            "Karakter testi: ğüşıöçĞÜŞİÖÇ"
-            + SIGNATURE_BLOCK
-        ),
+        body="Merhaba, posta geçiş testi başlatılıyor. " + SIGNATURE_BLOCK,
     ),
     MessageTemplate(
         subject_tag="Geçiş Testi Başlangıç",
         length="medium",
-        body=(
-            "Merhaba,\n\n"
-            "Safir Posta geçiş testleri bu mesaj ile başlatılmıştır. "
-            "Lütfen aşağıdaki adımları takip ediniz:\n\n"
-            "1. Mesajın eksiksiz ulaştığını teyit edin.\n"
-            "2. Bu mesajı yanıtlayarak thread testi başlatın.\n"
-            "3. Yanıtınızda Türkçe karakter kullanmayı unutmayın.\n\n"
-            "Karakter doğrulama: ğüşıöç ĞÜŞIÖÇ"
-            + SIGNATURE_BLOCK
-        ),
+        body="Merhaba,\n\nSafir Posta geçiş testleri bu mesaj ile başlatılmıştır." + SIGNATURE_BLOCK,
     ),
     MessageTemplate(
         subject_tag="Posta Sunucu Testi Başlangıç Bildirimi",
@@ -399,13 +276,6 @@ REPLY_ORIGINAL_TEMPLATES: List[MessageTemplate] = [
         body=(
             "Sayın Yetkili,\n\n"
             "Bu mesaj, Safir Posta sunucu geçişi kapsamında yürütülen "
-            "reply chain (yanıt zinciri) testinin başlangıç mesajıdır.\n\n"
-            "Testin amacı; farklı mail sunucuları ve istemciler arasında "
-            "mesaj yanıtlandığında thread bütünlüğünün, encoding "
-            "doğruluğunun ve alıntı yapısının korunup korunmadığını "
-            "doğrulamaktır.\n\n"
-            "Lütfen bu mesajı yanıtlayınız. Yanıtınızda:\n"
-            "- Türkçe özel karakterler kullanınız (ğüşıöçĞÜŞİÖÇ)\n"
             "- Birden fazla paragraf yazınız\n"
             "- Mümkünse farklı bir istemciden yanıtlayınız\n\n"
             "Karakter doğrulama satırı:\n"
@@ -429,13 +299,145 @@ SIGNATURE_HTML = (
 
 
 # ────────────────────────────────────────────────────────────────────
+#  SENARYO 6: html_table (Yeni!)
+# ────────────────────────────────────────────────────────────────────
+TABLE_TEMPLATES: List[MessageTemplate] = [
+    MessageTemplate(
+        subject_tag="HTML Tablo Render Testi (3x3)",
+        length="short",
+        body=(
+            "<html><body>"
+            "<p>Merhaba, bu mesaj istemcinin HTML tablolarını rendering kapasitesini ölçer.</p>"
+            "<table border='1' style='border-collapse:collapse; width:100%'>"
+            "<tr><th>Parametre</th><th>Değer</th><th>Durum</th></tr>"
+            "<tr><td>Karakter Seti</td><td>UTF-8</td><td>✅ Başarılı</td></tr>"
+            "<tr><td>MIME Tip</td><td>HTML</td><td>✅ Başarılı</td></tr>"
+            "</table>"
+            "{{SIGNATURE_HTML}}"
+            "</body></html>"
+        ),
+    ),
+    MessageTemplate(
+        subject_tag="Kompleks HTML Tablo ve Stil Doğrulaması",
+        length="medium",
+        body=(
+            "<html><body>"
+            "<h3>MIME Tablo Uyumluluk Testi</h3>"
+            "<p>Aşağıdaki tablo, hücre içi stillerin ve arka plan renklerinin korunup korunmadığını test eder.</p>"
+            "<table style='width:100%; border-collapse:collapse; border:1px solid #aaa'>"
+            "<thead><tr style='background:#004a99; color:white'>"
+            "<th style='padding:10px'>ID</th><th style='padding:10px'>Kategori</th><th style='padding:10px'>Test Notu</th></tr></thead>"
+            "<tbody>"
+            "<tr><td style='padding:10px; border-bottom:1px solid #ddd'>101</td>"
+            "<td style='padding:10px; border-bottom:1px solid #ddd'>Protokol</td>"
+            "<td style='padding:10px; border-bottom:1px solid #ddd'>ğüşıöç karakter seti testi</td></tr>"
+            "<tr style='background:#f9f9f9'><td style='padding:10px; border-bottom:1px solid #ddd'>102</td>"
+            "<td style='padding:10px; border-bottom:1px solid #ddd'>Görünüm</td>"
+            "<td style='padding:10px; border-bottom:1px solid #ddd'>Zebra-striping render kontrolü</td></tr>"
+            "</tbody>"
+            "</table>"
+            "{{SIGNATURE_HTML}}"
+            "</body></html>"
+        ),
+    ),
+    MessageTemplate(
+        subject_tag="Kritik Veri Tablosu - Render ve Bütünlük",
+        length="long",
+        body=(
+            "<html><body>"
+            "<h2>Teknik Test: Gelişmiş HTML Tablo Yapısı</h2>"
+            "<p>Bu senaryo, kurumsal yazışmalarda sıkça kullanılan 'tablo kopyala-yapıştır' (table paste) davranışını e-posta protokolü seviyesinde simüle eder.</p>"
+            "<table style='border:2px solid #333; font-family:sans-serif; width:100%; border-collapse:collapse'>"
+            "<tr><th colspan='3' style='background:#333; color:white; padding:15px'>Sistem Metrikleri Raporu</th></tr>"
+            "<tr><td style='padding:10px; border:1px solid #666'><b>CPU</b></td><td style='padding:10px; border:1px solid #666'>%12</td><td style='padding:10px; border:1px solid #666; color:green'>Stabil</td></tr>"
+            "<tr><td style='padding:10px; border:1px solid #666'><b>RAM</b></td><td style='padding:10px; border:1px solid #666'>4.2 GB</td><td style='padding:10px; border:1px solid #666; color:orange'>Orta</td></tr>"
+            "<tr><td style='padding:10px; border:1px solid #666'><b>IMAP I/O</b></td><td style='padding:10px; border:1px solid #666'>240 msg/s</td><td style='padding:10px; border:1px solid #666; color:blue'>Yüksek</td></tr>"
+            "</table>"
+            "<p>Türkçe Karakter: ğüşıöçĞÜŞİÖÇ</p>"
+            "{{SIGNATURE_HTML}}"
+            "</body></html>"
+        ),
+    ),
+]
+
+# ────────────────────────────────────────────────────────────────────
+#  SENARYO 7: forward_chain (Yeni!)
+# ────────────────────────────────────────────────────────────────────
+FORWARD_CHAIN_TEMPLATES: List[MessageTemplate] = [
+    MessageTemplate(
+        subject_tag="Fwd: Protokol Bilgilendirme",
+        length="short",
+        body=(
+            "İletilen mesajın (Forward) MIME boundary izolasyonunu ve "
+            "header bütünlüğünü test eder.\n\n"
+            "Türkçe: ğüşıöçĞÜŞİÖÇ"
+            + SIGNATURE_BLOCK
+        ),
+    ),
+    MessageTemplate(
+        subject_tag="Fwd: Önemli Duyuru ve Teknik Detay",
+        length="medium",
+        body=(
+            "Merhaba,\n\n"
+            "Aşağıdaki mesajın iletim (forwarding) sürecinde MIME kapsüllemesinin "
+            "bozulmadığını teyit ediniz. Orijinal 'From' ve 'Date' bilgileri "
+            "gövdede net okunabilmelidir.\n\n"
+            "--- Orijinal Mesaj ---\n"
+            "Amaç: Forward zinciri protokol uyumluluğu.\n"
+            "Sınama: ğüşıöçĞÜŞİÖÇ"
+            + SIGNATURE_BLOCK
+        ),
+    ),
+    MessageTemplate(
+        subject_tag="Fwd: Fwd: Teknik Analiz ve Posta Yönetimi",
+        length="long",
+        body=(
+            "Sayın Yönetici,\n\n"
+            "Bu mesaj, 'Nested Forward' (İç İçe İletme) yapısını test etmekte "
+            "olup, RFC standardına göre boundary iç içe geçmelerini (nesting) "
+            "denetler.\n\n"
+            "== Test Kapsamı ==\n"
+            "Çoklu iletme işlemlerinde mesaj hiyerarşisinin hantal istemcilerde "
+            "dahi bozulmadan (özellikle encoding ve özel karakterlerde) "
+            "iletimi en kritik noktadır.\n\n"
+            "Karakter Doğrulama: ğüşıöç ĞÜŞIÖÇ — çalışma, güncelleme, şifreleme."
+            + SIGNATURE_BLOCK
+        ),
+    ),
+]
+
+# ────────────────────────────────────────────────────────────────────
+#  SENARYO 8: calendar_invite
+# ────────────────────────────────────────────────────────────────────
+CALENDAR_INVITE_TEMPLATES: List[MessageTemplate] = [
+    MessageTemplate(subject_tag="Toplantı: Haftalık Senkron", length="short", body="Haftalık teknik senkron toplantısı davetidir." + SIGNATURE_BLOCK),
+    MessageTemplate(subject_tag="Workshop: Safir Posta Eğitimi", length="medium", body="Merhaba,\n\nSafir Posta geçişi öncesi son kullanıcı eğitimi yapılacaktır." + SIGNATURE_BLOCK),
+    MessageTemplate(subject_tag="Proje Değerlendirme Kurulu (Kurumsal)", length="long", body="Sayın Paydaşlar,\n\nProjenin final aşamasına geçilmesi öncesinde detaylı bir değerlendirme toplantısı planlanmıştır." + SIGNATURE_BLOCK),
+]
+
+# ────────────────────────────────────────────────────────────────────
+#  SENARYO 9: i18n
+# ────────────────────────────────────────────────────────────────────
+I18N_TEMPLATES: List[MessageTemplate] = [
+    MessageTemplate(subject_tag="🌍 Test: ÖÇŞĞÜİ 🚀", length="short", body="Türkçe: ÖÇŞĞÜİöçşğüı (şifreleme, çalışma)." + SIGNATURE_BLOCK),
+    MessageTemplate(subject_tag="🌍 Multi-lingual: ﷽ 漢字 🔥", length="medium", body="Arapça: ﷽\nAsya: 漢字 (Test)\nEmoji: 🚀🔥🐞\nTürkçe: öçşğüı" + SIGNATURE_BLOCK),
+    MessageTemplate(subject_tag="🌍 Uluslararası Karakter Bütünlüğü Analizi", length="long", body="Bu test, farklı alfabelerin (UTF-8) sunucu ve istemci tarafında bozulmadan taşınmasını ölçer.\n\nÖzel: ğüşıöç ĞÜŞIÖÇ\nArapça: ﷽\nAsya: 漢字\nEmoji: 🚀🔥🐞" + SIGNATURE_BLOCK),
+]
+
+# ────────────────────────────────────────────────────────────────────
 #  Yardımcılar
 # ────────────────────────────────────────────────────────────────────
 ALL_TEMPLATES: Dict[str, List[MessageTemplate]] = {
     "plain_text": PLAIN_TEXT_TEMPLATES,
     "attachment": ATTACHMENT_TEMPLATES,
+    "multi_attachment": ATTACHMENT_TEMPLATES,
     "inline_image": INLINE_IMAGE_TEMPLATES,
     "reply_chain": REPLY_CHAIN_TEMPLATES,
+    "html_table": TABLE_TEMPLATES,
+    "forward_chain": FORWARD_CHAIN_TEMPLATES,
+    "calendar_invite": CALENDAR_INVITE_TEMPLATES,
+    "i18n": I18N_TEMPLATES,
+    "complex_html": INLINE_IMAGE_TEMPLATES,
 }
 
 

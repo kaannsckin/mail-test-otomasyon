@@ -86,8 +86,9 @@ def _mask_secrets(data: dict) -> dict:
             for key in ("password", "totp_secret"):
                 if data[srv].get(key):
                     data[srv][key] = SECRET_MASK
-    if isinstance(data.get("anthropic"), dict) and data["anthropic"].get("api_key"):
-        data["anthropic"]["api_key"] = SECRET_MASK
+    for section in ("anthropic", "gemini"):
+        if isinstance(data.get(section), dict) and data[section].get("api_key"):
+            data[section]["api_key"] = SECRET_MASK
     return data
 
 @app.route("/api/config", methods=["GET"])
@@ -110,9 +111,14 @@ def save_config():
             for key in ("password", "totp_secret"):
                 if _is_unset(data[srv].get(key)):
                     data[srv][key] = existing[srv].get(key, "")
-    if "anthropic" in data and isinstance(existing.get("anthropic"), dict):
-        if _is_unset(data["anthropic"].get("api_key")):
-            data["anthropic"]["api_key"] = existing["anthropic"].get("api_key", "")
+    for section in ("anthropic", "gemini"):
+        if section in data and isinstance(existing.get(section), dict):
+            if _is_unset(data[section].get("api_key")):
+                data[section]["api_key"] = existing[section].get("api_key", "")
+    # UI'ın göndermediği bölümler (analysis, gemini, logging vb.) silinmesin
+    for section, value in existing.items():
+        if section not in data:
+            data[section] = value
     try:
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)

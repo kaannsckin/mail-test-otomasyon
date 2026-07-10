@@ -518,12 +518,22 @@ def main():
                     logger.error(f"  ❌ SMTP FAIL: {server_name} — {e}")
         return
 
-    # Analiz için Claude
-    anthropic_cfg = config.get("anthropic", {})
-    analyzer = MailAnalyzer(
-        api_key=anthropic_cfg.get("api_key", ""),
-        model=anthropic_cfg.get("model") or None,
-    )
+    # Analiz için LLM — analysis.provider: claude (varsayılan) | gemini
+    provider = (config.get("analysis", {}).get("provider") or "claude").lower()
+    if provider == "gemini":
+        gemini_cfg = config.get("gemini", {})
+        analyzer = MailAnalyzer(
+            api_key=gemini_cfg.get("api_key", ""),
+            model=gemini_cfg.get("model") or None,
+            provider="gemini",
+        )
+    else:
+        anthropic_cfg = config.get("anthropic", {})
+        analyzer = MailAnalyzer(
+            api_key=anthropic_cfg.get("api_key", ""),
+            model=anthropic_cfg.get("model") or None,
+        )
+    logger.info(f"Analiz sağlayıcısı: {provider} ({analyzer.model})")
 
     all_results = []
     Path("reports").mkdir(exist_ok=True)

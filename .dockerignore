@@ -1,0 +1,14 @@
+.git
+.github
+.venv
+venv
+__pycache__
+*.pyc
+config.yaml
+logs/
+reports/
+test_files/
+attachments/
+data/
+tests/
+.pytest_cache

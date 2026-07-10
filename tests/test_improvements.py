@@ -460,3 +460,61 @@ class TestAnalyzerRobustness:
             result = a.analyze("plain_text", {"msg_id": "<x>"}, received_msg, combination_meta)
         assert result["passed"] is False
         assert "erişim hatası" in result["summary"]
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  analyzer — Gemini provider
+# ═══════════════════════════════════════════════════════════════════
+
+class TestGeminiProvider:
+
+    def _gemini_response(self, payload: dict):
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {
+            "candidates": [{"content": {"parts": [{"text": json.dumps(payload)}]}}]
+        }
+        return resp
+
+    def test_gemini_analyze_pass(self, received_msg, combination_meta):
+        from analyzer import MailAnalyzer, DEFAULT_GEMINI_MODEL
+        ok = {"passed": True, "confidence": "HIGH", "checks": [],
+              "summary": "OK", "issues": [], "recommendations": []}
+        with patch("analyzer.httpx.post", return_value=self._gemini_response(ok)) as post:
+            a = MailAnalyzer("gemini-key", provider="gemini")
+            result = a.analyze("plain_text", {"msg_id": "<x>"}, received_msg, combination_meta)
+        assert result["passed"] is True
+        assert DEFAULT_GEMINI_MODEL in post.call_args[0][0]
+        # API key URL'de değil header'da taşınmalı
+        assert post.call_args[1]["headers"]["x-goog-api-key"] == "gemini-key"
+        assert "key=" not in post.call_args[0][0]
+
+    def test_gemini_custom_model(self, received_msg, combination_meta):
+        from analyzer import MailAnalyzer
+        ok = {"passed": True, "confidence": "HIGH", "checks": [],
+              "summary": "OK", "issues": [], "recommendations": []}
+        with patch("analyzer.httpx.post", return_value=self._gemini_response(ok)) as post:
+            a = MailAnalyzer("k", model="gemini-2.5-pro", provider="gemini")
+            a.analyze("plain_text", {"msg_id": "<x>"}, received_msg, combination_meta)
+        assert "gemini-2.5-pro" in post.call_args[0][0]
+
+    def test_gemini_http_error_returns_fail(self, received_msg, combination_meta):
+        import httpx as httpx_mod
+        from analyzer import MailAnalyzer
+        with patch("analyzer.httpx.post",
+                   side_effect=httpx_mod.ConnectError("bağlantı yok")):
+            a = MailAnalyzer("k", provider="gemini")
+            result = a.analyze("plain_text", {"msg_id": "<x>"}, received_msg, combination_meta)
+        assert result["passed"] is False
+        assert "Gemini" in result["summary"]
+
+    def test_unknown_provider_raises(self):
+        from analyzer import MailAnalyzer
+        with pytest.raises(ValueError):
+            MailAnalyzer("k", provider="openai")
+
+    def test_claude_default_unaffected(self, mock_claude_pass, received_msg, combination_meta):
+        from analyzer import MailAnalyzer, DEFAULT_MODEL
+        a = MailAnalyzer("sk-ant-test")
+        assert a.provider == "claude"
+        assert a.model == DEFAULT_MODEL

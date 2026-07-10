@@ -7,7 +7,7 @@ Web arayüzü (Flask), 2FA/TOTP desteği ve otomatik MIME analizi içerir.
 
 ## 🏗️ Proje Yapısı
 
-```
+```text
 mail_automation/
 ├── app.py                # Flask web arayüzü — buradan başlat
 ├── main.py               # CLI orkestratör (arayüz veya doğrudan çalıştırılabilir)
@@ -61,7 +61,7 @@ Config bilgilerini (SMTP/IMAP, API key, 2FA) doğrudan web arayüzünden girebil
 Eğer `5000` doluysa uygulama otomatik olarak bir sonraki boş porta geçer (ör. `5001`).
 
 | Sekme | Açıklama |
-|-------|----------|
+| --- | --- |
 | **Dashboard** | Test matrisi özeti ve son sonuçlar |
 | **Konfigürasyon** | Sunucu SMTP/IMAP bilgileri, Claude API key, test parametreleri |
 | **Güvenlik & 2FA** | Her sunucu için kimlik doğrulama yöntemi ve TOTP ayarları |
@@ -102,7 +102,7 @@ HOST=0.0.0.0 UI_PASSWORD='guclu-parola' python app.py
 Her sunucu için 4 kimlik doğrulama yöntemi desteklenir:
 
 | Yöntem | Açıklama | Kullanım |
-|--------|----------|----------|
+| --- | --- | --- |
 | `password` | Standart kullanıcı adı + şifre | 2FA kapalı hesaplar |
 | `app_password` | Uygulama özel şifresi | Gmail App Password, Microsoft App Password |
 | `totp_password` | Şifre + TOTP/OTP kodu | 2FA zorunlu EMS/kurumsal sunucular |
@@ -122,7 +122,7 @@ Her sunucu için 4 kimlik doğrulama yöntemi desteklenir:
 ## 📊 Test Senaryoları
 
 | Senaryo | Ne Test Eder |
-|---------|--------------|
+| --- | --- |
 | `plain_text` | UTF-8 encoding, header bütünlüğü, Türkçe karakter (ğüşıöç) |
 | `attachment` | MIME type, dosya adı/boyutu, base64 encoding |
 | `inline_image` | CID referansı, HTML yapısı, resim bütünlüğü |
@@ -136,7 +136,7 @@ Her sunucu için 4 kimlik doğrulama yöntemi desteklenir:
 
 ## 🧠 Claude API Analiz Akışı
 
-```
+```text
 CSV'den Senaryo Oku
        ↓
   Sender (SMTP)
@@ -204,6 +204,13 @@ anthropic:
   api_key: ""                     # https://console.anthropic.com → API Keys
   model: "claude-opus-4-8"        # boş bırakılırsa varsayılan (claude-opus-4-8) kullanılır
 
+analysis:
+  provider: "claude"              # claude | gemini — analiz için kullanılacak LLM
+
+gemini:                           # yalnızca provider: gemini iken gerekli
+  api_key: ""                     # https://aistudio.google.com/apikey
+  model: "gemini-2.0-flash"
+
 test:
   wait_seconds: 15                # Mesajın IMAP'te görünmesini bekleme süresi
   max_retries: 3
@@ -264,7 +271,7 @@ python scripts/e2e_smoke.py --to alici@ornek.com --scenarios plain_text --dry-ru
 ## 🔍 Sorun Giderme
 
 | Hata | Çözüm |
-|------|-------|
+| --- | --- |
 | SMTP auth hatası | `auth_method` ayarını kontrol et; Gmail için App Password kullan |
 | IMAP timeout | `wait_seconds` değerini artır (varsayılan: 15) |
 | Mesaj bulunamıyor | `subject_prefix` sunucu filtresine takılıyor olabilir |

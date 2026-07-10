@@ -67,3 +67,12 @@ test:
 logging:
   level: "INFO"
   file: "logs/automation.log"
+
+# Analiz sağlayıcısı: claude (varsayılan) | gemini
+analysis:
+  provider: "claude"
+
+# Yalnızca analysis.provider: gemini iken kullanılır
+gemini:
+  api_key: ""                         # https://aistudio.google.com/apikey
+  model: "gemini-2.0-flash"

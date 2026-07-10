@@ -1,6 +1,11 @@
 """
-analyzer.py — Claude API ile MIME içeriğini analiz eder.
+analyzer.py — LLM (Claude API veya Google Gemini) ile MIME içeriğini analiz eder.
 Her senaryo tipi için özelleştirilmiş prompt'lar kullanır.
+
+Provider seçimi config.yaml'daki ``analysis.provider`` alanı ile yapılır:
+  claude (varsayılan) → anthropic SDK, ``anthropic.api_key`` / ``anthropic.model``
+  gemini              → Google Generative Language REST API,
+                        ``gemini.api_key`` / ``gemini.model``
 """
 
 import json
@@ -9,18 +14,31 @@ import re
 from typing import Optional
 
 import anthropic
+import httpx  # anthropic SDK'nın bağımlılığı — ek paket gerektirmez
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-opus-4-8"
+DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
+GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
 
 class MailAnalyzer:
-    def __init__(self, api_key: str, model: Optional[str] = None):
+    def __init__(self, api_key: str, model: Optional[str] = None,
+                 provider: str = "claude"):
+        self.provider = (provider or "claude").lower().strip()
+        if self.provider not in ("claude", "gemini"):
+            raise ValueError(
+                f"Bilinmeyen provider: {provider}. 'claude' veya 'gemini' kullanın."
+            )
         self.api_key = api_key
-        self.model = model or DEFAULT_MODEL
-        # SDK 429/5xx hatalarında otomatik exponential backoff ile yeniden dener.
-        self.client = anthropic.Anthropic(api_key=api_key, max_retries=3, timeout=60.0)
+        if self.provider == "gemini":
+            self.model = model or DEFAULT_GEMINI_MODEL
+            self.client = None
+        else:
+            self.model = model or DEFAULT_MODEL
+            # SDK 429/5xx hatalarında otomatik exponential backoff ile yeniden dener.
+            self.client = anthropic.Anthropic(api_key=api_key, max_retries=3, timeout=60.0)
 
     def analyze(self, scenario_type: str, send_meta: dict,
                 received_msg: Optional[dict], combination: dict) -> dict:
@@ -38,7 +56,10 @@ class MailAnalyzer:
             }
 
         prompt = self._build_prompt(scenario_type, send_meta, received_msg, combination)
-        response = self._call_claude(prompt)
+        if self.provider == "gemini":
+            response = self._call_gemini(prompt)
+        else:
+            response = self._call_claude(prompt)
         return self._parse_response(response, scenario_type)
 
     # ------------------------------------------------------------------ #
@@ -197,6 +218,36 @@ Sadece JSON döndür, markdown veya açıklama ekleme."""
             "issues": [str(exc)],
             "recommendations": [],
         })
+
+    # ------------------------------------------------------------------ #
+    #  Gemini API çağrısı (REST)
+    # ------------------------------------------------------------------ #
+    def _call_gemini(self, prompt: str) -> str:
+        url = f"{GEMINI_API_BASE}/{self.model}:generateContent"
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"maxOutputTokens": 2000},
+        }
+        try:
+            resp = httpx.post(
+                url,
+                headers={"x-goog-api-key": self.api_key},  # key URL'de/loglarda görünmesin
+                json=payload,
+                timeout=60.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data["candidates"][0]["content"]["parts"][0]["text"]
+        except (httpx.HTTPError, KeyError, IndexError, ValueError) as e:
+            logger.error(f"Gemini API hatası: {e}")
+            return json.dumps({
+                "passed": False,
+                "confidence": "LOW",
+                "checks": [],
+                "summary": f"Gemini API erişim hatası: {e}",
+                "issues": [str(e)],
+                "recommendations": [],
+            })
 
     # ------------------------------------------------------------------ #
     #  Response parser
