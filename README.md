@@ -248,6 +248,17 @@ python -m pytest
 
 GitHub Actions üzerinde her push/PR için otomatik çalışır (`.github/workflows/tests.yml`).
 
+### Gerçek sunucu duman testi
+
+Mock'suz, gerçek bir SMTP hesabından gerçek bir alıcıya 4 senaryoyu gönderir ve
+gönderen kutuda bounce kontrolü yapar (alıcı taraf görsel olarak doğrulanır):
+
+```bash
+cp config.yaml.example config.yaml   # gönderen hesabı doldur (örn. gmail + app password)
+python scripts/e2e_smoke.py --to alici@ornek.com
+python scripts/e2e_smoke.py --to alici@ornek.com --scenarios plain_text --dry-run
+```
+
 ---
 
 ## 🔍 Sorun Giderme
