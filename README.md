@@ -83,10 +83,17 @@ Diğer ortam değişkenleri:
 | `PORT` | `5000` (doluysa sıradaki boş port) | Sunucu portu |
 | `HOST` | `127.0.0.1` | Ağdan erişim için `HOST=0.0.0.0` ayarla |
 | `FLASK_DEBUG` | kapalı | `FLASK_DEBUG=1` ile debug/reloader açılır (yalnızca geliştirme için — debugger uzaktan kod çalıştırmaya izin verir) |
+| `UI_PASSWORD` | boş (auth kapalı) | Ayarlanırsa tüm arayüz HTTP Basic Auth ister |
+| `UI_USERNAME` | `admin` | Basic Auth kullanıcı adı (`UI_PASSWORD` ile birlikte) |
 
-> **Güvenlik notu:** Arayüzde kimlik doğrulama yoktur. Varsayılan olarak yalnızca
-> `localhost`'tan erişilebilir; `HOST=0.0.0.0` ile ağa açarsanız yalnızca güvenilir
-> bir ağda kullanın. `/api/config` yanıtlarında şifreler ve API key maskelenir.
+```bash
+# Ağa açık + parola korumalı çalıştırma örneği
+HOST=0.0.0.0 UI_PASSWORD='guclu-parola' python app.py
+```
+
+> **Güvenlik notu:** Varsayılan olarak arayüz yalnızca `localhost`'tan erişilebilir
+> ve kimlik doğrulama kapalıdır. `HOST=0.0.0.0` ile ağa açacaksanız mutlaka
+> `UI_PASSWORD` ayarlayın. `/api/config` yanıtlarında şifreler ve API key maskelenir.
 
 ---
 
@@ -101,7 +108,12 @@ Her sunucu için 4 kimlik doğrulama yöntemi desteklenir:
 | `totp_password` | Şifre + TOTP/OTP kodu | 2FA zorunlu EMS/kurumsal sunucular |
 | `otp_only` | Yalnızca tek kullanımlık kod | SMS veya authenticator tabanlı giriş |
 
-**TOTP Otomatik Üretim:** Authenticator uygulamanızdaki Base32 secret'ı kaydederseniz, her test çalışmasında kod otomatik üretilir — sizi durdurmaz. Secret kaydetmek istemiyorsanız boş bırakın; her çalışmada ekrana modal açılır ve kodu girersiniz.
+**TOTP Otomatik Üretim:** Authenticator uygulamanızdaki Base32 secret'ı kaydederseniz, her test çalışmasında kod otomatik üretilir — sizi durdurmaz. Secret kaydetmek istemiyorsanız boş bırakın; web arayüzünden başlatılan testlerde ekrana modal açılır ve kodu girersiniz (test süreci ile arayüz, `logs/mfa_bridge/` altındaki dosya köprüsü üzerinden haberleşir). Girilen kod 20 saniye boyunca aynı sunucunun yeniden bağlanmalarında tekrar sorulmadan kullanılır.
+
+> Doğrudan CLI'dan (`python main.py`) çalıştırmada modal akışı devre dışıdır —
+> secret kayıtlı değilse yalnızca şifre ile giriş denenir. Modal akışını CLI'da
+> zorlamak isterseniz `MFA_INTERACTIVE=1 python main.py` ile başlatıp kodu başka
+> bir terminalden web arayüzüne girebilirsiniz.
 
 **OTP tipleri:** TOTP / SMS / E-posta OTP / Push bildirimi
 

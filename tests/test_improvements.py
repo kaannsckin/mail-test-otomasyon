@@ -89,6 +89,50 @@ class TestConfigSecretRedaction:
 
 
 # ═══════════════════════════════════════════════════════════════════
+#  HTTP Basic Auth (UI_PASSWORD)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestBasicAuth:
+
+    def test_no_password_env_no_auth_required(self, flask_client, monkeypatch):
+        monkeypatch.delenv("UI_PASSWORD", raising=False)
+        assert flask_client.get("/api/run/status").status_code == 200
+
+    def test_password_set_unauthenticated_401(self, flask_client, monkeypatch):
+        monkeypatch.setenv("UI_PASSWORD", "parola123")
+        resp = flask_client.get("/api/run/status")
+        assert resp.status_code == 401
+        assert "WWW-Authenticate" in resp.headers
+
+    def test_password_set_wrong_credentials_401(self, flask_client, monkeypatch):
+        import base64
+        monkeypatch.setenv("UI_PASSWORD", "parola123")
+        creds = base64.b64encode(b"admin:yanlis").decode()
+        resp = flask_client.get("/api/run/status",
+                                headers={"Authorization": f"Basic {creds}"})
+        assert resp.status_code == 401
+
+    def test_password_set_correct_credentials_200(self, flask_client, monkeypatch):
+        import base64
+        monkeypatch.setenv("UI_PASSWORD", "parola123")
+        creds = base64.b64encode(b"admin:parola123").decode()
+        resp = flask_client.get("/api/run/status",
+                                headers={"Authorization": f"Basic {creds}"})
+        assert resp.status_code == 200
+
+    def test_custom_username(self, flask_client, monkeypatch):
+        import base64
+        monkeypatch.setenv("UI_PASSWORD", "parola123")
+        monkeypatch.setenv("UI_USERNAME", "testci")
+        ok = base64.b64encode(b"testci:parola123").decode()
+        bad = base64.b64encode(b"admin:parola123").decode()
+        assert flask_client.get("/api/run/status",
+                                headers={"Authorization": f"Basic {ok}"}).status_code == 200
+        assert flask_client.get("/api/run/status",
+                                headers={"Authorization": f"Basic {bad}"}).status_code == 401
+
+
+# ═══════════════════════════════════════════════════════════════════
 #  /api/reports — path traversal
 # ═══════════════════════════════════════════════════════════════════
 
@@ -242,6 +286,147 @@ class TestReceiverTotpLogin:
                                max_retries=1, retry_interval=0)
         login_args = mock_imap_empty.login.call_args[0]
         assert login_args[1] == "secret111222"
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  MFA süreçler arası köprü (dosya tabanlı)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestMfaBridge:
+    """CLI subprocess'i (main.py) ile Flask sürecinin dosya köprüsü üzerinden
+    2FA kodu alışverişini iki ayrı MFAManager örneğiyle simüle eder."""
+
+    def _managers(self, tmp_path):
+        from auth_manager import MFAManager
+        cli = MFAManager(bridge_dir=tmp_path / "bridge")
+        flask_side = MFAManager(bridge_dir=tmp_path / "bridge")
+        return cli, flask_side
+
+    def test_bridge_submit_flow(self, tmp_path):
+        import threading
+        cli, flask_side = self._managers(tmp_path)
+        results = {}
+
+        t = threading.Thread(
+            target=lambda: results.update(
+                code=cli.mfa_challenge("ems", "EMS Sunucusu", method="sms")
+            ),
+            daemon=True,
+        )
+        t.start()
+
+        # Flask tarafı challenge'ı görene kadar bekle
+        pending = None
+        for _ in range(40):
+            pending = flask_side.get_pending()
+            if pending:
+                break
+            import time as _t; _t.sleep(0.05)
+        assert pending is not None
+        assert pending["server_key"] == "ems"
+        assert pending["method"] == "sms"
+
+        assert flask_side.submit_code("998877") is True
+        t.join(timeout=5)
+        assert results.get("code") == "998877"
+
+    def test_bridge_cancel_flow(self, tmp_path):
+        import threading, time as _t
+        cli, flask_side = self._managers(tmp_path)
+        results = {}
+
+        t = threading.Thread(
+            target=lambda: results.update(
+                code=cli.mfa_challenge("gmail", "Gmail", method="totp")
+            ),
+            daemon=True,
+        )
+        t.start()
+        for _ in range(40):
+            if flask_side.get_pending():
+                break
+            _t.sleep(0.05)
+        assert flask_side.cancel() is True
+        t.join(timeout=5)
+        assert results.get("code") is None
+
+    def test_stale_challenge_ignored(self, tmp_path):
+        import json as _json, time as _t
+        from auth_manager import MFAManager
+        mgr = MFAManager(bridge_dir=tmp_path)
+        (tmp_path / "challenge.json").write_text(_json.dumps({
+            "server_key": "ems", "server_label": "EMS", "method": "totp",
+            "prompt": "p", "created_at": _t.time() - 1000,
+        }), encoding="utf-8")
+        assert mgr.get_pending() is None
+        assert not (tmp_path / "challenge.json").exists()  # temizlenmiş olmalı
+
+    def test_code_cache_reused_for_reconnect(self, tmp_path):
+        """Alınan kod kısa süre içinde aynı sunucu için tekrar sorulmadan dönmeli."""
+        import threading
+        cli, flask_side = self._managers(tmp_path)
+        results = {}
+        t = threading.Thread(
+            target=lambda: results.update(
+                code=cli.mfa_challenge("ems", "EMS", method="sms")
+            ),
+            daemon=True,
+        )
+        t.start()
+        import time as _t
+        for _ in range(40):
+            if flask_side.get_pending():
+                break
+            _t.sleep(0.05)
+        flask_side.submit_code("112233")
+        t.join(timeout=5)
+        assert results["code"] == "112233"
+        # İkinci istek beklemeden önbellekten dönmeli
+        assert cli.mfa_challenge("ems", "EMS", method="sms") == "112233"
+
+    def test_flask_endpoints_see_bridged_challenge(self, flask_client, tmp_path, monkeypatch):
+        """Subprocess'in yazdığı challenge dosyası API üzerinden görünmeli,
+        submit edilen kod response dosyasına yazılmalı."""
+        import json as _json, time as _t
+        from auth_manager import mfa_manager
+        monkeypatch.setattr(mfa_manager, "bridge_dir", tmp_path)
+        (tmp_path / "challenge.json").write_text(_json.dumps({
+            "server_key": "ems", "server_label": "EMS On-Prem", "method": "totp",
+            "prompt": "Kodu girin", "created_at": _t.time(),
+        }), encoding="utf-8")
+
+        status = flask_client.get("/api/mfa/status").get_json()
+        assert status["pending"] is True
+        assert status["challenge"]["server_label"] == "EMS On-Prem"
+
+        resp = flask_client.post("/api/mfa/submit", json={"code": "445566"})
+        assert resp.get_json()["ok"] is True
+        written = _json.loads((tmp_path / "response.json").read_text(encoding="utf-8"))
+        assert written["code"] == "445566"
+
+    def test_sender_falls_back_to_challenge_without_secret(self, server_cfg, mock_smtp,
+                                                           monkeypatch):
+        from sender import MailSender
+        monkeypatch.setenv("MFA_INTERACTIVE", "1")
+        cfg = {**server_cfg, "auth_method": "totp_password", "totp_secret": "",
+               "label": "EMS Test"}
+        with patch("sender.mfa_manager.mfa_challenge", return_value="777888") as challenge:
+            s = MailSender(cfg)
+            s.send_plain_text("to@test.local", "Konu", "Gövde")
+        assert challenge.called
+        assert mock_smtp.login.call_args[0][1] == "secret777888"
+
+    def test_sender_no_challenge_without_interactive_env(self, server_cfg, mock_smtp,
+                                                         monkeypatch):
+        """Yalın CLI'da (env yok) modal akışı devreye girmemeli — bloklama riski."""
+        from sender import MailSender
+        monkeypatch.delenv("MFA_INTERACTIVE", raising=False)
+        cfg = {**server_cfg, "auth_method": "totp_password", "totp_secret": ""}
+        with patch("sender.mfa_manager.mfa_challenge") as challenge:
+            s = MailSender(cfg)
+            s.send_plain_text("to@test.local", "Konu", "Gövde")
+        assert not challenge.called
+        assert mock_smtp.login.call_args[0][1] == "secret"
 
 
 # ═══════════════════════════════════════════════════════════════════

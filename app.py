@@ -3,7 +3,7 @@ app.py — Mail Otomasyon Web Arayüzü (Flask)
 Çalıştır: python app.py  →  http://localhost:5000 (boşsa) / otomatik alternatif port
 """
 
-import csv, json, logging, os, queue, socket, subprocess, sys, threading, time
+import csv, hmac, json, logging, os, queue, socket, subprocess, sys, threading, time
 from datetime import datetime
 from pathlib import Path
 
@@ -29,6 +29,25 @@ run_state = {
     "finished_at": None,
     "exit_code": None,
 }
+
+# ── AUTH (opsiyonel) ───────────────────────────────────────────
+# UI_PASSWORD ayarlanırsa tüm istekler HTTP Basic Auth gerektirir.
+# Ayarlanmazsa mevcut davranış korunur (yalnızca localhost'ta kullan).
+@app.before_request
+def _require_basic_auth():
+    password = os.environ.get("UI_PASSWORD", "")
+    if not password:
+        return None
+    username = os.environ.get("UI_USERNAME", "admin")
+    auth = request.authorization
+    if (auth and auth.type == "basic"
+            and hmac.compare_digest(auth.username or "", username)
+            and hmac.compare_digest(auth.password or "", password)):
+        return None
+    return Response(
+        "Kimlik doğrulama gerekli", 401,
+        {"WWW-Authenticate": 'Basic realm="Mail Otomasyon"'},
+    )
 
 # ── CONFIG ──────────────────────────────────────────────────────
 SECRET_MASK = "••••••••"
@@ -217,10 +236,15 @@ def start_run():
     run_state.update({"log_queue": queue.Queue(), "running": True,
                       "started_at": datetime.now().isoformat(),
                       "finished_at": None, "exit_code": None})
+    mfa_manager.clear_bridge()  # önceki çalışmadan kalan challenge dosyaları
     def _run():
         try:
+            # MFA_INTERACTIVE=1: subprocess'teki sender/receiver, TOTP secret yoksa
+            # kodu köprü üzerinden arayüz modal'ından ister.
+            env = {**os.environ, "MFA_INTERACTIVE": "1"}
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    text=True, encoding="utf-8", cwd=Path(__file__).parent)
+                                    text=True, encoding="utf-8",
+                                    cwd=Path(__file__).parent, env=env)
             run_state["process"] = proc
             for line in proc.stdout: run_state["log_queue"].put(line.rstrip())
             proc.wait(); run_state["exit_code"] = proc.returncode

@@ -3,6 +3,7 @@ receiver.py — IMAP üzerinden mesajı polling ile bekler ve ham içeriği dön
 """
 
 import imaplib
+import os
 import ssl
 import email
 import time
@@ -10,9 +11,15 @@ import logging
 from email.header import decode_header
 from typing import Optional
 
-from auth_manager import generate_totp
+from auth_manager import generate_totp, mfa_manager
 
 logger = logging.getLogger(__name__)
+
+
+def _interactive_mfa_enabled() -> bool:
+    """Web arayüzü subprocess'i MFA_INTERACTIVE=1 ile başlatır; modal akışı
+    yalnızca bu durumda devreye girer (yalın CLI'da 5 dk bloklamamak için)."""
+    return os.environ.get("MFA_INTERACTIVE", "") == "1"
 
 
 class MailReceiver:
@@ -27,9 +34,19 @@ class MailReceiver:
         self.totp_secret = server_config.get("totp_secret", "")
 
     def _login(self, imap):
-        """auth_method'a göre giriş yapar; TOTP secret varsa kodu otomatik üretir."""
-        if self.auth_method in ("totp_password", "otp_only") and self.totp_secret:
-            code = generate_totp(self.totp_secret)
+        """auth_method'a göre giriş yapar; TOTP secret varsa kodu otomatik üretir.
+
+        Secret yoksa ve web arayüzünden başlatıldıysa (MFA_INTERACTIVE=1),
+        kod kullanıcıdan modal üzerinden istenir (süreçler arası köprü).
+        """
+        if self.auth_method in ("totp_password", "otp_only"):
+            code = generate_totp(self.totp_secret) if self.totp_secret else ""
+            if not code and _interactive_mfa_enabled():
+                label = self.config.get("label", self.host)
+                code = mfa_manager.mfa_challenge(
+                    server_key=label, server_label=label,
+                    method=self.config.get("mfa_method", "totp"),
+                ) or ""
             if code:
                 if self.auth_method == "otp_only":
                     imap.login(self.username, code)
