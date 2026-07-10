@@ -1,4 +1,10 @@
 [deploy]
 startCommand = "python app.py"
+healthcheckPath = "/api/health"
+healthcheckTimeout = 120
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
+
+# Not: Config/rapor kalıcılığı için Railway panelinden bir Volume ekleyin
+# (mount path: /data) ve DATA_DIR=/data env değişkenini tanımlayın.
+# Arayüzü parolayla korumak için UI_PASSWORD env değişkenini ayarlayın.
