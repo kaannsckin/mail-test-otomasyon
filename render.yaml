@@ -1,3 +1,9 @@
+# Render Blueprint — ücretsiz planla uyumlu.
+# Not: Ücretsiz planda kalıcı disk YOKTUR; config.yaml yeniden başlatmada
+# silinir. Arayüzdeki "Config İçe/Dışa Aktar" özelliğiyle config'inizi yerelde
+# saklayıp her açılışta tek tıkla yükleyebilirsiniz.
+# Kalıcılık isterseniz (ücretli plan) aşağıdaki disk bloğunun ve DATA_DIR'in
+# yorumunu kaldırın.
 services:
   - type: web
     name: mail-test-otomasyon
@@ -8,11 +14,11 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0
-      - key: DATA_DIR
-        value: /data
       - key: UI_PASSWORD
         sync: false          # Render panelinde girilir — arayüz parolası
-    disk:
-      name: app-data
-      mountPath: /data
-      sizeGB: 1
+      # - key: DATA_DIR
+      #   value: /data
+    # disk:
+    #   name: app-data
+    #   mountPath: /data
+    #   sizeGB: 1
