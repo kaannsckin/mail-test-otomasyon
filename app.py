@@ -17,22 +17,40 @@ app = Flask(__name__, template_folder=str(BASE_DIR / "templates"))
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0  # tarayıcı bayat JS/CSS önbelleklemesin
 
 
+def _writable_dir(path: Path) -> bool:
+    """Dizini oluşturmayı ve içine gerçekten yazmayı dener."""
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / ".write_probe"
+        probe.write_text("", encoding="utf-8")
+        probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
 def _data_dir() -> Path:
     """Yazılabilir veri dizini (config.yaml, reports/, logs/).
 
     Öncelik: DATA_DIR ortam değişkeni → yerelde/Railway'de repo kökü
-    (README akışıyla uyumlu) → Vercel gibi salt-okunur FS'lerde /tmp.
+    (README akışıyla uyumlu) → /tmp. Hiçbir aday uygulamayı ÇÖKERTMEZ:
+    yazılamayan aday (ör. Render ücretsiz planda disk yokken DATA_DIR=/data)
+    uyarı loglanıp bir sonrakine geçilir.
     """
+    candidates = []
     override = os.environ.get("DATA_DIR")
     if override:
-        d = Path(override)
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-    if os.environ.get("VERCEL") or not os.access(BASE_DIR, os.W_OK):
-        d = Path(os.environ.get("TMPDIR", "/tmp")) / "mail_otomasyon"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-    return BASE_DIR
+        candidates.append(Path(override))
+    if not os.environ.get("VERCEL"):
+        candidates.append(BASE_DIR)
+    candidates.append(Path(os.environ.get("TMPDIR", "/tmp")) / "mail_otomasyon")
+
+    for candidate in candidates:
+        if _writable_dir(candidate):
+            return candidate
+        print(f"⚠️  Veri dizini yazılamıyor, sonraki adaya geçiliyor: {candidate}")
+    # /tmp bile yazılamıyorsa mkdir'lar aşağıda hatayı açıkça verir
+    return candidates[-1]
 
 
 DATA_DIR      = _data_dir()
@@ -41,6 +59,7 @@ REPORTS_DIR   = DATA_DIR / "reports"
 LOGS_DIR      = DATA_DIR / "logs"
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
+print(f"📁 Veri dizini: {DATA_DIR}")
 
 run_state = {
     "running": False,

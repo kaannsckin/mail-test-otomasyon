@@ -167,6 +167,19 @@ class TestDeploy:
         monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
         assert app_module._default_host() == "0.0.0.0"
 
+    def test_data_dir_falls_back_when_override_unwritable(self, monkeypatch):
+        """Render'da disk'siz DATA_DIR=/data ayarı uygulamayı ÇÖKERTMEMELİ."""
+        import app as app_module
+        monkeypatch.setenv("DATA_DIR", "/etc/passwd/olamaz")
+        d = app_module._data_dir()
+        assert str(d) != "/etc/passwd/olamaz"
+        assert app_module._writable_dir(d)
+
+    def test_data_dir_honors_writable_override(self, monkeypatch, tmp_path):
+        import app as app_module
+        monkeypatch.setenv("DATA_DIR", str(tmp_path / "veri"))
+        assert app_module._data_dir() == tmp_path / "veri"
+
 
 # ═══════════════════════════════════════════════════════════════════
 #  /api/reports — path traversal
