@@ -51,7 +51,7 @@ outlook:
 
 anthropic:
   api_key: ""                         # https://console.anthropic.com → API Keys
-  model: "claude-sonnet-4-20250514"
+  model: "claude-opus-4-8"            # boş bırakılırsa varsayılan kullanılır
 
 test:
   wait_seconds: 15

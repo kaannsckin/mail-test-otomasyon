@@ -3,13 +3,23 @@ receiver.py — IMAP üzerinden mesajı polling ile bekler ve ham içeriği dön
 """
 
 import imaplib
+import os
+import ssl
 import email
 import time
 import logging
 from email.header import decode_header
 from typing import Optional
 
+from auth_manager import generate_totp, mfa_manager
+
 logger = logging.getLogger(__name__)
+
+
+def _interactive_mfa_enabled() -> bool:
+    """Web arayüzü subprocess'i MFA_INTERACTIVE=1 ile başlatır; modal akışı
+    yalnızca bu durumda devreye girer (yalın CLI'da 5 dk bloklamamak için)."""
+    return os.environ.get("MFA_INTERACTIVE", "") == "1"
 
 
 class MailReceiver:
@@ -20,13 +30,41 @@ class MailReceiver:
         self.use_ssl = server_config.get("imap_use_ssl", True)
         self.username = server_config["username"]
         self.password = server_config["password"]
+        self.auth_method = server_config.get("auth_method", "password")
+        self.totp_secret = server_config.get("totp_secret", "")
+
+    def _login(self, imap):
+        """auth_method'a göre giriş yapar; TOTP secret varsa kodu otomatik üretir.
+
+        Secret yoksa ve web arayüzünden başlatıldıysa (MFA_INTERACTIVE=1),
+        kod kullanıcıdan modal üzerinden istenir (süreçler arası köprü).
+        """
+        if self.auth_method in ("totp_password", "otp_only"):
+            code = generate_totp(self.totp_secret) if self.totp_secret else ""
+            if not code and _interactive_mfa_enabled():
+                label = self.config.get("label", self.host)
+                code = mfa_manager.mfa_challenge(
+                    server_key=label, server_label=label,
+                    method=self.config.get("mfa_method", "totp"),
+                ) or ""
+            if code:
+                if self.auth_method == "otp_only":
+                    imap.login(self.username, code)
+                    return
+                try:
+                    imap.login(self.username, self.password + code)
+                    return
+                except imaplib.IMAP4.error:
+                    logger.warning("Şifre+TOTP girişi reddedildi, yalnızca şifre deneniyor.")
+        imap.login(self.username, self.password)
 
     def _connect(self) -> imaplib.IMAP4_SSL:
         if self.use_ssl:
-            imap = imaplib.IMAP4_SSL(self.host, self.port)
+            imap = imaplib.IMAP4_SSL(self.host, self.port,
+                                     ssl_context=ssl.create_default_context())
         else:
             imap = imaplib.IMAP4(self.host, self.port)
-        imap.login(self.username, self.password)
+        self._login(imap)
         imap.select("INBOX")
         return imap
 

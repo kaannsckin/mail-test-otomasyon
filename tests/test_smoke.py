@@ -379,15 +379,21 @@ class TestMailAnalyzer:
         assert any("parse" in c.get("name", "").lower() or "Parse" in c.get("name", "")
                    for c in result["checks"])
 
-    def test_call_claude_sends_correct_headers(self, received_msg, combination_meta,
+    def test_call_claude_sends_correct_payload(self, received_msg, combination_meta,
                                                mock_claude_pass):
-        from analyzer import MailAnalyzer
+        from analyzer import MailAnalyzer, DEFAULT_MODEL
         a = MailAnalyzer("sk-ant-test-key")
         a.analyze("plain_text", {"msg_id": "<x>"}, received_msg, combination_meta)
         call_kwargs = mock_claude_pass.call_args[1]
-        assert call_kwargs["headers"]["x-api-key"] == "sk-ant-test-key"
-        assert "messages" in call_kwargs["json"]
-        assert call_kwargs["json"]["messages"][0]["role"] == "user"
+        assert call_kwargs["model"] == DEFAULT_MODEL
+        assert call_kwargs["messages"][0]["role"] == "user"
+
+    def test_model_configurable(self, received_msg, combination_meta, mock_claude_pass):
+        """config.yaml'daki anthropic.model değeri API çağrısına yansımalı."""
+        from analyzer import MailAnalyzer
+        a = MailAnalyzer("sk-ant-test-key", model="claude-opus-4-8")
+        a.analyze("plain_text", {"msg_id": "<x>"}, received_msg, combination_meta)
+        assert mock_claude_pass.call_args[1]["model"] == "claude-opus-4-8"
 
 
 # ═══════════════════════════════════════════════════════════════════

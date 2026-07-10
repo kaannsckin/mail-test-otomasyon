@@ -76,6 +76,25 @@ Eğer `5000` doluysa uygulama otomatik olarak bir sonraki boş porta geçer (ör
 PORT=5050 python app.py
 ```
 
+Diğer ortam değişkenleri:
+
+| Değişken | Varsayılan | Açıklama |
+|----------|------------|----------|
+| `PORT` | `5000` (doluysa sıradaki boş port) | Sunucu portu |
+| `HOST` | `127.0.0.1` | Ağdan erişim için `HOST=0.0.0.0` ayarla |
+| `FLASK_DEBUG` | kapalı | `FLASK_DEBUG=1` ile debug/reloader açılır (yalnızca geliştirme için — debugger uzaktan kod çalıştırmaya izin verir) |
+| `UI_PASSWORD` | boş (auth kapalı) | Ayarlanırsa tüm arayüz HTTP Basic Auth ister |
+| `UI_USERNAME` | `admin` | Basic Auth kullanıcı adı (`UI_PASSWORD` ile birlikte) |
+
+```bash
+# Ağa açık + parola korumalı çalıştırma örneği
+HOST=0.0.0.0 UI_PASSWORD='guclu-parola' python app.py
+```
+
+> **Güvenlik notu:** Varsayılan olarak arayüz yalnızca `localhost`'tan erişilebilir
+> ve kimlik doğrulama kapalıdır. `HOST=0.0.0.0` ile ağa açacaksanız mutlaka
+> `UI_PASSWORD` ayarlayın. `/api/config` yanıtlarında şifreler ve API key maskelenir.
+
 ---
 
 ## 🔐 Güvenlik & 2FA
@@ -89,7 +108,12 @@ Her sunucu için 4 kimlik doğrulama yöntemi desteklenir:
 | `totp_password` | Şifre + TOTP/OTP kodu | 2FA zorunlu EMS/kurumsal sunucular |
 | `otp_only` | Yalnızca tek kullanımlık kod | SMS veya authenticator tabanlı giriş |
 
-**TOTP Otomatik Üretim:** Authenticator uygulamanızdaki Base32 secret'ı kaydederseniz, her test çalışmasında kod otomatik üretilir — sizi durdurmaz. Secret kaydetmek istemiyorsanız boş bırakın; her çalışmada ekrana modal açılır ve kodu girersiniz.
+**TOTP Otomatik Üretim:** Authenticator uygulamanızdaki Base32 secret'ı kaydederseniz, her test çalışmasında kod otomatik üretilir — sizi durdurmaz. Secret kaydetmek istemiyorsanız boş bırakın; web arayüzünden başlatılan testlerde ekrana modal açılır ve kodu girersiniz (test süreci ile arayüz, `logs/mfa_bridge/` altındaki dosya köprüsü üzerinden haberleşir). Girilen kod 20 saniye boyunca aynı sunucunun yeniden bağlanmalarında tekrar sorulmadan kullanılır.
+
+> Doğrudan CLI'dan (`python main.py`) çalıştırmada modal akışı devre dışıdır —
+> secret kayıtlı değilse yalnızca şifre ile giriş denenir. Modal akışını CLI'da
+> zorlamak isterseniz `MFA_INTERACTIVE=1 python main.py` ile başlatıp kodu başka
+> bir terminalden web arayüzüne girebilirsiniz.
 
 **OTP tipleri:** TOTP / SMS / E-posta OTP / Push bildirimi
 
@@ -178,7 +202,7 @@ ems:
 
 anthropic:
   api_key: ""                     # https://console.anthropic.com → API Keys
-  model: "claude-sonnet-4-20250514"
+  model: "claude-opus-4-8"        # boş bırakılırsa varsayılan (claude-opus-4-8) kullanılır
 
 test:
   wait_seconds: 15                # Mesajın IMAP'te görünmesini bekleme süresi
@@ -210,6 +234,30 @@ bash github_setup.sh
 ```
 
 Script; `.gitignore`'u uygular, ilk commit'i oluşturur ve `mail-test-otomasyon` adıyla public repo açar.
+
+---
+
+## 🧪 Testler
+
+Test paketi gerçek SMTP/IMAP/Claude bağlantısı olmadan (mock ile) çalışır:
+
+```bash
+pip install -r requirements.txt -r requirements-test.txt
+python -m pytest
+```
+
+GitHub Actions üzerinde her push/PR için otomatik çalışır (`.github/workflows/tests.yml`).
+
+### Gerçek sunucu duman testi
+
+Mock'suz, gerçek bir SMTP hesabından gerçek bir alıcıya 4 senaryoyu gönderir ve
+gönderen kutuda bounce kontrolü yapar (alıcı taraf görsel olarak doğrulanır):
+
+```bash
+cp config.yaml.example config.yaml   # gönderen hesabı doldur (örn. gmail + app password)
+python scripts/e2e_smoke.py --to alici@ornek.com
+python scripts/e2e_smoke.py --to alici@ornek.com --scenarios plain_text --dry-run
+```
 
 ---
 

@@ -890,30 +890,22 @@ input.has-value{border-color:rgba(0,255,148,.4)}
           <!-- 7. Ek Dosyalar -->
           <div class="guide-section" id="g-attachments">
             <h3>📎 Ek Dosyalar (Attachments)</h3>
-            <p><strong>Ek Dosya (attachment)</strong> senaryosunda <code>attachments/</code> klasöründeki gerçek dosyalar kullanılır. Her test çalışmasında 3 dosya birlikte eklenir:</p>
+            <p><strong>Ek Dosya (attachment)</strong> senaryosunda varsayılan olarak <code>test_files/</code> klasöründeki otomatik üretilen örnek dosyalar kullanılır. Kendi dosyalarınızı test etmek için <code>config.yaml</code> içinde <code>test_attachment_paths</code> (liste) veya <code>test_attachment_path</code> (tekil) tanımlayabilirsiniz:</p>
             <table class="guide-table">
-              <tr><th>#</th><th>Dosya Adı</th><th>Format</th><th>Test Amacı</th></tr>
+              <tr><th>Kaynak</th><th>Örnek</th><th>Test Amacı</th></tr>
               <tr>
-                <td>1</td>
-                <td><code>Ticket_Talep_Sistemi_Bilgilendirme_Brosuru_v3.pdf</code></td>
-                <td>PDF</td>
-                <td>Binary dosya iletimi, application/pdf MIME type, dosya açılabilirliği</td>
+                <td>Varsayılan</td>
+                <td><code>test_files/test_document.pdf</code></td>
+                <td>Binary dosya iletimi, application/pdf MIME type, base64 encoding</td>
               </tr>
               <tr>
-                <td>2</td>
-                <td><code>SAFİR POSTA (Destek Bilgem) 2026-01-28T12_02_14+0300.csv</code></td>
-                <td>CSV</td>
-                <td>Dosya adında <strong>Türkçe karakter</strong> (İ), <strong>boşluk</strong>, <strong>parantez</strong> ve <strong>özel semboller</strong> (T, +, :). Content-Disposition encoding testi.</td>
-              </tr>
-              <tr>
-                <td>3</td>
-                <td><code>requirements_dashboard.txt</code></td>
-                <td>TXT</td>
-                <td>Düz metin dosyası, text/plain MIME type, UTF-8 encoding bütünlüğü</td>
+                <td>config.yaml</td>
+                <td><code>test_attachment_paths: ["rapor.pdf", "veri.csv", "notlar.txt"]</code></td>
+                <td>Çoklu ek: farklı MIME type'lar tek mesajda</td>
               </tr>
             </table>
             <div class="guide-box warn">
-              <b>Neden bu dosyalar?</b> PDF binary encoding, CSV Türkçe dosya adı ve TXT düz metin — üç farklı MIME type ve encoding senaryosunu kapsar. Özellikle <code>SAFİR</code> dosya adındaki <strong>İ</strong> harfi ve parantezler, RFC 5987 uyumlu <code>filename*</code> parametresinin doğru çalışıp çalışmadığını test eder.
+              <b>İpucu:</b> Farklı formatları (PDF binary, CSV, TXT düz metin) birlikte eklemek üç ayrı MIME/encoding senaryosunu tek testte kapsar. Dosya adında Türkçe karakter (ör. <code>İ</code>), boşluk veya parantez kullanmak, RFC 5987 uyumlu <code>filename*</code> parametresinin doğru çalışıp çalışmadığını da test eder.
             </div>
           </div>
 

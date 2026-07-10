@@ -130,15 +130,30 @@ _PASS_RESULT = {
 }
 
 
+def _build_sdk_response(result: dict):
+    """anthropic SDK Message nesnesini taklit eden mock üretir."""
+    block = MagicMock()
+    block.type = "text"
+    block.text = json.dumps(result)
+    resp = MagicMock()
+    resp.stop_reason = "end_turn"
+    resp.content = [block]
+    return resp
+
+
+def _patch_anthropic_client(result: dict):
+    """analyzer.anthropic.Anthropic'i patch'ler, messages.create mock'unu döndürür."""
+    client = MagicMock()
+    client.messages.create.return_value = _build_sdk_response(result)
+    return patch("analyzer.anthropic.Anthropic", return_value=client), client
+
+
 @pytest.fixture
 def mock_claude_pass():
     """Başarılı analiz döndüren Claude API mock'u."""
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.raise_for_status = MagicMock()
-    resp.json.return_value = {"content": [{"text": json.dumps(_PASS_RESULT)}]}
-    with patch("requests.post", return_value=resp) as mock_post:
-        yield mock_post
+    patcher, client = _patch_anthropic_client(_PASS_RESULT)
+    with patcher:
+        yield client.messages.create
 
 
 @pytest.fixture
@@ -147,12 +162,9 @@ def mock_claude_fail():
     result = {**_PASS_RESULT, "passed": False, "summary": "İletim başarısız.",
               "checks": [{"name": "Mesaj Alımı", "passed": False, "detail": "Timeout"}],
               "issues": ["Mesaj alınamadı"]}
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.raise_for_status = MagicMock()
-    resp.json.return_value = {"content": [{"text": json.dumps(result)}]}
-    with patch("requests.post", return_value=resp) as mock_post:
-        yield mock_post
+    patcher, client = _patch_anthropic_client(result)
+    with patcher:
+        yield client.messages.create
 
 
 # ── Alınan mesaj örneği ──────────────────────────────────────────────

@@ -3,24 +3,36 @@ app.py — Mail Otomasyon Web Arayüzü (Flask)
 Çalıştır: python app.py  →  http://localhost:5000 (boşsa) / otomatik alternatif port
 """
 
-import csv, json, logging, os, queue, socket, subprocess, sys, threading, time
+import csv, hmac, json, logging, os, queue, socket, subprocess, sys, threading, time
 from datetime import datetime
 from pathlib import Path
 
 import yaml
-from flask import Flask, Response, jsonify, render_template, request, send_file
+from flask import Flask, Response, jsonify, render_template, request, send_from_directory
 from auth_manager import mfa_manager, generate_totp, totp_remaining_seconds
 
 BASE_DIR = Path(__file__).parent
 
 app = Flask(__name__, template_folder=str(BASE_DIR / "templates"))
 
-# Vercel'de sadece /tmp yazılabilir; lokalde de çalışır
-_TMP = Path(os.environ.get("TMPDIR", "/tmp")) / "mail_otomasyon"
-_TMP.mkdir(parents=True, exist_ok=True)
-CONFIG_PATH   = _TMP / "config.yaml"
-REPORTS_DIR   = _TMP / "reports"
-LOGS_DIR      = _TMP / "logs"
+
+def _data_dir() -> Path:
+    """Yazılabilir veri dizini (config.yaml, reports/, logs/).
+
+    Yerelde ve Railway'de repo kökü kullanılır (README akışıyla uyumlu);
+    Vercel gibi salt-okunur dosya sistemlerinde /tmp'e düşülür.
+    """
+    if os.environ.get("VERCEL") or not os.access(BASE_DIR, os.W_OK):
+        d = Path(os.environ.get("TMPDIR", "/tmp")) / "mail_otomasyon"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+    return BASE_DIR
+
+
+DATA_DIR      = _data_dir()
+CONFIG_PATH   = DATA_DIR / "config.yaml"
+REPORTS_DIR   = DATA_DIR / "reports"
+LOGS_DIR      = DATA_DIR / "logs"
 REPORTS_DIR.mkdir(exist_ok=True)
 LOGS_DIR.mkdir(exist_ok=True)
 
@@ -33,12 +45,47 @@ run_state = {
     "exit_code": None,
 }
 
+# ── AUTH (opsiyonel) ───────────────────────────────────────────
+# UI_PASSWORD ayarlanırsa tüm istekler HTTP Basic Auth gerektirir.
+# Ayarlanmazsa mevcut davranış korunur (yalnızca localhost'ta kullan).
+@app.before_request
+def _require_basic_auth():
+    password = os.environ.get("UI_PASSWORD", "")
+    if not password:
+        return None
+    username = os.environ.get("UI_USERNAME", "admin")
+    auth = request.authorization
+    if (auth and auth.type == "basic"
+            and hmac.compare_digest(auth.username or "", username)
+            and hmac.compare_digest(auth.password or "", password)):
+        return None
+    return Response(
+        "Kimlik doğrulama gerekli", 401,
+        {"WWW-Authenticate": 'Basic realm="Mail Otomasyon"'},
+    )
+
 # ── CONFIG ──────────────────────────────────────────────────────
+SECRET_MASK = "••••••••"
+
+def _is_unset(value) -> bool:
+    """Boş ya da maskeden ibaret (UI'dan dokunulmadan dönen) secret değeri."""
+    if not value:
+        return True
+    return isinstance(value, str) and set(value) == {"•"}
+
 @app.route("/api/config", methods=["GET"])
 def get_config():
     if CONFIG_PATH.exists():
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f)
+            data = yaml.safe_load(f) or {}
+        # Secret'lar tarayıcıya düz metin gitmesin — UI yalnızca dolu/boş bilgisine bakar.
+        for srv in ("ems", "gmail", "outlook"):
+            if isinstance(data.get(srv), dict):
+                for key in ("password", "totp_secret"):
+                    if data[srv].get(key):
+                        data[srv][key] = SECRET_MASK
+        if isinstance(data.get("anthropic"), dict) and data["anthropic"].get("api_key"):
+            data["anthropic"]["api_key"] = SECRET_MASK
         return jsonify({"ok": True, "config": data})
     return jsonify({"ok": False, "error": "config.yaml bulunamadı"})
 
@@ -51,10 +98,12 @@ def save_config():
             existing = yaml.safe_load(f) or {}
     for srv in ["ems", "gmail", "outlook"]:
         if srv in data and srv in existing:
-            if not data[srv].get("password"):
-                data[srv]["password"] = existing[srv].get("password", "")
-            if not data[srv].get("totp_secret"):
-                data[srv]["totp_secret"] = existing[srv].get("totp_secret", "")
+            for key in ("password", "totp_secret"):
+                if _is_unset(data[srv].get(key)):
+                    data[srv][key] = existing[srv].get(key, "")
+    if "anthropic" in data and isinstance(existing.get("anthropic"), dict):
+        if _is_unset(data["anthropic"].get("api_key")):
+            data["anthropic"]["api_key"] = existing["anthropic"].get("api_key", "")
     try:
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
@@ -98,7 +147,7 @@ def test_connection():
         pwd = sc["password"]
         if auth_method == "totp_password" and code:
             try: smtp.login(sc["username"], pwd + code)
-            except: smtp.login(sc["username"], pwd)
+            except smtplib.SMTPException: smtp.login(sc["username"], pwd)
         elif auth_method == "otp_only" and code:
             smtp.login(sc["username"], code)
         else:
@@ -202,13 +251,17 @@ def start_run():
     run_state.update({"log_queue": queue.Queue(), "running": True,
                       "started_at": datetime.now().isoformat(),
                       "finished_at": None, "exit_code": None})
+    mfa_manager.clear_bridge()  # önceki çalışmadan kalan challenge dosyaları
     log_file = LOGS_DIR / f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
     run_state["log_file"] = str(log_file)
 
     def _run():
         try:
+            # MFA_INTERACTIVE=1: subprocess'teki sender/receiver, TOTP secret yoksa
+            # kodu köprü üzerinden arayüz modal'ından ister.
+            env = {**os.environ, "MFA_INTERACTIVE": "1"}
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    text=True, encoding="utf-8", cwd=BASE_DIR)
+                                    text=True, encoding="utf-8", cwd=BASE_DIR, env=env)
             run_state["process"] = proc
             with open(log_file, "w", encoding="utf-8") as lf:
                 for line in proc.stdout:
@@ -271,10 +324,13 @@ def list_reports():
                           "mtime":datetime.fromtimestamp(st.st_mtime).strftime("%d.%m.%Y %H:%M")})
     return jsonify({"ok": True, "reports": files})
 
-@app.route("/api/reports/<filename>")
+@app.route("/api/reports/<path:filename>")
 def get_report(filename):
-    p = REPORTS_DIR / filename
-    return send_file(p) if p.exists() else (jsonify({"ok":False}), 404)
+    # send_from_directory path traversal'ı engeller (../ ile dizin dışına çıkılamaz)
+    try:
+        return send_from_directory(REPORTS_DIR, filename)
+    except Exception:
+        return jsonify({"ok": False}), 404
 
 @app.route("/api/results/latest")
 def latest_results():
@@ -292,24 +348,28 @@ def index():
 if __name__ == "__main__":
     env_port = os.environ.get("PORT")
     desired_port = int(env_port) if env_port else 5000
+    # Varsayılan yalnızca yerel erişim; ağdan erişim için HOST=0.0.0.0 ayarla.
+    host = os.environ.get("HOST", "127.0.0.1")
+    # Werkzeug debugger uzaktan kod çalıştırmaya izin verir — varsayılan kapalı.
+    debug = os.environ.get("FLASK_DEBUG", "").lower() in ("1", "true", "yes")
 
     def _is_port_free(p: int) -> bool:
-        # Flask `host="0.0.0.0"` binds on all interfaces; test bind on 0.0.0.0
-        # (and IPv6 :: when available) to mirror the real server behavior.
+        # Sunucunun bind edeceği host üzerinde test bind yapar.
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s4:
                 s4.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                s4.bind(("0.0.0.0", p))
+                s4.bind((host if host != "::" else "0.0.0.0", p))
         except OSError:
             return False
 
-        try:
-            with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as s6:
-                s6.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                s6.bind(("::", p))
-        except OSError:
-            # If IPv6 is unavailable or already bound, treat as not free.
-            return False
+        if host == "0.0.0.0":
+            try:
+                with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as s6:
+                    s6.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    s6.bind(("::", p))
+            except OSError:
+                # If IPv6 is unavailable or already bound, treat as not free.
+                return False
 
         return True
 
@@ -319,4 +379,4 @@ if __name__ == "__main__":
             port += 1
 
     print(f"\n🚀 Mail Otomasyon Arayüzü: http://localhost:{port}\n")
-    app.run(debug=True, host="0.0.0.0", port=port, threaded=True)
+    app.run(debug=debug, host=host, port=port, threaded=True)
