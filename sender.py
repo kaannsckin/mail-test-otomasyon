@@ -5,10 +5,10 @@ Her senaryo tipi için ayrı metot: plain, attachment, inline_image, smime, repl
 from __future__ import annotations
 
 import smtplib
+import ssl
 import uuid
 import time
 import os
-import base64
 import logging
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -16,8 +16,9 @@ from email.mime.base import MIMEBase
 from email.mime.image import MIMEImage
 from email import encoders
 from email.utils import formatdate, make_msgid
-from email.headerregistry import Address
 from typing import Optional
+
+from auth_manager import generate_totp
 
 logger = logging.getLogger(__name__)
 
@@ -31,14 +32,31 @@ class MailSender:
         self.username = server_config["username"]
         self.password = server_config["password"]
         self.from_address = server_config["test_address"]
+        self.auth_method = server_config.get("auth_method", "password")
+        self.totp_secret = server_config.get("totp_secret", "")
+
+    def _login(self, smtp: smtplib.SMTP):
+        """auth_method'a göre giriş yapar; TOTP secret varsa kodu otomatik üretir."""
+        if self.auth_method in ("totp_password", "otp_only") and self.totp_secret:
+            code = generate_totp(self.totp_secret)
+            if code:
+                if self.auth_method == "otp_only":
+                    smtp.login(self.username, code)
+                    return
+                try:
+                    smtp.login(self.username, self.password + code)
+                    return
+                except smtplib.SMTPException:
+                    logger.warning("Şifre+TOTP girişi reddedildi, yalnızca şifre deneniyor.")
+        smtp.login(self.username, self.password)
 
     def _connect(self) -> smtplib.SMTP:
         smtp = smtplib.SMTP(self.host, self.port, timeout=30)
         smtp.ehlo()
         if self.use_tls:
-            smtp.starttls()
+            smtp.starttls(context=ssl.create_default_context())
             smtp.ehlo()
-        smtp.login(self.username, self.password)
+        self._login(smtp)
         logger.debug(f"SMTP bağlantısı kuruldu: {self.host}:{self.port}")
         return smtp
 
@@ -208,14 +226,14 @@ class MailSender:
             signed_content = f.read()
         os.unlink(signed_path)
 
-        with smtplib.SMTP(self.host, self.port, timeout=30) as smtp:
-            smtp.ehlo()
-            if self.use_tls:
-                smtp.starttls()
-            smtp.login(self.username, self.password)
-            smtp.sendmail(self.from_address, [to_address], signed_content)
+        # openssl çıktısı yalnızca MIME gövdesini içerir; zarf header'ları
+        # (From/To/Subject/Message-ID) eklenmezse alıcı mesajı eşleştiremez.
+        signed_msg = message_from_bytes(signed_content)
+        for k, v in self._base_headers(subject, to_address, msg_id).items():
+            if signed_msg.get(k) is None:
+                signed_msg[k] = v
 
-        sent_at = time.time()
+        sent_at = self._send(signed_msg, to_address)
         logger.info(f"[SMIME] İmzalı mesaj gönderildi → {to_address}")
         return {"msg_id": msg_id, "sent_at": sent_at, "scenario": "smime", "signed": True}
 

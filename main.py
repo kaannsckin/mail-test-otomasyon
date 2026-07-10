@@ -516,7 +516,10 @@ def main():
 
     # Analiz için Claude
     anthropic_cfg = config.get("anthropic", {})
-    analyzer = MailAnalyzer(api_key=anthropic_cfg.get("api_key", ""))
+    analyzer = MailAnalyzer(
+        api_key=anthropic_cfg.get("api_key", ""),
+        model=anthropic_cfg.get("model") or None,
+    )
 
     all_results = []
     Path("reports").mkdir(exist_ok=True)
@@ -561,7 +564,10 @@ def main():
         logger.info(f"TEST TAMAMLANDI")
         total = len(all_results)
         passed = sum(1 for r in all_results if r.get("analysis", {}).get("passed"))
-        logger.info(f"Sonuç: {passed}/{total} PASS ({round(passed/total*100,1) if total else 0}%)")
+        skipped = sum(1 for r in all_results if r.get("analysis", {}).get("passed") is None)
+        effective = total - skipped
+        rate = round(passed / effective * 100, 1) if effective else 0
+        logger.info(f"Sonuç: {passed}/{effective} PASS ({rate}%) | {skipped} atlandı")
         logger.info(f"HTML Rapor: {html_path}")
         logger.info(f"CSV Sonuçlar: {csv_path_out}")
         logger.info(f"{'='*60}")

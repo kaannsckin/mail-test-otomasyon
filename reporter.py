@@ -3,20 +3,35 @@ reporter.py — Test sonuçlarını HTML ve CSV olarak raporlar.
 """
 
 import csv
-import json
+import html
 import logging
 from datetime import datetime
-from typing import List, Dict
+from typing import List
 
 logger = logging.getLogger(__name__)
+
+
+def _esc(value) -> str:
+    """Mail içeriğinden / Claude çıktısından gelen metni HTML için kaçırır."""
+    return html.escape(str(value)) if value is not None else ""
+
+
+def _status_of(result: dict) -> str:
+    """PASS / FAIL / SKIP — analysis.passed None ise senaryo atlanmıştır."""
+    passed = result.get("analysis", {}).get("passed")
+    if passed is None:
+        return "SKIP"
+    return "PASS" if passed else "FAIL"
 
 
 def generate_html_report(results: List[dict], output_path: str):
     """Test sonuçlarından profesyonel HTML rapor üretir."""
     total = len(results)
-    passed = sum(1 for r in results if r.get("analysis", {}).get("passed", False))
-    failed = total - passed
-    pass_rate = round((passed / total * 100) if total > 0 else 0, 1)
+    passed = sum(1 for r in results if _status_of(r) == "PASS")
+    skipped = sum(1 for r in results if _status_of(r) == "SKIP")
+    failed = total - passed - skipped
+    effective = total - skipped
+    pass_rate = round((passed / effective * 100) if effective > 0 else 0, 1)
 
     # Kombinasyon bazlı grupla
     by_combo = {}
@@ -26,44 +41,52 @@ def generate_html_report(results: List[dict], output_path: str):
 
     combo_rows = ""
     for combo, combo_results in by_combo.items():
-        c_total = len(combo_results)
-        c_passed = sum(1 for r in combo_results if r.get("analysis", {}).get("passed", False))
-        c_rate = round((c_passed / c_total * 100) if c_total > 0 else 0, 1)
-        status_class = "pass" if c_rate == 100 else ("partial" if c_rate > 0 else "fail")
+        c_passed = sum(1 for r in combo_results if _status_of(r) == "PASS")
+        c_skipped = sum(1 for r in combo_results if _status_of(r) == "SKIP")
+        c_effective = len(combo_results) - c_skipped
+        c_rate = round((c_passed / c_effective * 100) if c_effective > 0 else 0, 1)
+        if c_effective == 0:
+            status_class = "partial"
+        else:
+            status_class = "pass" if c_rate == 100 else ("partial" if c_rate > 0 else "fail")
 
         scenario_rows = ""
         for r in combo_results:
             analysis = r.get("analysis", {})
-            sc_passed = analysis.get("passed", False)
-            sc_class = "pass" if sc_passed else "fail"
+            status = _status_of(r)
+            sc_class = {"PASS": "pass", "FAIL": "fail", "SKIP": "skip"}[status]
+            badge_label = {"PASS": "✅ PASS", "FAIL": "❌ FAIL", "SKIP": "⏭ ATLANDI"}[status]
             checks_html = ""
             for ch in analysis.get("checks", []):
                 ch_icon = "✅" if ch.get("passed") else "❌"
-                checks_html += f'<li>{ch_icon} <b>{ch.get("name","")}</b>: {ch.get("detail","")}</li>'
+                checks_html += (
+                    f'<li>{ch_icon} <b>{_esc(ch.get("name", ""))}</b>: '
+                    f'{_esc(ch.get("detail", ""))}</li>'
+                )
             issues = analysis.get("issues", [])
-            issues_html = "".join(f"<li>⚠️ {i}</li>" for i in issues) if issues else ""
+            issues_html = "".join(f"<li>⚠️ {_esc(i)}</li>" for i in issues) if issues else ""
 
             scenario_rows += f"""
             <tr class="{sc_class}-row">
-              <td><span class="badge {sc_class}">{('✅ PASS' if sc_passed else '❌ FAIL')}</span></td>
-              <td>{r['scenario_type']}</td>
-              <td class="summary-cell">{analysis.get('summary','')}</td>
+              <td><span class="badge {sc_class}">{badge_label}</span></td>
+              <td>{_esc(r['scenario_type'])}</td>
+              <td class="summary-cell">{_esc(analysis.get('summary', ''))}</td>
               <td>
                 <details>
-                  <summary>Kontroller ({len(analysis.get('checks',[]))})</summary>
+                  <summary>Kontroller ({len(analysis.get('checks', []))})</summary>
                   <ul class="checks-list">{checks_html}</ul>
                   {f'<ul class="issues-list">{issues_html}</ul>' if issues_html else ''}
                 </details>
               </td>
-              <td><span class="confidence confidence-{analysis.get('confidence','LOW').lower()}">{analysis.get('confidence','?')}</span></td>
+              <td><span class="confidence confidence-{_esc(analysis.get('confidence', 'LOW')).lower()}">{_esc(analysis.get('confidence', '?'))}</span></td>
             </tr>"""
 
         combo_rows += f"""
         <div class="combo-card {status_class}-card">
           <div class="combo-header">
-            <h3>🔀 {combo}</h3>
+            <h3>🔀 {_esc(combo)}</h3>
             <div class="combo-stats">
-              <span class="stat-badge">{c_passed}/{c_total} PASS</span>
+              <span class="stat-badge">{c_passed}/{c_effective} PASS</span>
               <span class="rate-badge {status_class}">{c_rate}%</span>
             </div>
           </div>
@@ -77,7 +100,7 @@ def generate_html_report(results: List[dict], output_path: str):
           </table>
         </div>"""
 
-    html = f"""<!DOCTYPE html>
+    html_doc = f"""<!DOCTYPE html>
 <html lang="tr">
 <head>
 <meta charset="UTF-8">
@@ -97,6 +120,7 @@ def generate_html_report(results: List[dict], output_path: str):
   .stat-card.total {{ border-left-color: #6366f1; }}
   .stat-card.pass  {{ border-left-color: #10b981; }}
   .stat-card.fail  {{ border-left-color: #ef4444; }}
+  .stat-card.skip  {{ border-left-color: #94a3b8; }}
   .stat-card.rate  {{ border-left-color: #f59e0b; }}
   .stat-card .val {{ font-size: 32px; font-weight: 800; }}
   .stat-card .lbl {{ font-size: 13px; color: #64748b; margin-top: 4px; }}
@@ -120,9 +144,11 @@ def generate_html_report(results: List[dict], output_path: str):
   .results-table td {{ padding: 12px 16px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }}
   .pass-row {{ background: #f0fdf4; }}
   .fail-row {{ background: #fff5f5; }}
+  .skip-row {{ background: #f8fafc; }}
   .badge {{ padding: 3px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; }}
   .badge.pass {{ background: #d1fae5; color: #065f46; }}
   .badge.fail {{ background: #fee2e2; color: #991b1b; }}
+  .badge.skip {{ background: #e2e8f0; color: #475569; }}
   .summary-cell {{ max-width: 240px; }}
   details summary {{ cursor: pointer; color: #6366f1; font-size: 13px; font-weight: 500; }}
   .checks-list, .issues-list {{ margin-top: 8px; padding-left: 16px; font-size: 13px;
@@ -132,6 +158,7 @@ def generate_html_report(results: List[dict], output_path: str):
   .confidence-high {{ background: #d1fae5; color: #065f46; }}
   .confidence-medium {{ background: #fef3c7; color: #92400e; }}
   .confidence-low {{ background: #fee2e2; color: #991b1b; }}
+  .confidence-n\\/a {{ background: #e2e8f0; color: #475569; }}
   .pass-card .combo-header {{ background: #f0fdf4; }}
   .partial-card .combo-header {{ background: #fffbeb; }}
   .fail-card .combo-header {{ background: #fff5f5; }}
@@ -141,7 +168,7 @@ def generate_html_report(results: List[dict], output_path: str):
 <body>
 <div class="header">
   <h1>📧 Mail Servis Otomasyon Test Raporu</h1>
-  <div class="meta">Oluşturulma: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')} &nbsp;|&nbsp; 
+  <div class="meta">Oluşturulma: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')} &nbsp;|&nbsp;
   Claude API Destekli Analiz</div>
 </div>
 
@@ -149,6 +176,7 @@ def generate_html_report(results: List[dict], output_path: str):
   <div class="stat-card total"><div class="val">{total}</div><div class="lbl">Toplam Senaryo</div></div>
   <div class="stat-card pass"><div class="val" style="color:#10b981">{passed}</div><div class="lbl">✅ Başarılı</div></div>
   <div class="stat-card fail"><div class="val" style="color:#ef4444">{failed}</div><div class="lbl">❌ Başarısız</div></div>
+  <div class="stat-card skip"><div class="val" style="color:#94a3b8">{skipped}</div><div class="lbl">⏭ Atlanan</div></div>
   <div class="stat-card rate"><div class="val" style="color:#f59e0b">{pass_rate}%</div><div class="lbl">Başarı Oranı</div></div>
   <div class="stat-card"><div class="val" style="font-size:20px">{len(by_combo)}</div><div class="lbl">Kombinasyon</div></div>
 </div>
@@ -160,7 +188,7 @@ def generate_html_report(results: List[dict], output_path: str):
 </html>"""
 
     with open(output_path, "w", encoding="utf-8") as f:
-        f.write(html)
+        f.write(html_doc)
     logger.info(f"HTML rapor oluşturuldu: {output_path}")
 
 
@@ -177,7 +205,7 @@ def generate_csv_results(results: List[dict], output_path: str):
             writer.writerow([
                 r.get("combination", ""),
                 r.get("scenario_type", ""),
-                "PASS" if analysis.get("passed") else "FAIL",
+                _status_of(r),
                 analysis.get("confidence", ""),
                 analysis.get("summary", ""),
                 " | ".join(analysis.get("issues", [])),

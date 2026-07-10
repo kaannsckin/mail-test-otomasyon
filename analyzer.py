@@ -6,23 +6,21 @@ Her senaryo tipi için özelleştirilmiş prompt'lar kullanır.
 import json
 import logging
 import re
-import requests
 from typing import Optional
+
+import anthropic
 
 logger = logging.getLogger(__name__)
 
-CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
-CLAUDE_MODEL = "claude-sonnet-4-20250514"
+DEFAULT_MODEL = "claude-opus-4-8"
 
 
 class MailAnalyzer:
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, model: Optional[str] = None):
         self.api_key = api_key
-        self.headers = {
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        }
+        self.model = model or DEFAULT_MODEL
+        # SDK 429/5xx hatalarında otomatik exponential backoff ile yeniden dener.
+        self.client = anthropic.Anthropic(api_key=api_key, max_retries=3, timeout=60.0)
 
     def analyze(self, scenario_type: str, send_meta: dict,
                 received_msg: Optional[dict], combination: dict) -> dict:
@@ -160,26 +158,45 @@ Sadece JSON döndür, markdown veya açıklama ekleme."""
     #  Claude API çağrısı
     # ------------------------------------------------------------------ #
     def _call_claude(self, prompt: str) -> str:
-        payload = {
-            "model": CLAUDE_MODEL,
-            "max_tokens": 1000,
-            "messages": [{"role": "user", "content": prompt}],
-        }
         try:
-            resp = requests.post(CLAUDE_API_URL, headers=self.headers, json=payload, timeout=60)
-            resp.raise_for_status()
-            data = resp.json()
-            return data["content"][0]["text"]
-        except requests.RequestException as e:
-            logger.error(f"Claude API hatası: {e}")
-            return json.dumps({
-                "passed": False,
-                "confidence": "LOW",
-                "checks": [],
-                "summary": f"Claude API erişim hatası: {str(e)}",
-                "issues": [str(e)],
-                "recommendations": [],
-            })
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=2000,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            if response.stop_reason == "refusal":
+                return json.dumps({
+                    "passed": False,
+                    "confidence": "LOW",
+                    "checks": [],
+                    "summary": "Claude analizi reddetti (refusal).",
+                    "issues": ["stop_reason=refusal"],
+                    "recommendations": ["Mesaj içeriğini kontrol edin"],
+                })
+            text = next((b.text for b in response.content if b.type == "text"), "")
+            return text
+        except anthropic.AuthenticationError as e:
+            error_msg = "API key geçersiz — Konfigürasyon sayfasından güncelleyin."
+            exc: Exception = e
+        except anthropic.RateLimitError as e:
+            error_msg = "Claude API rate limit aşıldı — daha sonra tekrar deneyin."
+            exc = e
+        except anthropic.APIStatusError as e:
+            error_msg = f"Claude API hatası (HTTP {e.status_code})."
+            exc = e
+        except anthropic.APIConnectionError as e:
+            error_msg = "Claude API'ye bağlanılamadı — ağ bağlantısını kontrol edin."
+            exc = e
+
+        logger.error(f"Claude API hatası: {exc}")
+        return json.dumps({
+            "passed": False,
+            "confidence": "LOW",
+            "checks": [],
+            "summary": f"Claude API erişim hatası: {error_msg}",
+            "issues": [str(exc)],
+            "recommendations": [],
+        })
 
     # ------------------------------------------------------------------ #
     #  Response parser

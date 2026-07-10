@@ -8,13 +8,16 @@ from datetime import datetime
 from pathlib import Path
 
 import yaml
-from flask import Flask, Response, jsonify, render_template, request, send_file
+from flask import Flask, Response, jsonify, render_template, request, send_from_directory
 from auth_manager import mfa_manager, generate_totp, totp_remaining_seconds
 
 app = Flask(__name__)
-CONFIG_PATH   = Path("config.yaml")
-REPORTS_DIR   = Path("reports")
-LOGS_DIR      = Path("logs")
+# Tüm yollar CWD'den bağımsız olarak repo köküne (app.py'nin dizinine) sabitlenir;
+# main.py alt süreci de aynı dizinde çalıştırılıyor.
+BASE_DIR      = Path(__file__).parent
+CONFIG_PATH   = BASE_DIR / "config.yaml"
+REPORTS_DIR   = BASE_DIR / "reports"
+LOGS_DIR      = BASE_DIR / "logs"
 REPORTS_DIR.mkdir(exist_ok=True)
 LOGS_DIR.mkdir(exist_ok=True)
 
@@ -28,11 +31,27 @@ run_state = {
 }
 
 # ── CONFIG ──────────────────────────────────────────────────────
+SECRET_MASK = "••••••••"
+
+def _is_unset(value) -> bool:
+    """Boş ya da maskeden ibaret (UI'dan dokunulmadan dönen) secret değeri."""
+    if not value:
+        return True
+    return isinstance(value, str) and set(value) == {"•"}
+
 @app.route("/api/config", methods=["GET"])
 def get_config():
     if CONFIG_PATH.exists():
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f)
+            data = yaml.safe_load(f) or {}
+        # Secret'lar tarayıcıya düz metin gitmesin — UI yalnızca dolu/boş bilgisine bakar.
+        for srv in ("ems", "gmail", "outlook"):
+            if isinstance(data.get(srv), dict):
+                for key in ("password", "totp_secret"):
+                    if data[srv].get(key):
+                        data[srv][key] = SECRET_MASK
+        if isinstance(data.get("anthropic"), dict) and data["anthropic"].get("api_key"):
+            data["anthropic"]["api_key"] = SECRET_MASK
         return jsonify({"ok": True, "config": data})
     return jsonify({"ok": False, "error": "config.yaml bulunamadı"})
 
@@ -45,10 +64,12 @@ def save_config():
             existing = yaml.safe_load(f) or {}
     for srv in ["ems", "gmail", "outlook"]:
         if srv in data and srv in existing:
-            if not data[srv].get("password"):
-                data[srv]["password"] = existing[srv].get("password", "")
-            if not data[srv].get("totp_secret"):
-                data[srv]["totp_secret"] = existing[srv].get("totp_secret", "")
+            for key in ("password", "totp_secret"):
+                if _is_unset(data[srv].get(key)):
+                    data[srv][key] = existing[srv].get(key, "")
+    if "anthropic" in data and isinstance(existing.get("anthropic"), dict):
+        if _is_unset(data["anthropic"].get("api_key")):
+            data["anthropic"]["api_key"] = existing["anthropic"].get("api_key", "")
     try:
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
@@ -92,7 +113,7 @@ def test_connection():
         pwd = sc["password"]
         if auth_method == "totp_password" and code:
             try: smtp.login(sc["username"], pwd + code)
-            except: smtp.login(sc["username"], pwd)
+            except smtplib.SMTPException: smtp.login(sc["username"], pwd)
         elif auth_method == "otp_only" and code:
             smtp.login(sc["username"], code)
         else:
@@ -250,10 +271,13 @@ def list_reports():
                           "mtime":datetime.fromtimestamp(st.st_mtime).strftime("%d.%m.%Y %H:%M")})
     return jsonify({"ok": True, "reports": files})
 
-@app.route("/api/reports/<filename>")
+@app.route("/api/reports/<path:filename>")
 def get_report(filename):
-    p = REPORTS_DIR / filename
-    return send_file(p) if p.exists() else (jsonify({"ok":False}), 404)
+    # send_from_directory path traversal'ı engeller (../ ile dizin dışına çıkılamaz)
+    try:
+        return send_from_directory(REPORTS_DIR, filename)
+    except Exception:
+        return jsonify({"ok": False}), 404
 
 @app.route("/api/results/latest")
 def latest_results():
@@ -271,24 +295,28 @@ def index():
 if __name__ == "__main__":
     env_port = os.environ.get("PORT")
     desired_port = int(env_port) if env_port else 5000
+    # Varsayılan yalnızca yerel erişim; ağdan erişim için HOST=0.0.0.0 ayarla.
+    host = os.environ.get("HOST", "127.0.0.1")
+    # Werkzeug debugger uzaktan kod çalıştırmaya izin verir — varsayılan kapalı.
+    debug = os.environ.get("FLASK_DEBUG", "").lower() in ("1", "true", "yes")
 
     def _is_port_free(p: int) -> bool:
-        # Flask `host="0.0.0.0"` binds on all interfaces; test bind on 0.0.0.0
-        # (and IPv6 :: when available) to mirror the real server behavior.
+        # Sunucunun bind edeceği host üzerinde test bind yapar.
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s4:
                 s4.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                s4.bind(("0.0.0.0", p))
+                s4.bind((host if host != "::" else "0.0.0.0", p))
         except OSError:
             return False
 
-        try:
-            with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as s6:
-                s6.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                s6.bind(("::", p))
-        except OSError:
-            # If IPv6 is unavailable or already bound, treat as not free.
-            return False
+        if host == "0.0.0.0":
+            try:
+                with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as s6:
+                    s6.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    s6.bind(("::", p))
+            except OSError:
+                # If IPv6 is unavailable or already bound, treat as not free.
+                return False
 
         return True
 
@@ -298,4 +326,4 @@ if __name__ == "__main__":
             port += 1
 
     print(f"\n🚀 Mail Otomasyon Arayüzü: http://localhost:{port}\n")
-    app.run(debug=True, host="0.0.0.0", port=port, threaded=True)
+    app.run(debug=debug, host=host, port=port, threaded=True)

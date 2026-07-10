@@ -76,6 +76,18 @@ Eğer `5000` doluysa uygulama otomatik olarak bir sonraki boş porta geçer (ör
 PORT=5050 python app.py
 ```
 
+Diğer ortam değişkenleri:
+
+| Değişken | Varsayılan | Açıklama |
+|----------|------------|----------|
+| `PORT` | `5000` (doluysa sıradaki boş port) | Sunucu portu |
+| `HOST` | `127.0.0.1` | Ağdan erişim için `HOST=0.0.0.0` ayarla |
+| `FLASK_DEBUG` | kapalı | `FLASK_DEBUG=1` ile debug/reloader açılır (yalnızca geliştirme için — debugger uzaktan kod çalıştırmaya izin verir) |
+
+> **Güvenlik notu:** Arayüzde kimlik doğrulama yoktur. Varsayılan olarak yalnızca
+> `localhost`'tan erişilebilir; `HOST=0.0.0.0` ile ağa açarsanız yalnızca güvenilir
+> bir ağda kullanın. `/api/config` yanıtlarında şifreler ve API key maskelenir.
+
 ---
 
 ## 🔐 Güvenlik & 2FA
@@ -178,7 +190,7 @@ ems:
 
 anthropic:
   api_key: ""                     # https://console.anthropic.com → API Keys
-  model: "claude-sonnet-4-20250514"
+  model: "claude-opus-4-8"        # boş bırakılırsa varsayılan (claude-opus-4-8) kullanılır
 
 test:
   wait_seconds: 15                # Mesajın IMAP'te görünmesini bekleme süresi
@@ -210,6 +222,19 @@ bash github_setup.sh
 ```
 
 Script; `.gitignore`'u uygular, ilk commit'i oluşturur ve `mail-test-otomasyon` adıyla public repo açar.
+
+---
+
+## 🧪 Testler
+
+Test paketi gerçek SMTP/IMAP/Claude bağlantısı olmadan (mock ile) çalışır:
+
+```bash
+pip install -r requirements.txt -r requirements-test.txt
+python -m pytest
+```
+
+GitHub Actions üzerinde her push/PR için otomatik çalışır (`.github/workflows/tests.yml`).
 
 ---
 

@@ -90,11 +90,16 @@ def _mock_smtp():
 
 
 def _mock_claude():
+    """anthropic SDK istemcisini taklit eden mock client döndürür."""
+    block = MagicMock()
+    block.type = "text"
+    block.text = json.dumps(_PASS_ANALYSIS)
     resp = MagicMock()
-    resp.status_code = 200
-    resp.raise_for_status = MagicMock()
-    resp.json.return_value = {"content": [{"text": json.dumps(_PASS_ANALYSIS)}]}
-    return resp
+    resp.stop_reason = "end_turn"
+    resp.content = [block]
+    client = MagicMock()
+    client.messages.create.return_value = resp
+    return client
 
 
 def _make_received(msg_id: str) -> dict:
@@ -234,13 +239,13 @@ class TestE2EPipeline:
         }
 
         smtp_inst = _mock_smtp()
-        claude_resp = _mock_claude()
+        claude_client = _mock_claude()
 
         img_path = PROJECT_ROOT / "test_files" / "test_image.png"
         _ensure_test_image(img_path)
 
         with patch("smtplib.SMTP", return_value=smtp_inst), \
-             patch("requests.post", return_value=claude_resp):
+             patch("analyzer.anthropic.Anthropic", return_value=claude_client):
 
             sender = MailSender(sender_cfg)
             receiver = MailReceiver(receiver_cfg)

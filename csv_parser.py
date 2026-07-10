@@ -82,7 +82,8 @@ def parse_csv(csv_path: str) -> List[TestCombination]:
 
             # Senaryo başlık satırı (numara yok, senaryo adı var)
             if row[0].strip().startswith("Senaryo") or (
-                not row[0].strip().isdigit() and row[1].strip() in SCENARIO_TYPE_MAP
+                len(row) > 1
+                and not row[0].strip().isdigit() and row[1].strip() in SCENARIO_TYPE_MAP
                 and not row[0].strip()
             ):
                 continue
