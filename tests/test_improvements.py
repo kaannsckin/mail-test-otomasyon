@@ -159,6 +159,60 @@ class TestDeploy:
         monkeypatch.setenv("VERCEL", "1")
         assert flask_client.get("/api/config").get_json()["ok"] is True
 
+    def test_network_diagnostics_endpoint(self, flask_client, monkeypatch):
+        """Tanı endpoint'i socket sonuçlarını doğru yorumlamalı."""
+        import app as app_module
+
+        def fake_conn(addr, timeout=8):
+            host, port = addr
+            if port == 443:                       # HTTPS açık
+                m = MagicMock()
+                m.__enter__ = MagicMock(return_value=m)
+                m.__exit__ = MagicMock(return_value=False)
+                return m
+            raise OSError(101, "Network is unreachable")  # SMTP/IMAP kapalı
+
+        monkeypatch.setattr(app_module.socket, "create_connection", fake_conn)
+        data = flask_client.get("/api/diagnostics/network").get_json()
+        assert data["ok"] is True
+        assert data["smtp_available"] is False
+        assert "SMTP" in data["verdict"]
+        https = [t for t in data["targets"] if t["port"] == 443][0]
+        assert https["reachable"] is True
+
+    def test_network_diagnostics_smtp_open(self, flask_client, monkeypatch):
+        import app as app_module
+
+        def all_open(addr, timeout=8):
+            m = MagicMock()
+            m.__enter__ = MagicMock(return_value=m)
+            m.__exit__ = MagicMock(return_value=False)
+            return m
+
+        monkeypatch.setattr(app_module.socket, "create_connection", all_open)
+        data = flask_client.get("/api/diagnostics/network").get_json()
+        assert data["smtp_available"] is True
+
+    def test_diagnostics_protected_by_auth(self, flask_client, monkeypatch):
+        # Altyapı bilgisi sızdırmasın — health'in aksine teşhis auth ister.
+        monkeypatch.setenv("UI_PASSWORD", "x")
+        assert flask_client.get("/api/diagnostics/network").status_code == 401
+
+    def test_network_unreachable_detection(self):
+        from main import _is_network_unreachable
+        assert _is_network_unreachable(OSError(101, "Network is unreachable")) is True
+        assert _is_network_unreachable(OSError(111, "Connection refused")) is True
+        assert _is_network_unreachable(ValueError("Network is unreachable")) is True
+        assert _is_network_unreachable(OSError(2, "No such file")) is False
+        # Zincirlenmiş istisna
+        try:
+            try:
+                raise OSError(101, "Network is unreachable")
+            except OSError as inner:
+                raise RuntimeError("wrapper") from inner
+        except RuntimeError as e:
+            assert _is_network_unreachable(e) is True
+
     def test_paas_host_detection(self, monkeypatch):
         import app as app_module
         for marker in ("RAILWAY_ENVIRONMENT", "RENDER", "DYNO"):

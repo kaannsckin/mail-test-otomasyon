@@ -332,6 +332,51 @@ def _get_csv_path():
 def health():
     return jsonify({"ok": True, "status": "healthy", "serverless": _is_serverless()})
 
+# ── NETWORK DIAGNOSTICS ─────────────────────────────────────────
+# Tarayıcıdan açılabilir: hangi SMTP/IMAP portlarının bu sunucudan
+# erişilebilir olduğunu gösterir. Render/Heroku gibi platformlar giden
+# SMTP portlarını kapatır → "Network is unreachable" hatasının teşhisi.
+_DIAG_TARGETS = [
+    ("Gmail SMTP (STARTTLS)",   "smtp.gmail.com",         587),
+    ("Gmail SMTP (SSL)",        "smtp.gmail.com",         465),
+    ("Gmail IMAP",              "imap.gmail.com",         993),
+    ("Outlook SMTP (STARTTLS)", "smtp.office365.com",     587),
+    ("Outlook IMAP",            "outlook.office365.com",  993),
+    ("HTTPS (kontrol)",         "api.github.com",         443),
+]
+
+@app.route("/api/diagnostics/network")
+def diagnostics_network():
+    results = []
+    any_smtp_open = False
+    for label, host, port in _DIAG_TARGETS:
+        entry = {"label": label, "host": host, "port": port}
+        start = time.time()
+        try:
+            with socket.create_connection((host, port), timeout=8):
+                pass
+            entry["reachable"] = True
+            entry["ms"] = round((time.time() - start) * 1000)
+            if port in (25, 465, 587):
+                any_smtp_open = True
+        except OSError as e:
+            entry["reachable"] = False
+            entry["error"] = f"{type(e).__name__}: {e}"
+        results.append(entry)
+
+    https_ok = any(r["reachable"] for r in results if r["port"] == 443)
+    if https_ok and not any_smtp_open:
+        verdict = ("Bu sunucu internete çıkabiliyor ANCAK giden SMTP portları "
+                   "(587/465) engelli. Platform (ör. Render ücretsiz plan) mail "
+                   "göndermeye izin vermiyor — SMTP çıkışı açık bir host gerekir.")
+    elif any_smtp_open:
+        verdict = "SMTP portları açık — bu sunucudan mail gönderilebilir."
+    else:
+        verdict = "Sunucunun dış ağ erişimi kısıtlı görünüyor."
+
+    return jsonify({"ok": True, "verdict": verdict,
+                    "smtp_available": any_smtp_open, "targets": results})
+
 # ── RUNNER ──────────────────────────────────────────────────────
 @app.route("/api/run/start", methods=["POST"])
 def start_run():

@@ -108,6 +108,17 @@ def get_server_config(config: dict, server_name: str) -> dict:
     return config[key]
 
 
+def _is_network_unreachable(exc: Exception) -> bool:
+    """Giden SMTP portu platform tarafından engellenmiş mi? (Errno 101/111/113)"""
+    err = exc
+    while err is not None:
+        if isinstance(err, OSError) and getattr(err, "errno", None) in (101, 111, 113):
+            return True
+        err = err.__cause__ or err.__context__
+    text = str(exc).lower()
+    return "network is unreachable" in text or "no route to host" in text
+
+
 # ------------------------------------------------------------------ #
 #  Test dosyalarını hazırla
 # ------------------------------------------------------------------ #
@@ -390,6 +401,18 @@ def run_scenario(
 
     except Exception as e:
         logger.error(f"Gönderim hatası ({scenario_key}): {e}", exc_info=True)
+        if _is_network_unreachable(e):
+            summary = ("Sunucu giden SMTP portuna çıkamıyor (Network is unreachable) — "
+                       "platform mail portlarını engelliyor.")
+            recommendations = [
+                "Render/Heroku ücretsiz planları giden SMTP'yi engeller.",
+                "SMTP çıkışı açık bir host kullanın (Railway, Fly.io, VPS) ya da "
+                "uygulamayı yerel makinede çalıştırın.",
+                "Teşhis için /api/diagnostics/network adresini açın.",
+            ]
+        else:
+            summary = f"Mesaj gönderilemedi: {e}"
+            recommendations = ["SMTP bağlantı ayarlarını kontrol edin"]
         return {
             "combination": combo.label,
             "scenario_type": scenario_key,
@@ -399,9 +422,9 @@ def run_scenario(
                 "passed": False,
                 "confidence": "HIGH",
                 "checks": [{"name": "Gönderim", "passed": False, "detail": str(e)}],
-                "summary": f"Mesaj gönderilemedi: {e}",
+                "summary": summary,
                 "issues": [str(e)],
-                "recommendations": ["SMTP bağlantı ayarlarını kontrol edin"],
+                "recommendations": recommendations,
             },
         }
 
@@ -516,6 +539,14 @@ def main():
                     logger.info(f"  ✅ SMTP OK: {server_name} ({sc['smtp_host']})")
                 except Exception as e:
                     logger.error(f"  ❌ SMTP FAIL: {server_name} — {e}")
+                    if _is_network_unreachable(e):
+                        logger.error(
+                            "     ↳ 'Network is unreachable' — bu sunucu giden SMTP "
+                            "portuna (587/465) çıkamıyor. Render/Heroku gibi ücretsiz "
+                            "platformlar mail portlarını engeller. SMTP çıkışı açık bir "
+                            "host (Railway, Fly.io, VPS) veya yerel çalıştırma gerekir. "
+                            "Teşhis: /api/diagnostics/network adresini açın."
+                        )
         return
 
     # Analiz için LLM — analysis.provider: claude (varsayılan) | gemini
