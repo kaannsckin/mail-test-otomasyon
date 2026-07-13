@@ -238,12 +238,26 @@ Uygulama arka planda uzun süren test süreçleri çalıştırdığı için **ka
 konteyner** sunan platformlar tam işlevlidir; serverless platformlarda yalnızca
 arayüz/konfigürasyon çalışır:
 
-| Platform | Test Koşusu | Config Kalıcılığı | Not |
+| Platform | Test Koşusu | Giden SMTP | Not |
 | --- | --- | --- | --- |
-| **Railway** (önerilen) | ✅ | Volume ekleyin (`/data` + `DATA_DIR=/data`) | `railway.toml` hazır, healthcheck dahil |
-| **Render** | ✅ | ✅ 1 GB disk `render.yaml`'da tanımlı | Ücretsiz planda uyku moduna geçer |
-| **Docker / VPS** | ✅ | ✅ `./data` volume | `docker compose up -d` yeterli |
-| **Vercel** | ❌ (60 sn serverless sınırı) | ❌ (/tmp geçici) | Arayüz demo olarak çalışır; koşu başlatınca yönlendirme mesajı verir |
+| **Railway** (önerilen) | ✅ | ✅ açık | `railway.toml` hazır; volume için `/data` + `DATA_DIR=/data` |
+| **Fly.io / VPS** | ✅ | ✅ açık | Mail göndermeye tam uygun |
+| **Docker (kendi sunucun)** | ✅ | ✅ (sunucuna bağlı) | `docker compose up -d` yeterli |
+| **Render** | ✅ arayüz | ❌ **engelli** | Ücretsiz/paylaşımlı planlarda giden SMTP portları kapalı — mail **gönderemez** |
+| **Vercel** | ❌ (60 sn serverless) | ❌ | Yalnızca arayüz demosu |
+
+> ⚠️ **En kritik nokta — giden SMTP:** Bu araç gerçek mail gönderdiği için
+> sunucunun 587/465 portlarına **çıkışına izin veren** bir platform şarttır.
+> **Render, Heroku ve çoğu ücretsiz PaaS spam'i önlemek için giden SMTP'yi
+> engeller** → test başlatınca `Network is unreachable` (Errno 101) alırsınız.
+> Bu bir kod hatası değil, platform politikasıdır.
+>
+> Deploy ettikten sonra tarayıcıdan **`/api/diagnostics/network`** adresini açın
+> (ör. `https://siteniz.com/api/diagnostics/network`) — hangi mail portlarının
+> açık olduğunu ve mail gönderilip gönderilemeyeceğini tek bakışta gösterir.
+>
+> **Mail göndermek için:** Railway, Fly.io veya bir VPS kullanın; ya da
+> uygulamayı SMTP'si açık bir ağda çalıştırın.
 
 Tüm platformlarda:
 
