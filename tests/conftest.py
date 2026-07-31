@@ -231,6 +231,7 @@ def flask_client(tmp_path, monkeypatch):
         "started_at": None,
         "finished_at": None,
         "exit_code": None,
+        "log_file": None,   # önceki testten kalan log dosyası sızmasın
     })
     with app_module.app.test_client() as client:
         yield client

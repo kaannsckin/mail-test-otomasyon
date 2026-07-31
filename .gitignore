@@ -7,6 +7,9 @@ config.yaml
 __pycache__/
 *.pyc
 *.pyo
+.pytest_cache/
+.coverage
+htmlcov/
 .venv/
 venv/
 *.egg-info/

@@ -300,9 +300,27 @@ Test paketi gerçek SMTP/IMAP/Claude bağlantısı olmadan (mock ile) çalışı
 ```bash
 pip install -r requirements.txt -r requirements-test.txt
 python -m pytest
+
+# Kapsam raporu ile
+python -m pytest --cov=. --cov-report=term-missing
 ```
 
-GitHub Actions üzerinde her push/PR için otomatik çalışır (`.github/workflows/tests.yml`).
+498 test, ~6 saniye, **%99 satır kapsamı**. GitHub Actions üzerinde her push/PR
+için Python 3.10/3.11/3.12 matrisinde otomatik çalışır
+(`.github/workflows/tests.yml`).
+
+| Dosya | Kapsam |
+| --- | --- |
+| `test_smoke.py` | Modül birim testleri — sender/receiver/analyzer/parser/reporter/TOTP |
+| `test_smoke_api.py` | Flask uç noktaları — config, MFA, kombinasyon, çalıştırma, rapor |
+| `test_e2e.py` | 18 kombinasyon × senaryo pipeline'ı (mock SMTP/IMAP/LLM) |
+| `test_improvements.py` | Secret maskeleme, Basic Auth, path traversal, deploy, Gemini |
+| `test_orchestrator.py` | `main.py`: senaryo yönlendirme, subject üretimi, atlama/hata yolları, CLI |
+| `test_app_endpoints.py` | Config içe/dışa aktarma, log polling, alt süreç çalıştırıcı, 2FA bağlantı testi |
+| `test_transport.py` | SMTP/IMAP giriş geri düşüşleri, IMAP yeniden deneme, S/MIME imzalama |
+| `test_analyzer_errors.py` | Claude/Gemini API hata yolları (401, 429, 5xx, timeout, refusal) |
+
+> S/MIME imzalama testleri sistemde `openssl` CLI yoksa otomatik atlanır.
 
 ### Gerçek sunucu duman testi
 
