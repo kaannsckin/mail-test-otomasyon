@@ -299,15 +299,24 @@ class TestRunScenarioSkipAndErrors:
         assert "SMTP auth reddedildi" in res["analysis"]["summary"]
         assert res["analysis"]["recommendations"] == ["SMTP bağlantı ayarlarını kontrol edin"]
 
-    @pytest.mark.parametrize("errno", [101, 111, 113])
+    @pytest.mark.parametrize("errno", [97, 101, 110, 111, 113])
     def test_blocked_smtp_port_gets_platform_guidance(self, test_cfg, errno):
         sender, receiver, analyzer = _sender_mock(), _receiver_mock(), _analyzer_mock()
         sender.send_plain_text.side_effect = OSError(errno, "Network is unreachable")
         res = main_mod.run_scenario("plain_text", _combo(), 0, sender, receiver, analyzer, test_cfg)
         summary = res["analysis"]["summary"]
-        assert "giden SMTP portuna çıkamıyor" in summary
+        assert "giden SMTP portuna" in summary
         assert any("Railway" in r for r in res["analysis"]["recommendations"])
         assert any("/api/diagnostics/network" in r for r in res["analysis"]["recommendations"])
+
+    def test_dropped_connection_timeout_gets_same_guidance(self, test_cfg):
+        """Paketi DROP eden güvenlik duvarı errno üretmez, sadece bekletir —
+        kurumsal ağlarda en yaygın durum. Teşhis yine de çalışmalı."""
+        sender, receiver, analyzer = _sender_mock(), _receiver_mock(), _analyzer_mock()
+        sender.send_plain_text.side_effect = TimeoutError("timed out")
+        res = main_mod.run_scenario("plain_text", _combo(), 0, sender, receiver, analyzer, test_cfg)
+        assert "giden SMTP portuna" in res["analysis"]["summary"]
+        assert any("güvenlik duvarında" in r for r in res["analysis"]["recommendations"])
 
     def test_failed_send_still_reports_combination(self, test_cfg):
         sender, receiver, analyzer = _sender_mock(), _receiver_mock(), _analyzer_mock()
@@ -323,12 +332,34 @@ class TestRunScenarioSkipAndErrors:
 
 class TestNetworkUnreachableDetection:
 
-    @pytest.mark.parametrize("errno", [101, 111, 113])
+    @pytest.mark.parametrize("errno", [97, 101, 110, 111, 113])
     def test_direct_oserror_detected(self, errno):
         assert main_mod._is_network_unreachable(OSError(errno, "unreachable")) is True
 
     def test_unrelated_errno_not_detected(self):
         assert main_mod._is_network_unreachable(OSError(2, "No such file")) is False
+
+    def test_socket_timeout_detected(self):
+        """DROP eden güvenlik duvarı: errno yok, yalnızca zaman aşımı."""
+        import socket
+        assert main_mod._is_network_unreachable(socket.timeout("timed out")) is True
+        assert main_mod._is_network_unreachable(TimeoutError()) is True
+
+    def test_chained_timeout_detected(self):
+        try:
+            try:
+                raise TimeoutError("timed out")
+            except TimeoutError as e:
+                raise RuntimeError("SMTP bağlanamadı") from e
+        except RuntimeError as outer:
+            assert main_mod._is_network_unreachable(outer) is True
+
+    @pytest.mark.parametrize("msg", [
+        "Connection refused", "Address family not supported by protocol",
+        "connection timed out",
+    ])
+    def test_message_variants_detected(self, msg):
+        assert main_mod._is_network_unreachable(RuntimeError(msg)) is True
 
     def test_chained_cause_detected(self):
         try:

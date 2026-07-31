@@ -305,7 +305,7 @@ python -m pytest
 python -m pytest --cov=. --cov-report=term-missing
 ```
 
-498 test, ~6 saniye, **%99 satır kapsamı**. GitHub Actions üzerinde her push/PR
+508 test, ~6 saniye, **%99 satır kapsamı**. GitHub Actions üzerinde her push/PR
 için Python 3.10/3.11/3.12 matrisinde otomatik çalışır
 (`.github/workflows/tests.yml`).
 
@@ -319,8 +319,30 @@ için Python 3.10/3.11/3.12 matrisinde otomatik çalışır
 | `test_app_endpoints.py` | Config içe/dışa aktarma, log polling, alt süreç çalıştırıcı, 2FA bağlantı testi |
 | `test_transport.py` | SMTP/IMAP giriş geri düşüşleri, IMAP yeniden deneme, S/MIME imzalama |
 | `test_analyzer_errors.py` | Claude/Gemini API hata yolları (401, 429, 5xx, timeout, refusal) |
+| `test_ui.py` | **Tarayıcı testleri** — gezinme, secret gizliliği, form, log akışı, 2FA modal |
 
 > S/MIME imzalama testleri sistemde `openssl` CLI yoksa otomatik atlanır.
+
+### Arayüz (tarayıcı) testleri
+
+`templates/index.html` ~600 satır inline JS içerir; pytest bunu çalıştıramadığı
+için arayüz gerçek bir tarayıcıda test edilir. Playwright kurulu değilse
+`test_ui.py` otomatik atlanır — temel paket ek bağımlılık istemez.
+
+```bash
+pip install playwright
+playwright install chromium
+python -m pytest tests/test_ui.py        # 29 test, ~30 sn
+```
+
+Kapsanan kritik davranışlar:
+
+- Kayıtlı şifre/API key'in tarayıcıya **düz metin gitmemesi** (maskeleme)
+- `localStorage`'a **hiçbir secret yazılmaması**
+- Şifreye dokunmadan Kaydet'e basıldığında **kayıtlı şifrenin silinmemesi**
+- Sayfa yüklenirken JS hatası olmaması, tüm sekmelerin açılması
+- Log polling'in çıktıyı UTF-8 bozmadan basması ve bitişte durması
+- Sunucu 2FA istediğinde modal'ın açılması
 
 ### Gerçek sunucu duman testi
 

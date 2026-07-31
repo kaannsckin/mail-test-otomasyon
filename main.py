@@ -108,15 +108,40 @@ def get_server_config(config: dict, server_name: str) -> dict:
     return config[key]
 
 
+# Giden SMTP portu kesildiğinde ortaya çıkan hatalar. Güvenlik duvarı paketi
+# REJECT ederse ECONNREFUSED/ENETUNREACH gelir; DROP ederse (kurumsal ağlarda
+# en yaygın davranış) hiçbir errno gelmez, bağlantı zaman aşımına uğrar.
+_BLOCKED_PORT_ERRNOS = (
+    97,   # EAFNOSUPPORT — adres ailesi desteklenmiyor (kısıtlı konteyner/sandbox)
+    101,  # ENETUNREACH  — ağa erişilemiyor
+    110,  # ETIMEDOUT    — bağlantı zaman aşımı
+    111,  # ECONNREFUSED — bağlantı reddedildi
+    113,  # EHOSTUNREACH — host'a erişilemiyor
+)
+
+_BLOCKED_PORT_TEXTS = (
+    "network is unreachable", "no route to host", "timed out", "timeout",
+    "connection refused", "address family not supported",
+)
+
+
 def _is_network_unreachable(exc: Exception) -> bool:
-    """Giden SMTP portu platform tarafından engellenmiş mi? (Errno 101/111/113)"""
+    """Giden SMTP portu engelli ya da erişilemez mi?
+
+    Yalnızca gönderim/bağlantı hatalarında çağrılır. Zaman aşımı da yakalanır:
+    paketi DROP eden güvenlik duvarları errno üretmez, sadece bekletir — bu
+    durumda kullanıcı teşhis mesajı yerine anlamsız bir 'timed out' görüyordu.
+    """
     err = exc
     while err is not None:
-        if isinstance(err, OSError) and getattr(err, "errno", None) in (101, 111, 113):
-            return True
+        if isinstance(err, OSError):
+            if getattr(err, "errno", None) in _BLOCKED_PORT_ERRNOS:
+                return True
+            if isinstance(err, TimeoutError):   # socket.timeout errno taşımaz
+                return True
         err = err.__cause__ or err.__context__
     text = str(exc).lower()
-    return "network is unreachable" in text or "no route to host" in text
+    return any(t in text for t in _BLOCKED_PORT_TEXTS)
 
 
 # ------------------------------------------------------------------ #
@@ -402,10 +427,13 @@ def run_scenario(
     except Exception as e:
         logger.error(f"Gönderim hatası ({scenario_key}): {e}", exc_info=True)
         if _is_network_unreachable(e):
-            summary = ("Sunucu giden SMTP portuna çıkamıyor (Network is unreachable) — "
-                       "platform mail portlarını engelliyor.")
+            summary = ("Sunucu giden SMTP portuna (587/465) ulaşamıyor — bağlantı "
+                       "engelleniyor veya zaman aşımına uğruyor. Bu bir kod hatası "
+                       "değil, ağ/platform politikasıdır.")
             recommendations = [
                 "Render/Heroku ücretsiz planları giden SMTP'yi engeller.",
+                "Kurumsal ağlarda 587/465 güvenlik duvarında kapalı olabilir — "
+                "bağlantı sessizce zaman aşımına uğrar; ağ yöneticinize danışın.",
                 "SMTP çıkışı açık bir host kullanın (Railway, Fly.io, VPS) ya da "
                 "uygulamayı yerel makinede çalıştırın.",
                 "Teşhis için /api/diagnostics/network adresini açın.",
@@ -541,10 +569,11 @@ def main():
                     logger.error(f"  ❌ SMTP FAIL: {server_name} — {e}")
                     if _is_network_unreachable(e):
                         logger.error(
-                            "     ↳ 'Network is unreachable' — bu sunucu giden SMTP "
-                            "portuna (587/465) çıkamıyor. Render/Heroku gibi ücretsiz "
-                            "platformlar mail portlarını engeller. SMTP çıkışı açık bir "
-                            "host (Railway, Fly.io, VPS) veya yerel çalıştırma gerekir. "
+                            "     ↳ Giden SMTP portuna (587/465) ulaşılamıyor — "
+                            "bağlantı engelleniyor veya zaman aşımına uğruyor. "
+                            "Ücretsiz PaaS'lar (Render/Heroku) ve kurumsal güvenlik "
+                            "duvarları bu portları kapatır. SMTP çıkışı açık bir host "
+                            "(Railway, Fly.io, VPS) veya yerel çalıştırma gerekir. "
                             "Teşhis: /api/diagnostics/network adresini açın."
                         )
         return
