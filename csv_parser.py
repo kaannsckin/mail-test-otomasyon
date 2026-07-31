@@ -20,7 +20,18 @@ SCENARIO_TYPE_MAP = {
     "Uluslararası Alfabe ve Emoji Sınaması": "i18n",
     "Rich CSS ve Media Query Sınaması": "complex_html",
     "Forward (Mesaj İletme) Akışı": "forward",
+    "HTML Tablo Render Testi": "html_table",
+    "Çoklu Eklenti (Multi Attachment)": "multi_attachment",
 }
+
+# Orkestratörün gerçekten çalıştırabildiği senaryolar. CSV'ye bu kümenin
+# dışında bir tip girilirse run_scenario "Bilinmeyen senaryo tipi" ile
+# başarısız olur — bu liste tek doğruluk kaynağıdır.
+SUPPORTED_SCENARIOS = frozenset({
+    "plain_text", "attachment", "inline_image", "smime", "reply_chain",
+    "calendar_invite", "i18n", "complex_html", "html_table", "forward",
+    "forward_chain", "multi_attachment",
+})
 
 
 @dataclass

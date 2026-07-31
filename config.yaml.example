@@ -64,6 +64,21 @@ test:
   report_output: "reports/test_report.html"
   results_csv: "reports/test_results.csv"
 
+  # ── Çoklu ek senaryosu (multi_attachment) ────────────────────────
+  # Tanımlanmazsa prepare_test_files() örnek dosyaları otomatik üretir.
+  # test_multi_attachment_paths:
+  #   - "test_files/test_document.pdf"
+  #   - "test_files/test_data.csv"
+  #   - "test_files/test_notes.txt"
+
+  # ── Takvim daveti senaryosu (calendar_invite) ────────────────────
+  calendar_duration_minutes: 30
+  calendar_location: "Çevrimiçi Toplantı"
+
+  # ── S/MIME senaryosu — tanımlı değilse otomatik atlanır ──────────
+  # smime_cert_path: "certs/test_cert.pem"
+  # smime_key_path:  "certs/test_key.pem"
+
 logging:
   level: "INFO"
   file: "logs/automation.log"

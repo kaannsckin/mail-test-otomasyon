@@ -12,12 +12,13 @@ Kullanım:
 import argparse
 import logging
 import os
+import re
 import sys
 import time
 import uuid
 import yaml
 from datetime import datetime
-from email.utils import make_msgid
+from email.utils import formatdate, make_msgid
 from pathlib import Path
 
 # Proje modülleri
@@ -30,8 +31,15 @@ from message_templates import (
     get_template,
     get_reply_original,
     resolve_inline_html,
+    resolve_html,
+    html_to_plain,
+    HTML_SCENARIOS,
     SIGNATURE_HTML,
 )
+
+# prepare_test_files() tarafından üretilen ek örnek dosyalar — çoklu ek
+# senaryosunun tek dosyayla anlamsızlaşmaması için.
+EXTRA_TEST_FILES = ("test_files/test_data.csv", "test_files/test_notes.txt")
 
 # ------------------------------------------------------------------ #
 #  CSV path resolution
@@ -108,15 +116,40 @@ def get_server_config(config: dict, server_name: str) -> dict:
     return config[key]
 
 
+# Giden SMTP portu kesildiğinde ortaya çıkan hatalar. Güvenlik duvarı paketi
+# REJECT ederse ECONNREFUSED/ENETUNREACH gelir; DROP ederse (kurumsal ağlarda
+# en yaygın davranış) hiçbir errno gelmez, bağlantı zaman aşımına uğrar.
+_BLOCKED_PORT_ERRNOS = (
+    97,   # EAFNOSUPPORT — adres ailesi desteklenmiyor (kısıtlı konteyner/sandbox)
+    101,  # ENETUNREACH  — ağa erişilemiyor
+    110,  # ETIMEDOUT    — bağlantı zaman aşımı
+    111,  # ECONNREFUSED — bağlantı reddedildi
+    113,  # EHOSTUNREACH — host'a erişilemiyor
+)
+
+_BLOCKED_PORT_TEXTS = (
+    "network is unreachable", "no route to host", "timed out", "timeout",
+    "connection refused", "address family not supported",
+)
+
+
 def _is_network_unreachable(exc: Exception) -> bool:
-    """Giden SMTP portu platform tarafından engellenmiş mi? (Errno 101/111/113)"""
+    """Giden SMTP portu engelli ya da erişilemez mi?
+
+    Yalnızca gönderim/bağlantı hatalarında çağrılır. Zaman aşımı da yakalanır:
+    paketi DROP eden güvenlik duvarları errno üretmez, sadece bekletir — bu
+    durumda kullanıcı teşhis mesajı yerine anlamsız bir 'timed out' görüyordu.
+    """
     err = exc
     while err is not None:
-        if isinstance(err, OSError) and getattr(err, "errno", None) in (101, 111, 113):
-            return True
+        if isinstance(err, OSError):
+            if getattr(err, "errno", None) in _BLOCKED_PORT_ERRNOS:
+                return True
+            if isinstance(err, TimeoutError):   # socket.timeout errno taşımaz
+                return True
         err = err.__cause__ or err.__context__
     text = str(exc).lower()
-    return "network is unreachable" in text or "no route to host" in text
+    return any(t in text for t in _BLOCKED_PORT_TEXTS)
 
 
 # ------------------------------------------------------------------ #
@@ -167,6 +200,24 @@ startxref
             f.write(png_bytes)
         logger.debug(f"Test PNG oluşturuldu: {img_path}")
 
+    # Çoklu ek senaryosu için farklı MIME tiplerinde küçük dosyalar
+    csv_path = "test_files/test_data.csv"
+    if not os.path.exists(csv_path):
+        with open(csv_path, "w", encoding="utf-8") as f:
+            f.write("id,ürün,adet,açıklama\n"
+                    "1,Şarj Kablosu,12,Türkçe karakter testi ğüşıöç\n"
+                    "2,Güç Kaynağı,3,İkinci satır\n")
+        logger.debug(f"Test CSV oluşturuldu: {csv_path}")
+
+    txt_path = "test_files/test_notes.txt"
+    if not os.path.exists(txt_path):
+        with open(txt_path, "w", encoding="utf-8") as f:
+            f.write("Mail Otomasyon — Test Notları\n"
+                    "================================\n"
+                    "Bu dosya çoklu ek senaryosu için üretilmiştir.\n"
+                    "Karakter sınaması: ğüşıöç ĞÜŞİÖÇ\n")
+        logger.debug(f"Test TXT oluşturuldu: {txt_path}")
+
 
 # ------------------------------------------------------------------ #
 #  Tek senaryo çalıştır
@@ -201,11 +252,18 @@ def _resolve_attachment_paths(test_config: dict) -> list[str]:
 #  Subject builder helpers
 # ------------------------------------------------------------------ #
 SCENARIO_LABELS: dict[str, str] = {
-    "plain_text":   "Plain Text",
-    "attachment":   "Ek Dosya",
-    "inline_image": "Inline Görsel",
-    "reply_chain":  "Reply Chain",
-    "smime":        "S/MIME İmza",
+    "plain_text":       "Plain Text",
+    "attachment":       "Ek Dosya",
+    "inline_image":     "Inline Görsel",
+    "reply_chain":      "Reply Chain",
+    "smime":            "S/MIME İmza",
+    "calendar_invite":  "Takvim Daveti",
+    "i18n":             "Uluslararası Alfabe",
+    "complex_html":     "Zengin HTML",
+    "html_table":       "HTML Tablo",
+    "forward":          "Mesaj İletme",
+    "forward_chain":    "Mesaj İletme",
+    "multi_attachment": "Çoklu Ek",
 }
 
 LENGTH_LABELS: dict[str, str] = {
@@ -248,6 +306,79 @@ def _attachment_tag(paths: list[str]) -> str:
     types_str = "+".join(exts)
     size_str = _format_file_size(total_size)
     return f"{count} Ek: {types_str}, {size_str}"
+
+
+def _resolve_multi_attachment_paths(test_config: dict) -> list[str]:
+    """Çoklu ek senaryosu için dosya listesi.
+
+    Öncelik ``test_multi_attachment_paths``; tanımlı değilse normal ek
+    yolları + prepare_test_files()'ın ürettiği örnek dosyalar kullanılır.
+    Senaryonun anlamlı olması için en az iki farklı dosya hedeflenir.
+    """
+    repo_root = Path(__file__).parent
+
+    explicit = test_config.get("test_multi_attachment_paths")
+    if explicit and isinstance(explicit, list):
+        resolved = []
+        for raw in explicit:
+            p = Path(raw)
+            if p.exists():
+                resolved.append(str(p))
+            elif (repo_root / p).exists():
+                resolved.append(str(repo_root / p))
+            else:
+                logger.warning(f"Çoklu ek dosyası bulunamadı: {raw}")
+        return resolved
+
+    paths = list(_resolve_attachment_paths(test_config))
+    for extra in EXTRA_TEST_FILES:
+        candidate = repo_root / extra
+        if candidate.exists() and str(candidate) not in paths:
+            paths.append(str(candidate))
+    return paths
+
+
+_BODY_CLOSE_RE = re.compile(r"</body\s*>", re.IGNORECASE)
+
+
+def _stamp_html_run_id(html: str, run_id: str) -> str:
+    """HTML gövdeye Run ID'yi </body> öncesine iliştirir.
+
+    Düz metinde olduğu gibi sona eklemek </html>'den sonra metin bırakır ve
+    bazı istemcilerde görünmez; bu yüzden gövdenin içine yazılır.
+
+    Konum aramasında ``str.lower()`` KULLANILMAZ: Türkçe 'İ' küçültüldüğünde
+    iki karaktere ('i' + U+0307) açılır, dizgenin boyu değişir ve küçük harfli
+    kopyada bulunan indeks orijinal metinde kayar (kapanış etiketinin '<'
+    karakteri yenirdi). Regex doğrudan orijinal metin üzerinde çalışır.
+    """
+    stamp = (f"<p style=\"font-size:11px;color:#999;margin-top:16px\">"
+             f"[Run ID: {run_id}]</p>")
+    matches = list(_BODY_CLOSE_RE.finditer(html))
+    if matches:
+        idx = matches[-1].start()
+        return html[:idx] + stamp + html[idx:]
+    return html + stamp
+
+
+def _skipped_result(combo: TestCombination, scenario_key: str,
+                    test_time: str, reason: str) -> dict:
+    """Senaryo çalıştırılamadığında PASS/FAIL yerine SKIP sonucu üretir."""
+    return {
+        "combination": combo.label,
+        "scenario_type": scenario_key,
+        "scenario_key": scenario_key,
+        "test_time": test_time,
+        "analysis": {
+            "passed": None,
+            "confidence": "N/A",
+            "checks": [],
+            "summary": reason,
+            "issues": [],
+            "recommendations": [],
+        },
+        "skipped": True,
+    }
 
 
 def _inline_image_tag(image_path: str) -> str:
@@ -310,19 +441,39 @@ def run_scenario(
 
     if scenario_key == "attachment":
         detail_tag = _attachment_tag(attachment_paths)
+    elif scenario_key == "multi_attachment":
+        multi_paths = _resolve_multi_attachment_paths(test_config)
+        detail_tag = _attachment_tag(multi_paths)
     elif scenario_key == "inline_image":
         detail_tag = _inline_image_tag(image_path)
     elif scenario_key == "reply_chain":
         detail_tag = "Eksiz, Thread Testi"
     elif scenario_key == "smime":
         detail_tag = "Dijital İmzalı"
+    elif scenario_key == "calendar_invite":
+        detail_tag = "iTIP Daveti, ICS Ekli"
+    elif scenario_key == "i18n":
+        # Başlığın kendisi test edilen şey: ASCII dışı karakterler subject
+        # header'ında RFC 2047 ile kodlanmalı. Bu yüzden şablonun emoji/çok
+        # alfabeli etiketi doğrudan konuya taşınır.
+        detail_tag = tmpl.subject_tag
+    elif scenario_key == "complex_html":
+        detail_tag = "Zengin CSS + Media Query"
+    elif scenario_key == "html_table":
+        detail_tag = "HTML Tablo Yapısı"
+    elif scenario_key in ("forward", "forward_chain"):
+        detail_tag = "İletilmiş Mesaj, RFC822 Kapsüllü"
     else:
         detail_tag = "Eksiz"
 
     subject = _build_subject(
         subject_prefix, run_id, scenario_key, length_label, combo.label, detail_tag,
     )
-    body = f"{tmpl.body}\n\n[Run ID: {run_id}]"
+    if scenario_key in HTML_SCENARIOS:
+        html_body = resolve_html(tmpl.body)
+        body = _stamp_html_run_id(html_body, run_id)
+    else:
+        body = f"{tmpl.body}\n\n[Run ID: {run_id}]"
 
     combination_meta = {
         "sender_server": combo.sender_server,
@@ -396,16 +547,70 @@ def run_scenario(
                 body,
             )
 
+        elif scenario_key == "multi_attachment":
+            paths = _resolve_multi_attachment_paths(test_config)
+            if not paths:
+                return _skipped_result(
+                    combo, scenario_key, test_time,
+                    "Çoklu ek senaryosu için en az bir dosya bulunamadı.",
+                )
+            send_meta = sender.send_with_attachment(to_address, subject, body, paths)
+            send_meta["scenario"] = "multi_attachment"
+
+        elif scenario_key in HTML_SCENARIOS:
+            send_meta = sender.send_html_message(
+                to_address, subject, body, html_to_plain(body), scenario=scenario_key,
+            )
+
+        elif scenario_key == "i18n":
+            send_meta = sender.send_i18n(to_address, subject, body)
+
+        elif scenario_key == "calendar_invite":
+            send_meta = sender.send_calendar_invite(
+                to_address, subject, body,
+                summary=tmpl.subject_tag,
+                duration_minutes=int(test_config.get("calendar_duration_minutes", 30)),
+                location=test_config.get("calendar_location", "Çevrimiçi Toplantı"),
+            )
+
+        elif scenario_key in ("forward", "forward_chain"):
+            # Reply chain gibi: önce gerçek bir orijinal mesaj gönderilir,
+            # sonra o mesaj message/rfc822 olarak kapsüllenip iletilir.
+            orig_tmpl = get_reply_original(combo_index)
+            orig_length = LENGTH_LABELS.get(orig_tmpl.length, orig_tmpl.length)
+            orig_subject = _build_subject(
+                subject_prefix, f"ORIG-{run_id}", scenario_key,
+                orig_length, combo.label, "İletme Kaynağı, Eksiz",
+            )
+            orig_body = f"{orig_tmpl.body}\n\n[Run ID: {run_id}]"
+
+            original_meta = sender.send_plain_text(to_address, orig_subject, orig_body)
+            time.sleep(5)
+            send_meta = sender.send_forward(
+                to_address, orig_subject, body,
+                {
+                    "subject": orig_subject,
+                    "from": sender.from_address,
+                    "to": to_address,
+                    "date": formatdate(localtime=True),
+                    "msg_id": original_meta.get("msg_id", ""),
+                    "body": orig_body,
+                },
+            )
+
         else:
             raise ValueError(f"Bilinmeyen senaryo tipi: {scenario_key}")
 
     except Exception as e:
         logger.error(f"Gönderim hatası ({scenario_key}): {e}", exc_info=True)
         if _is_network_unreachable(e):
-            summary = ("Sunucu giden SMTP portuna çıkamıyor (Network is unreachable) — "
-                       "platform mail portlarını engelliyor.")
+            summary = ("Sunucu giden SMTP portuna (587/465) ulaşamıyor — bağlantı "
+                       "engelleniyor veya zaman aşımına uğruyor. Bu bir kod hatası "
+                       "değil, ağ/platform politikasıdır.")
             recommendations = [
                 "Render/Heroku ücretsiz planları giden SMTP'yi engeller.",
+                "Kurumsal ağlarda 587/465 güvenlik duvarında kapalı olabilir — "
+                "bağlantı sessizce zaman aşımına uğrar; ağ yöneticinize danışın.",
                 "SMTP çıkışı açık bir host kullanın (Railway, Fly.io, VPS) ya da "
                 "uygulamayı yerel makinede çalıştırın.",
                 "Teşhis için /api/diagnostics/network adresini açın.",
@@ -541,10 +746,11 @@ def main():
                     logger.error(f"  ❌ SMTP FAIL: {server_name} — {e}")
                     if _is_network_unreachable(e):
                         logger.error(
-                            "     ↳ 'Network is unreachable' — bu sunucu giden SMTP "
-                            "portuna (587/465) çıkamıyor. Render/Heroku gibi ücretsiz "
-                            "platformlar mail portlarını engeller. SMTP çıkışı açık bir "
-                            "host (Railway, Fly.io, VPS) veya yerel çalıştırma gerekir. "
+                            "     ↳ Giden SMTP portuna (587/465) ulaşılamıyor — "
+                            "bağlantı engelleniyor veya zaman aşımına uğruyor. "
+                            "Ücretsiz PaaS'lar (Render/Heroku) ve kurumsal güvenlik "
+                            "duvarları bu portları kapatır. SMTP çıkışı açık bir host "
+                            "(Railway, Fly.io, VPS) veya yerel çalıştırma gerekir. "
                             "Teşhis: /api/diagnostics/network adresini açın."
                         )
         return

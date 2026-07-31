@@ -90,7 +90,8 @@ class MailReceiver:
                     raw = msg_data[0][1]
                     parsed = email.message_from_bytes(raw)
 
-                    if parsed.get("Message-ID", "").strip() == expected_msg_id.strip():
+                    received_id = self._unfold(parsed.get("Message-ID", ""))
+                    if received_id == self._unfold(expected_msg_id):
                         logger.info(f"✅ Mesaj bulundu (deneme {attempt}/{max_retries})")
                         imap.logout()
                         return self._extract_details(parsed, raw, mail_id.decode())
@@ -108,22 +109,23 @@ class MailReceiver:
 
     def _extract_details(self, msg: email.message.Message, raw: bytes, imap_id: str) -> dict:
         """Mesajdan tüm test için gerekli bilgileri çıkarır."""
+        get = lambda name: self._unfold(msg.get(name, ""))  # noqa: E731
         result = {
             "imap_id": imap_id,
             "raw_size": len(raw),
             "raw_bytes": raw,  # Claude API analizi için ham içerik
             "headers": {
-                "message_id": msg.get("Message-ID", ""),
-                "from": msg.get("From", ""),
-                "to": msg.get("To", ""),
-                "subject": self._decode_header(msg.get("Subject", "")),
-                "date": msg.get("Date", ""),
-                "content_type": msg.get("Content-Type", ""),
-                "in_reply_to": msg.get("In-Reply-To", ""),
-                "references": msg.get("References", ""),
-                "mime_version": msg.get("MIME-Version", ""),
-                "x_mailer": msg.get("X-Mailer", ""),
-                "content_transfer_encoding": msg.get("Content-Transfer-Encoding", ""),
+                "message_id": get("Message-ID"),
+                "from": get("From"),
+                "to": get("To"),
+                "subject": self._unfold(self._decode_header(msg.get("Subject", ""))),
+                "date": get("Date"),
+                "content_type": get("Content-Type"),
+                "in_reply_to": get("In-Reply-To"),
+                "references": get("References"),
+                "mime_version": get("MIME-Version"),
+                "x_mailer": get("X-Mailer"),
+                "content_transfer_encoding": get("Content-Transfer-Encoding"),
             },
             "parts": [],
             "attachments": [],
@@ -173,6 +175,20 @@ class MailReceiver:
                 except Exception:
                     text = ""
                 result["parts"].append({**part_info, "text_preview": text[:500]})
+
+    @staticmethod
+    def _unfold(value: str) -> str:
+        """RFC 5322 §2.2.3 — katlanmış header değerini tek satıra indirger.
+
+        78 oktetten uzun header'lar CRLF + boşluk ile katlanır; uzun bir
+        Message-ID (uzun host adı) ya da uzun bir thread'in References'ı bunu
+        rutin olarak tetikler. Ham değer saklanırsa hem eşleştirme bozulur hem
+        de analiz promptuna satır başlarıyla gider ve LLM bunu 'header bozulmuş'
+        diye raporlayabilir.
+        """
+        if not value:
+            return ""
+        return " ".join(value.split())
 
     @staticmethod
     def _decode_header(value: str) -> str:

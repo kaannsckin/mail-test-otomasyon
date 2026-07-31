@@ -128,7 +128,82 @@ Kontrol edilecekler:
 4. Alıntı (quote) bölümü ">" ile işaretlenmiş mi?
 5. Encoding farklılıklarında karakter bozulması var mı?
 """,
+            "calendar_invite": f"""
+Gönderilen davet: UID={send_meta.get('ics_uid', '?')} | \
+METHOD={send_meta.get('ics_method', 'REQUEST')} | \
+Başlangıç={send_meta.get('event_start', '?')}
+
+Kontrol edilecekler:
+1. text/calendar part'ı mevcut mu? (parts içinde content_type=text/calendar olmalı)
+2. METHOD=REQUEST parametresi korunmuş mu? (davet olarak tanınması için şart)
+3. invite.ics eki iletilmiş mi? (attachments içinde .ics dosyası)
+4. VEVENT içeriği bozulmamış mı? (UID {send_meta.get('ics_uid', '?')} korunmalı)
+5. Sunucu daveti düz ek dosyaya indirgemiş mi? (text/calendar kaybolduysa
+   istemci "Kabul Et / Reddet" düğmelerini gösteremez — bu bir BAŞARISIZLIKTIR)
+""",
+            "i18n": f"""
+Gönderilen alfabe grupları: {send_meta.get('body_charsets', [])}
+Başlık ASCII mi: {send_meta.get('subject_is_ascii', '?')} (False bekleniyor)
+
+Kontrol edilecekler:
+1. Subject header'ı RFC 2047 encoded-word ile kodlanmış mı? (=?utf-8?...?= biçimi)
+   veya çözülmüş hâliyle özel karakterler bozulmadan okunuyor mu?
+2. Gövdedeki Türkçe karakterler korunmuş mu? (ğüşıöç ĞÜŞİÖÇ)
+3. Latin dışı alfabeler korunmuş mu? (Arapça ﷽, CJK 漢字)
+4. Emoji karakterleri korunmuş mu? (🚀🔥🐞 — soru işareti/kutu olmamalı)
+5. charset=utf-8 mi ve Content-Transfer-Encoding uygun mu?
+   (8bit / base64 / quoted-printable kabul edilir; us-ascii'ye düşürülmüş
+   olması VERİ KAYBI demektir)
+""",
+            "complex_html": f"""
+Gönderilen HTML uzunluğu: {send_meta.get('html_length', '?')} karakter
+Düz metin alternatifi var mı: {send_meta.get('has_plain_fallback', '?')}
+
+Kontrol edilecekler:
+1. multipart/alternative yapısı korunmuş mu? (hem text/plain hem text/html)
+2. text/html part'ı mevcut ve gövdesi boş değil mi?
+3. CSS içeriği korunmuş mu? (<style> bloğu veya inline style attribute'ları)
+4. Media query (@media) ifadesi hayatta kalmış mı? Kaldırıldıysa duyarlı
+   yerleşim bozulur — bunu bir uyarı olarak raporla.
+5. HTML uzunluğu ciddi şekilde kısalmış mı? (sunucu sanitizasyonu içeriği
+   buduyor olabilir)
+""",
+            "html_table": """
+Kontrol edilecekler:
+1. text/html part'ı mevcut mu?
+2. <table> yapısı korunmuş mu? (tr/td/th etiketleri hayatta mı)
+3. Hücre stilleri (border, padding, background) korunmuş mu?
+4. Tablo içindeki Türkçe karakterler bozulmamış mı? (ğüşıöç)
+5. Tablo düz metne indirgenmiş mi? (yapı kaybolduysa BAŞARISIZ sayılır)
+""",
+            "forward": f"""
+İletilen orijinal mesaj: {send_meta.get('original_msg_id', '?')} | \
+Konu: {send_meta.get('original_subject', '?')}
+
+Kontrol edilecekler:
+1. Subject "Fwd:" öneki ile başlıyor mu?
+2. message/rfc822 part'ı mevcut mu? (orijinal mesaj kapsüllenmiş olmalı)
+3. Kapsüllenen mesajın header'ları okunabiliyor mu?
+   (orijinal Message-ID {send_meta.get('original_msg_id', '?')} korunmalı)
+4. Gövdedeki "---------- İletilen Mesaj ----------" bloğu ve orijinal
+   Kimden/Tarih/Konu bilgileri duruyor mu?
+5. MIME boundary izolasyonu bozulmuş mu? (iç içe part'lar karışmamalı)
+""",
+            "multi_attachment": f"""
+Gönderilen ek sayısı: {send_meta.get('attachment_count', '?')} | \
+Dosyalar: {send_meta.get('attachment_name', '?')}
+
+Kontrol edilecekler:
+1. Eklerin TAMAMI iletilmiş mi? (beklenen adet:
+   {send_meta.get('attachment_count', '?')} — eksik ek BAŞARISIZLIKTIR)
+2. Her ekin dosya adı korunmuş mu? (Türkçe karakterli adlar dahil, RFC 2231)
+3. Her ekin boyutu orijinaliyle tutarlı mı?
+4. MIME type'lar doğru atanmış mı? (application/pdf, text/csv vb.)
+5. multipart/mixed yapısı ve base64 kodlaması bozulmamış mı?
+""",
         }
+        # Eski ad — CSV'de 'forward_chain' geçen kurulumlar için
+        scenario_checks["forward_chain"] = scenario_checks["forward"]
 
         checks = scenario_checks.get(scenario_type, "Genel mesaj iletim kontrolü yap.")
 

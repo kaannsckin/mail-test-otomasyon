@@ -431,21 +431,44 @@ class TestCsvParser:
         combos = parse_csv(str(project_root / "mail_test_checklist.csv"))
         assert len(combos) == 18, f"18 kombinasyon bekleniyor, {len(combos)} bulundu"
 
-    def test_parse_csv_all_five_scenario_types(self, project_root):
+    def test_parse_csv_all_scenario_types(self, project_root):
         from csv_parser import parse_csv
         combos = parse_csv(str(project_root / "mail_test_checklist.csv"))
-        expected = {"plain_text", "attachment", "inline_image", "smime", "reply_chain"}
+        expected = {
+            "plain_text", "attachment", "inline_image", "smime", "reply_chain",
+            "multi_attachment", "html_table", "complex_html", "i18n",
+            "calendar_invite", "forward",
+        }
         for combo in combos:
             found = set(combo.scenarios.keys())
             assert found == expected, (
                 f"{combo.label}: Eksik senaryolar = {expected - found}"
             )
 
+    def test_every_csv_scenario_is_runnable(self, project_root):
+        """CSV'deki her senaryo orkestratör tarafından çalıştırılabilmeli —
+        aksi hâlde koşuda 'Bilinmeyen senaryo tipi' ile sessizce FAIL olur."""
+        from csv_parser import parse_csv, SUPPORTED_SCENARIOS
+        combos = parse_csv(str(project_root / "mail_test_checklist.csv"))
+        found = {k for c in combos for k in c.scenarios}
+        assert found <= SUPPORTED_SCENARIOS, (
+            f"Orkestratörün tanımadığı senaryolar: {sorted(found - SUPPORTED_SCENARIOS)}"
+        )
+
     def test_parse_csv_total_step_count(self, project_root):
         from csv_parser import parse_csv
         combos = parse_csv(str(project_root / "mail_test_checklist.csv"))
         total = sum(len(s.steps) for c in combos for s in c.scenarios.values())
-        assert total == 450, f"450 adım bekleniyor, {total} bulundu"
+        # 18 kombinasyon × 11 senaryo × 5 adım
+        expected = len(combos) * 11 * 5
+        assert total == expected, f"{expected} adım bekleniyor, {total} bulundu"
+
+    def test_parse_csv_step_ids_are_unique_and_sequential(self, project_root):
+        from csv_parser import parse_csv
+        combos = parse_csv(str(project_root / "mail_test_checklist.csv"))
+        ids = sorted(s.row_id for c in combos for sc in c.scenarios.values()
+                     for s in sc.steps)
+        assert ids == list(range(1, len(ids) + 1)), "Adım numaraları sürekli değil"
 
     def test_parse_csv_each_scenario_has_5_steps(self, project_root):
         from csv_parser import parse_csv

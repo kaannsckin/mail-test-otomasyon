@@ -258,9 +258,9 @@ class TestCombinationsEndpoint:
             assert "sender_server" in combo
             assert "sender_client" in combo
             assert "scenarios" in combo
-            assert combo["step_count"] == 25
+            assert combo["step_count"] == len(combo["scenarios"]) * 5
 
-    def test_combinations_each_has_5_scenarios(self, flask_client, tmp_path, monkeypatch):
+    def test_combinations_each_has_all_scenarios(self, flask_client, tmp_path, monkeypatch):
         import app as app_module
         cfg = {"test": {"csv_input": str(PROJECT_ROOT / "mail_test_checklist.csv")}}
         cfg_path = tmp_path / "config.yaml"
@@ -268,7 +268,7 @@ class TestCombinationsEndpoint:
         monkeypatch.setattr(app_module, "CONFIG_PATH", cfg_path)
         resp = flask_client.get("/api/combinations")
         for combo in resp.get_json()["combinations"]:
-            assert len(combo["scenarios"]) == 5
+            assert len(combo["scenarios"]) == 11
 
     def test_combinations_invalid_csv_path(self, flask_client, tmp_path, monkeypatch):
         import app as app_module
