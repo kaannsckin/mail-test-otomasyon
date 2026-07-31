@@ -201,6 +201,22 @@ class TestFoldedHeaders:
 
     LONG_DOMAIN = "runnervmvrwv9.vvnjnjz3o3bepc22aedognmqhd.ex.internal.cloudapp.net"
 
+    LONG_ID = ("<178550483610.2324.16917307092475188587@"
+               "runnervmvrwv9.vvnjnjz3o3bepc22aedognmqhd.ex.internal.cloudapp.net>")
+
+    def _raw_folded(self, msg_id=None, extra=b"") -> bytes:
+        """Message-ID'si açıkça katlanmış ham mesaj.
+
+        Katlamayı e-posta kütüphanesine bıraktığımızda sonuç Python sürümüne
+        ve id uzunluğuna göre değişiyor (CI'da 3.11 katladı, 3.12 katlamadı).
+        Katlanmış yolu güvenilir biçimde sınamak için header'ı baytlardan
+        kendimiz kuruyoruz — sunucudan böyle gelmesi tamamen olağandır.
+        """
+        return (b"Subject: [TEST] Konu\r\n"
+                b"From: gonderen@test.local\r\n"
+                b"Message-ID:\r\n " + (msg_id or self.LONG_ID).encode() + b"\r\n"
+                + extra + b"\r\ngovde\r\n")
+
     def _folded_message(self, msg_id):
         msg = MIMEText("gövde", "plain", "utf-8")
         msg["Message-ID"] = msg_id
@@ -218,51 +234,60 @@ class TestFoldedHeaders:
     def test_unfold(self, value, expected):
         assert MailReceiver._unfold(value) == expected
 
-    def test_long_message_id_gets_folded_by_email_lib(self):
-        """Önce ön kabulü doğrula: uzun id gerçekten katlanıyor mu?"""
-        msg_id = make_msgid(domain=self.LONG_DOMAIN)
-        raw = self._folded_message(msg_id).get("Message-ID")
-        assert raw != msg_id
-        assert "\n" in raw
+    def test_raw_folded_header_is_unfolded(self, server_cfg):
+        """Deterministik: header baytlarda katlanmış geliyor."""
+        parsed = email.message_from_bytes(self._raw_folded())
+        assert "\n" in parsed.get("Message-ID")          # gerçekten katlanmış
+        details = MailReceiver(server_cfg)._extract_details(parsed, b"raw", "1")
+        assert details["headers"]["message_id"] == self.LONG_ID
 
-    def test_extracted_message_id_is_unfolded(self, server_cfg):
+    def test_no_header_value_contains_newline(self, server_cfg):
+        raw = self._raw_folded(extra=b"References:\r\n <a@b>\r\n <c@d>\r\n")
+        parsed = email.message_from_bytes(raw)
+        details = MailReceiver(server_cfg)._extract_details(parsed, raw, "1")
+        for name, value in details["headers"].items():
+            assert "\n" not in value, f"{name} katlanmış kalmış: {value!r}"
+
+    def test_folded_references_chain_unfolded(self, server_cfg):
+        """References uzun thread'lerde ORTADAN katlanır — strip() yetmez."""
+        raw = self._raw_folded(extra=b"References: <a@b>\r\n <c@d>\r\n <e@f>\r\n")
+        parsed = email.message_from_bytes(raw)
+        details = MailReceiver(server_cfg)._extract_details(parsed, raw, "1")
+        assert details["headers"]["references"] == "<a@b> <c@d> <e@f>"
+
+    def test_roundtrip_message_id_survives_whatever_lib_does(self, server_cfg):
+        """Kütüphane katlasa da katlamasa da sonuç aynı olmalı — bu davranış
+        Python sürümüne göre değişiyor, bu yüzden sonuç üzerinden sınanır."""
         msg_id = make_msgid(domain=self.LONG_DOMAIN)
         parsed = self._folded_message(msg_id)
         details = MailReceiver(server_cfg)._extract_details(parsed, b"raw", "1")
         assert details["headers"]["message_id"] == msg_id
-        assert "\n" not in details["headers"]["message_id"]
-
-    def test_no_header_value_contains_newline(self, server_cfg):
-        parsed = self._folded_message(make_msgid(domain=self.LONG_DOMAIN))
-        details = MailReceiver(server_cfg)._extract_details(parsed, b"raw", "1")
-        for name, value in details["headers"].items():
-            assert "\n" not in value, f"{name} katlanmış kalmış: {value!r}"
-
-    def test_long_references_chain_unfolded(self, server_cfg):
-        msg = MIMEText("g", "plain", "utf-8")
-        chain = " ".join(make_msgid(domain=self.LONG_DOMAIN) for _ in range(4))
-        msg["References"] = chain
-        parsed = email.message_from_bytes(msg.as_bytes())
-        details = MailReceiver(server_cfg)._extract_details(parsed, b"raw", "1")
-        assert details["headers"]["references"] == chain
 
     def test_wait_for_message_matches_folded_id(self, server_cfg):
         """Asıl etki: katlanmış id eşleşmezse mesaj 'bulunamadı' sayılırdı."""
-        msg_id = make_msgid(domain=self.LONG_DOMAIN)
-        msg = MIMEText("gövde", "plain", "utf-8")
-        msg["Message-ID"] = msg_id
-        msg["Subject"] = "[TEST] Konu"
-        raw = msg.as_bytes()
-
+        raw = self._raw_folded()
         inst = MagicMock()
         inst.search.return_value = ("OK", [b"1"])
         inst.fetch.return_value = ("OK", [(b"1 (RFC822 {500})", raw)])
         with patch("imaplib.IMAP4_SSL", return_value=inst), \
              patch("receiver.time.sleep"):
             result = MailReceiver(server_cfg).wait_for_message(
-                msg_id, "[TEST]", wait_seconds=0, max_retries=1, retry_interval=0)
+                self.LONG_ID, "[TEST]", wait_seconds=0, max_retries=1, retry_interval=0)
         assert result is not None, "Katlanmış Message-ID eşleşmedi"
-        assert result["headers"]["message_id"] == msg_id
+        assert result["headers"]["message_id"] == self.LONG_ID
+
+    def test_expected_id_may_also_be_folded(self, server_cfg):
+        """Beklenen id de katlanmış gelebilir (config/log üzerinden taşınırsa)."""
+        raw = self._raw_folded()
+        inst = MagicMock()
+        inst.search.return_value = ("OK", [b"1"])
+        inst.fetch.return_value = ("OK", [(b"1 (RFC822 {500})", raw)])
+        with patch("imaplib.IMAP4_SSL", return_value=inst), \
+             patch("receiver.time.sleep"):
+            result = MailReceiver(server_cfg).wait_for_message(
+                "\n " + self.LONG_ID, "[TEST]", wait_seconds=0,
+                max_retries=1, retry_interval=0)
+        assert result is not None
 
 
 class TestWalkPartsRobustness:
