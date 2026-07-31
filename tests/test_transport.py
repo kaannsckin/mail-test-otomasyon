@@ -235,10 +235,33 @@ class TestFoldedHeaders:
         assert MailReceiver._unfold(value) == expected
 
     def test_raw_folded_header_is_unfolded(self, server_cfg):
-        """Deterministik: header baytlarda katlanmış geliyor."""
+        """Header baytlarda katlanmış geliyor; çıkarılan değer temiz olmalı.
+
+        Kütüphanenin katlanmış değeri NASIL temsil ettiği sınanmaz — bu
+        davranış CPython yama sürümleri arasında bile değişiyor (3.12.3
+        katlamayı koruyor, daha yeni 3.12 yamaları okurken açıyor). Sınanan
+        şey yalnızca _extract_details'in çıktısıdır; hangi temsille gelirse
+        gelsin sonuç aynı olmalı.
+        """
         parsed = email.message_from_bytes(self._raw_folded())
-        assert "\n" in parsed.get("Message-ID")          # gerçekten katlanmış
         details = MailReceiver(server_cfg)._extract_details(parsed, b"raw", "1")
+        assert details["headers"]["message_id"] == self.LONG_ID
+
+    @pytest.mark.parametrize("representation", [
+        "\r\n {id}",     # CRLF + boşluk ile katlanmış (3.11, eski 3.12)
+        "\n {id}",       # LF + boşluk
+        "\r\n\t{id}",    # tab ile girintili devam satırı
+        "{id}",          # parser açmış (yeni 3.12 yamaları)
+        " {id}",         # yalnızca baştaki boşluk
+    ])
+    def test_result_independent_of_parser_representation(self, server_cfg,
+                                                         representation):
+        """Katlanmış header'ın parser tarafından nasıl temsil edildiği CPython
+        yama sürümleri arasında bile değişiyor. Çıkarılan değer bu temsilden
+        BAĞIMSIZ olmalı — testin sınadığı şey budur."""
+        msg = email.message.Message()
+        msg["Message-ID"] = representation.format(id=self.LONG_ID)
+        details = MailReceiver(server_cfg)._extract_details(msg, b"raw", "1")
         assert details["headers"]["message_id"] == self.LONG_ID
 
     def test_no_header_value_contains_newline(self, server_cfg):
