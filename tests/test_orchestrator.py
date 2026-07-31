@@ -146,7 +146,7 @@ class TestRunScenarioDispatch:
 
     def test_unknown_scenario_returns_fail_not_raises(self, test_cfg):
         sender, receiver, analyzer = _sender_mock(), _receiver_mock(), _analyzer_mock()
-        res = main_mod.run_scenario("calendar_invite", _combo(), 0, sender, receiver, analyzer, test_cfg)
+        res = main_mod.run_scenario("bilinmeyen_tip", _combo(), 0, sender, receiver, analyzer, test_cfg)
         assert res["analysis"]["passed"] is False
         assert "Bilinmeyen senaryo tipi" in res["analysis"]["issues"][0]
 
@@ -657,7 +657,7 @@ class TestMainCli:
              patch.object(main_mod, "generate_csv_results"):
             rs.return_value = {"analysis": {"passed": True}}
             _run_cli(["--config", str(cli_env), "--combo", "0"])
-        assert rs.call_count == 5  # CSV'deki 5 senaryo tipi
+        assert rs.call_count == 11  # CSV'deki 11 senaryo tipi
 
     def test_scenario_filter_limits_run(self, cli_env):
         with patch.object(main_mod, "MailSender"), patch.object(main_mod, "MailReceiver"), \
@@ -679,7 +679,7 @@ class TestMainCli:
             rs.return_value = {"analysis": {"passed": True}}
             _run_cli(["--config", str(cli_env), "--combo", "0"])
         assert html.called and csvr.called
-        assert len(html.call_args[0][0]) == 5
+        assert len(html.call_args[0][0]) == 11
 
     def test_scenario_exception_does_not_abort_run(self, cli_env):
         calls = {"n": 0}
@@ -696,8 +696,8 @@ class TestMainCli:
              patch.object(main_mod, "generate_html_report") as html, \
              patch.object(main_mod, "generate_csv_results"):
             _run_cli(["--config", str(cli_env), "--combo", "0"])
-        # 5 senaryodan biri patladı, kalan 4'ü raporlandı
-        assert len(html.call_args[0][0]) == 4
+        # 11 senaryodan biri patladı, kalan 10'u raporlandı
+        assert len(html.call_args[0][0]) == 10
 
     def test_unknown_server_skips_combination(self, cli_env, tmp_path):
         cfg = yaml.safe_load(cli_env.read_text(encoding="utf-8"))
@@ -723,11 +723,13 @@ class TestMainCli:
         assert "Hiçbir test sonucu üretilemedi" in caplog.text
 
     def test_pass_rate_excludes_skipped(self, cli_env, caplog):
-        results = [
-            {"analysis": {"passed": True}}, {"analysis": {"passed": True}},
-            {"analysis": {"passed": False}}, {"analysis": {"passed": None}},
-            {"analysis": {"passed": None}},
-        ]
+        # CSV'de kombinasyon başına 11 senaryo var: 6 PASS, 3 FAIL, 2 SKIP
+        results = (
+            [{"analysis": {"passed": True}}] * 6
+            + [{"analysis": {"passed": False}}] * 3
+            + [{"analysis": {"passed": None}}] * 2
+        )
+        assert len(results) == 11
         with patch.object(main_mod, "MailSender"), patch.object(main_mod, "MailReceiver"), \
              patch.object(main_mod, "MailAnalyzer"), \
              patch.object(main_mod, "run_scenario", side_effect=results), \
@@ -735,8 +737,8 @@ class TestMainCli:
              patch.object(main_mod, "generate_csv_results"), \
              caplog.at_level("INFO"):
             _run_cli(["--config", str(cli_env), "--combo", "0"])
-        # 2/3 PASS = %66.7, 2 atlandı — atlananlar paydaya girmemeli
-        assert "Sonuç: 2/3 PASS (66.7%)" in caplog.text
+        # Atlananlar paydaya girmemeli: 6/9 = %66.7 (11 değil)
+        assert "Sonuç: 6/9 PASS (66.7%)" in caplog.text
         assert "2 atlandı" in caplog.text
 
 

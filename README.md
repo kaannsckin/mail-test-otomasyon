@@ -11,7 +11,7 @@ Web arayüzü (Flask), 2FA/TOTP desteği ve otomatik MIME analizi içerir.
 mail_automation/
 ├── app.py                # Flask web arayüzü — buradan başlat
 ├── main.py               # CLI orkestratör (arayüz veya doğrudan çalıştırılabilir)
-├── sender.py             # SMTP gönderim (4 senaryo tipi)
+├── sender.py             # SMTP gönderim (11 senaryo tipi)
 ├── receiver.py           # IMAP alım & MIME ayrıştırma
 ├── analyzer.py           # Claude API analiz motoru
 ├── auth_manager.py       # 2FA / TOTP akış yöneticisi
@@ -22,6 +22,9 @@ mail_automation/
 ├── requirements.txt
 ├── .gitignore
 ├── github_setup.sh       # GitHub repo kurulum scripti
+├── scripts/
+│   ├── e2e_smoke.py      # Gerçek sunucuya duman testi
+│   └── extend_checklist.py  # Checklist CSV'sini senaryolarla genişletir
 ├── templates/
 │   └── index.html        # Web arayüzü
 ├── test_files/           # Otomatik oluşturulur
@@ -121,16 +124,60 @@ Her sunucu için 4 kimlik doğrulama yöntemi desteklenir:
 
 ## 📊 Test Senaryoları
 
-| Senaryo | Ne Test Eder |
-| --- | --- |
-| `plain_text` | UTF-8 encoding, header bütünlüğü, Türkçe karakter (ğüşıöç) |
-| `attachment` | MIME type, dosya adı/boyutu, base64 encoding |
-| `inline_image` | CID referansı, HTML yapısı, resim bütünlüğü |
-| `reply_chain` | In-Reply-To/References headers, alıntı yapısı, thread zinciri |
+Her kombinasyon için **11 senaryo** çalıştırılır (18 kombinasyon × 11 senaryo ×
+5 kontrol noktası = 990 adım):
 
-> **Not:** S/MIME senaryosu bu projede aktif değildir. Altyapıda dijital imza özelliği
-> bulunmadığından otomatik olarak atlanır. Kurumsal metin imzası (e-posta altı imza)
-> `plain_text` ve `reply_chain` senaryolarında gövde içeriği üzerinden test edilir.
+| Senaryo | MIME Yapısı | Ne Test Eder |
+| --- | --- | --- |
+| `plain_text` | `text/plain` | UTF-8 encoding, header bütünlüğü, Türkçe karakter (ğüşıöç) |
+| `attachment` | `multipart/mixed` | MIME type, dosya adı/boyutu, base64 encoding |
+| `multi_attachment` | `multipart/mixed` | Çoklu ek: adet, ad/boyut korunumu, karma formatlar |
+| `inline_image` | `multipart/related` | CID referansı, HTML yapısı, resim bütünlüğü |
+| `reply_chain` | `multipart/alternative` | In-Reply-To/References, alıntı yapısı, thread zinciri |
+| `forward` | `multipart/mixed` + `message/rfc822` | İletme kapsüllemesi, orijinal header'ların korunumu, boundary izolasyonu |
+| `html_table` | `multipart/alternative` | Tablo yapısı (tr/td/th), hücre stilleri, düz metin yedeği |
+| `complex_html` | `multipart/alternative` | Zengin CSS, `@media` sorguları, duyarlı yerleşim, sanitizasyon |
+| `i18n` | `text/plain` | RFC 2047 başlık kodlaması, Arapça/CJK/emoji, çok alfabeli gövde |
+| `calendar_invite` | `text/calendar` + `application/ics` | iTIP `METHOD=REQUEST`, VEVENT bütünlüğü, `invite.ics` eki |
+| `smime` | `multipart/signed` | Dijital imza (sertifika yoksa otomatik atlanır) |
+
+**Senaryo alt kümesi çalıştırma** — tam koşu 990 adım olduğu için genelde
+filtreleyerek çalışmak istersiniz:
+
+```bash
+python main.py --scenario calendar_invite       # yalnızca takvim daveti
+python main.py --combo 0 --scenario i18n        # tek kombinasyon + tek senaryo
+```
+
+> **S/MIME:** Altyapıda dijital imza sertifikası tanımlı değilse otomatik olarak
+> atlanır (`config.yaml` → `test.smime_cert_path` / `test.smime_key_path`).
+> Kurumsal metin imzası (e-posta altı imza) tüm senaryolarda gövde içeriği
+> üzerinden taşınır.
+
+### Senaryoya özel ayarlar
+
+```yaml
+test:
+  # Çoklu ek senaryosu — tanımlanmazsa prepare_test_files() üretir
+  test_multi_attachment_paths:
+    - "test_files/test_document.pdf"
+    - "test_files/test_data.csv"
+    - "test_files/test_notes.txt"
+
+  # Takvim daveti
+  calendar_duration_minutes: 30
+  calendar_location: "Çevrimiçi Toplantı"
+```
+
+### Checklist CSV'sini genişletme
+
+Yeni senaryolar `mail_test_checklist.csv`'ye betikle eklenir; betik
+idempotenttir (var olan blokları tekrarlamaz) ve adım numaralarını yeniden verir:
+
+```bash
+python scripts/extend_checklist.py --dry-run    # ne ekleneceğini göster
+python scripts/extend_checklist.py              # uygula (.bak yedeği alır)
+```
 
 ---
 
@@ -140,7 +187,9 @@ Her sunucu için 4 kimlik doğrulama yöntemi desteklenir:
 CSV'den Senaryo Oku
        ↓
   Sender (SMTP)
-  → plain_text / attachment / inline_image / reply_chain
+  → plain_text / attachment / multi_attachment / inline_image
+  → reply_chain / forward / html_table / complex_html
+  → i18n / calendar_invite / smime
        ↓
   Receiver (IMAP polling)
   → ham MIME ayrıştırma
@@ -305,7 +354,7 @@ python -m pytest
 python -m pytest --cov=. --cov-report=term-missing
 ```
 
-508 test, ~6 saniye, **%99 satır kapsamı**. GitHub Actions üzerinde her push/PR
+696 test, **%97 satır kapsamı** (çekirdek modüller %92-100). GitHub Actions üzerinde her push/PR
 için Python 3.10/3.11/3.12 matrisinde otomatik çalışır
 (`.github/workflows/tests.yml`).
 
@@ -320,6 +369,7 @@ için Python 3.10/3.11/3.12 matrisinde otomatik çalışır
 | `test_transport.py` | SMTP/IMAP giriş geri düşüşleri, IMAP yeniden deneme, S/MIME imzalama |
 | `test_analyzer_errors.py` | Claude/Gemini API hata yolları (401, 429, 5xx, timeout, refusal) |
 | `test_ui.py` | **Tarayıcı testleri** — gezinme, secret gizliliği, form, log akışı, 2FA modal |
+| `test_new_scenarios.py` | Takvim daveti (ICS/iTIP), i18n, zengin HTML, forward, çoklu ek |
 
 > S/MIME imzalama testleri sistemde `openssl` CLI yoksa otomatik atlanır.
 
