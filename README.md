@@ -98,8 +98,10 @@ HOST=0.0.0.0 UI_PASSWORD='guclu-parola' python app.py
 ```
 
 > **Güvenlik notu:** `UI_PASSWORD` yoksa arayüz yalnızca `localhost`'tan
-> kullanılabilir (uzak istekler ve yabancı `Host` başlıkları 403 alır — DNS
-> rebinding'e karşı). Ağa/internete açarken `UI_PASSWORD` zorunludur.
+> kullanılabilir (uzak istekler, yabancı `Host` başlıkları ve ters proxy
+> başlığı taşıyan istekler 403 alır — DNS rebinding ve `proxy_pass`'e karşı).
+> Ağa/internete açarken `UI_PASSWORD` zorunludur. Host'u yeniden yazan bir ters
+> proxy (nginx) kullanıyorsanız `X-Forwarded-Host` başlığını iletin.
 > Başka sitelerden gelen durum değiştiren istekler (CSRF) reddedilir,
 > `/api/config` yanıtlarında şifreler ve API key maskelenir, bağlantı testi
 > kayıtlı şifreyi yalnızca kayıtlı sunucu+kullanıcı için kullanır.

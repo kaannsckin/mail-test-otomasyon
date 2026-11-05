@@ -876,48 +876,70 @@ def main():
             logger.info(f"Seçili kombinasyon #{i}: {c.label}")
     combinations = [c for _, c in indexed]
 
+    # Arayüzdeki "Durdur" SIGTERM gönderir: Ctrl-C gibi ele alınır ki finally
+    # blokları (2FA köprüsü temizliği) çalışsın ve o ana kadarki sonuçlar
+    # raporlansın. Dry-run dahil tüm modlarda geçerli.
+    def _on_sigterm(signum, frame):
+        raise KeyboardInterrupt
+    try:
+        signal.signal(signal.SIGTERM, _on_sigterm)
+    except (ValueError, OSError):
+        pass  # ana thread değil (testler) — yoksay
+
     # Dry-run
     if args.dry_run:
-        logger.info("DRY RUN — Bağlantı testleri (mail gönderilmez):")
-        failures = 0
-        checked = set()
-        for combo in combinations:
-            for server_name in (combo.sender_server, combo.receiver_server):
-                if server_name in checked:
-                    continue
-                checked.add(server_name)
-                try:
-                    sc = get_server_config(config, server_name)
-                except ValueError as e:
-                    failures += 1
-                    logger.error(f"  ❌ {server_name}: {e}")
-                    continue
-                for proto, connect in (("SMTP", lambda: MailSender(sc)._connect().quit()),
-                                       ("IMAP", lambda: MailReceiver(sc)._connect().logout())):
-                    host = sc.get("smtp_host" if proto == "SMTP" else "imap_host")
-                    try:
-                        connect()
-                        logger.info(f"  ✅ {proto} OK: {server_name} ({host})")
-                    except Exception as e:  # noqa: BLE001
-                        failures += 1
-                        logger.error(f"  ❌ {proto} FAIL: {server_name} ({host}) — {e}")
-                        hint = explain_connection_error(e, sc)
-                        if hint:
-                            logger.error(f"     ↳ {hint}")
-                        if proto == "SMTP" and _is_network_unreachable(e):
-                            logger.error(
-                                "     ↳ Giden SMTP portuna (587/465) ulaşılamıyor — "
-                                "bağlantı engelleniyor veya zaman aşımına uğruyor. "
-                                "Ücretsiz PaaS'lar (Render/Heroku), bazı VPS sağlayıcıları ve "
-                                "kurumsal güvenlik duvarları bu portları kapatır. "
-                                "Teşhis: /api/diagnostics/network adresini açın."
-                            )
-        if failures:
-            logger.error(f"DRY RUN: {failures} bağlantı başarısız.")
-            sys.exit(EXIT_TEST_FAILURES)
-        logger.info("DRY RUN: tüm bağlantılar başarılı.")
+        try:
+            _dry_run(config, combinations)
+        except KeyboardInterrupt:
+            logger.warning("⏹ Dry-run durduruldu.")
+            sys.exit(EXIT_INTERRUPTED)
         return
 
+    _run_all(args, config, test_config, indexed)
+
+
+def _dry_run(config: dict, combinations: list) -> None:
+    logger.info("DRY RUN — Bağlantı testleri (mail gönderilmez):")
+    failures = 0
+    checked = set()
+    for combo in combinations:
+        for server_name in (combo.sender_server, combo.receiver_server):
+            if server_name in checked:
+                continue
+            checked.add(server_name)
+            try:
+                sc = get_server_config(config, server_name)
+            except ValueError as e:
+                failures += 1
+                logger.error(f"  ❌ {server_name}: {e}")
+                continue
+            for proto, connect in (("SMTP", lambda: MailSender(sc)._connect().quit()),
+                                   ("IMAP", lambda: MailReceiver(sc)._connect().logout())):
+                host = sc.get("smtp_host" if proto == "SMTP" else "imap_host")
+                try:
+                    connect()
+                    logger.info(f"  ✅ {proto} OK: {server_name} ({host})")
+                except Exception as e:  # noqa: BLE001
+                    failures += 1
+                    logger.error(f"  ❌ {proto} FAIL: {server_name} ({host}) — {e}")
+                    hint = explain_connection_error(e, sc)
+                    if hint:
+                        logger.error(f"     ↳ {hint}")
+                    if proto == "SMTP" and _is_network_unreachable(e):
+                        logger.error(
+                            "     ↳ Giden SMTP portuna (587/465) ulaşılamıyor — "
+                            "bağlantı engelleniyor veya zaman aşımına uğruyor. "
+                            "Ücretsiz PaaS'lar (Render/Heroku), bazı VPS sağlayıcıları ve "
+                            "kurumsal güvenlik duvarları bu portları kapatır. "
+                            "Teşhis: /api/diagnostics/network adresini açın."
+                        )
+    if failures:
+        logger.error(f"DRY RUN: {failures} bağlantı başarısız.")
+        sys.exit(EXIT_TEST_FAILURES)
+    logger.info("DRY RUN: tüm bağlantılar başarılı.")
+
+
+def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
     # Analiz için LLM — analysis.provider: claude (varsayılan) | gemini
     provider = (str((config.get("analysis") or {}).get("provider") or "claude")).lower()
     if provider == "gemini":
@@ -940,15 +962,6 @@ def main():
     auth_failed: dict[str, str] = {}   # sunucu → ilk kimlik hatası
     interrupted = False
     Path("reports").mkdir(exist_ok=True)
-
-    # Arayüzdeki "Durdur" SIGTERM gönderir: Ctrl-C gibi ele alınır ki o ana
-    # kadarki sonuçlar raporlansın.
-    def _on_sigterm(signum, frame):
-        raise KeyboardInterrupt
-    try:
-        signal.signal(signal.SIGTERM, _on_sigterm)
-    except (ValueError, OSError):
-        pass  # ana thread değil (testler) — yoksay
 
     try:
         for combo_idx, combo in indexed:

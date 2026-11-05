@@ -642,3 +642,87 @@ class TestCsvEncodings:
         a, b = parse_csv(str(src)), parse_csv(str(excel))
         assert len(a) == len(b) > 0
         assert [len(c.scenarios) for c in a] == [len(c.scenarios) for c in b]
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  2. tur crash test bulguları
+# ═══════════════════════════════════════════════════════════════════
+
+class TestRound2:
+
+    @pytest.mark.parametrize("header", [
+        {"X-Forwarded-For": "203.0.113.7"}, {"X-Real-IP": "203.0.113.7"},
+        {"Forwarded": "for=203.0.113.7"}, {"X-Forwarded-Host": "public.example"},
+    ])
+    def test_host_rewriting_proxy_cannot_bypass_no_password_mode(self, flask_client, header):
+        # nginx 'proxy_pass http://127.0.0.1:PORT' istek loopback'ten ve
+        # 'Host: localhost' ile gelir; eskiden export düz metin şifre veriyordu.
+        r = flask_client.get("/api/config/export", headers=header)
+        assert r.status_code == 403
+
+    def test_password_mode_behind_host_rewriting_proxy_can_save(self, flask_client, monkeypatch):
+        # Eski: Origin (genel adres) ≠ yeniden yazılmış Host → her kayıt 403
+        import base64
+        monkeypatch.setenv("UI_PASSWORD", "pw")
+        r = flask_client.post("/api/config", json={"config": {"ems": {"smtp_host": "h"}}},
+                              headers={"Authorization": "Basic " + base64.b64encode(b"admin:pw").decode(),
+                                       "Origin": "https://mail.example.com",
+                                       "X-Forwarded-Host": "mail.example.com"})
+        assert r.status_code == 200
+
+    def test_ipv4_mapped_loopback_is_local(self):
+        assert app_mod._is_loopback_addr("::ffff:127.0.0.1") is True
+        assert app_mod._is_loopback_addr("::ffff:10.0.0.1") is False
+
+    @pytest.mark.parametrize("change", [
+        {"smtp_port": 2525},                         # aynı host, başka (şifresiz) port
+        {"smtp_use_tls": False},
+        {"tls_verify": False},
+        {"tls_ca_file": "saldirgan-ca.pem"},
+        {"imap_port": 143, "imap_use_ssl": False},
+    ])
+    def test_saved_password_not_reused_when_transport_changes(self, flask_client, change):
+        base = {"smtp_host": "smtp.t.local", "smtp_port": 587, "smtp_use_tls": True,
+                "imap_host": "imap.t.local", "imap_port": 993, "username": "u@t.local",
+                "password": "kayitli-sifre"}
+        app_mod.CONFIG_PATH.write_text(yaml.dump({"ems": base}), encoding="utf-8")
+        smtp = MagicMock()
+        with patch("smtplib.SMTP", return_value=smtp), patch("imaplib.IMAP4_SSL"), \
+             patch("imaplib.IMAP4"):
+            r = flask_client.post("/api/config/test-connection", json={
+                "server": "ems", "server_config": {**base, **change, "password": ""}})
+        assert r.get_json()["ok"] is False
+        for call in smtp.login.call_args_list:
+            assert "kayitli-sifre" not in call[0][1]
+
+    def test_unchanged_target_still_reuses_saved_password(self, flask_client):
+        base = {"smtp_host": "smtp.t.local", "smtp_port": 587, "smtp_use_tls": False,
+                "username": "u@t.local", "password": "kayitli-sifre"}
+        app_mod.CONFIG_PATH.write_text(yaml.dump({"ems": base}), encoding="utf-8")
+        smtp = MagicMock()
+        with patch("smtplib.SMTP", return_value=smtp):
+            r = flask_client.post("/api/config/test-connection", json={
+                "server": "ems", "server_config": {**base, "smtp_port": "587", "password": ""}})
+        assert r.get_json()["ok"] is True
+        smtp.login.assert_called_once_with("u@t.local", "kayitli-sifre")
+
+    def test_secret_can_be_cleared_with_null(self, flask_client):
+        app_mod.CONFIG_PATH.write_text(yaml.dump({
+            "ems": {"password": "eski", "totp_secret": "JBSWY3DPEHPK3PXP"},
+            "anthropic": {"api_key": "sk-ant-eski"}}), encoding="utf-8")
+        flask_client.post("/api/config", json={"config": {
+            "ems": {"password": "", "totp_secret": None}, "anthropic": {"api_key": None}}})
+        saved = yaml.safe_load(app_mod.CONFIG_PATH.read_text(encoding="utf-8"))
+        assert saved["ems"]["password"] == "eski"          # boş → korunur
+        assert saved["ems"]["totp_secret"] == ""           # null → silinir
+        assert saved["anthropic"]["api_key"] == ""
+
+    def test_stop_clears_mfa_bridge(self, flask_client):
+        proc = MagicMock()
+        app_mod.run_state.update({"running": True, "process": proc, "run_id": "r"})
+        try:
+            with patch.object(app_mod.mfa_manager, "clear_bridge") as clear:
+                assert flask_client.post("/api/run/stop").get_json()["ok"] is True
+            clear.assert_called()
+        finally:
+            app_mod.run_state.update({"running": False, "process": None})

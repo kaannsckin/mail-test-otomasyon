@@ -449,12 +449,23 @@ class TestConnectionMfaVariants:
         with patch("smtplib.SMTP", return_value=smtp) as cls:
             r = flask_client.post("/api/config/test-connection", json={
                 "server": "ems",
-                "server_config": {**self._base(smtp_port=2525), "password": ""},
+                "server_config": {**self._base(smtp_port=2525), "password": "formdaki-sifre"},
             })
         assert r.get_json()["ok"] is True
-        # Kaydedilmemiş form değeri (port) kullanılır; secret boş → aynı
-        # host+kullanıcı olduğu için dosyadaki kayıtlı şifre kullanılır
+        # Kaydedilmemiş form değerleri (port + şifre) kullanılır
         assert cls.call_args[0][1] == 2525
+        smtp.login.assert_called_once_with("u@t.local", "formdaki-sifre")
+
+    def test_saved_password_reused_when_only_cosmetic_fields_change(self, flask_client, saved_cfg):
+        saved_cfg(self._base(password="kayitli-sifre"))
+        smtp = MagicMock()
+        with patch("smtplib.SMTP", return_value=smtp):
+            r = flask_client.post("/api/config/test-connection", json={
+                "server": "ems",
+                "server_config": {**self._base(label="Yeni Etiket", test_address="x@t.local"),
+                                  "password": ""},
+            })
+        assert r.get_json()["ok"] is True
         smtp.login.assert_called_once_with("u@t.local", "kayitli-sifre")
 
     def test_saved_password_never_sent_to_other_host(self, flask_client, saved_cfg):

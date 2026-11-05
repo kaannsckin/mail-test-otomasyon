@@ -86,6 +86,34 @@ def smtp_mode(server_config: dict) -> str:
     return "plain"
 
 
+def connection_fingerprint(server_config: dict) -> tuple:
+    """Kayıtlı bir şifrenin gönderileceği hedefi tanımlayan etkin bağlantı
+    parametreleri: host, port, TLS modu, doğrulama ve CA dahil. Formda bunlardan
+    biri değişirse kayıtlı şifre kullanılmaz (aynı host'ta şifresiz bir porta
+    yönlendirip şifreyi düz metin yakalama dahil)."""
+    sc = server_config or {}
+
+    def norm(v):
+        return str(v if v is not None else "").strip().lower()
+
+    def port(v):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return norm(v)
+
+    imap_ssl = _as_bool(sc.get("imap_use_ssl"), True)
+    return (
+        norm(sc.get("username")),
+        norm(sc.get("smtp_host")), port(sc.get("smtp_port")),
+        smtp_mode(sc) if sc.get("smtp_port") not in (None, "") else "",
+        norm(sc.get("imap_host")), port(sc.get("imap_port")),
+        imap_ssl, (not imap_ssl) and _as_bool(sc.get("imap_use_starttls"), False),
+        _as_bool(sc.get("tls_verify"), True),
+        norm(sc.get("tls_ca_file")),
+    )
+
+
 def smtp_connect(server_config: dict, timeout: float = DEFAULT_TIMEOUT) -> smtplib.SMTP:
     """Bağlanır, gerekiyorsa TLS'e geçer; giriş YAPMAZ."""
     host = server_config["smtp_host"]

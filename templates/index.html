@@ -1240,8 +1240,31 @@ document.querySelectorAll('.nav-item').forEach(el => {
   });
 });
 
+// ── KAYITLI SECRET'I SİLME ─────────────────────────────────────────
+// Maskeli alan boş bırakılınca kayıtlı değer korunur; silmek için "Sil".
+const SECRET_FIELDS = ['ems_password', 'gmail_password', 'outlook_password',
+  'ems_totp_secret', 'gmail_totp_secret', 'outlook_totp_secret', 'anthropic_api_key'];
+function initSecretClearButtons() {
+  for (const id of SECRET_FIELDS) {
+    const input = document.getElementById(id);
+    if (!input || input.dataset.clearInit) continue;
+    input.dataset.clearInit = '1';
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'btn btn-ghost btn-sm';
+    btn.style.marginTop = '4px'; btn.textContent = '🗑 Kayıtlı değeri sil';
+    btn.title = 'Kaydet\'e basınca kayıtlı değer silinir';
+    btn.addEventListener('click', () => {
+      input.value = ''; input.dataset.clear = '1';
+      input.placeholder = '(silinecek — Kaydet\'e basın)';
+    });
+    input.addEventListener('input', () => { delete input.dataset.clear; });
+    input.insertAdjacentElement('afterend', btn);
+  }
+}
+
 // ── CONFIG ─────────────────────────────────────────────────────────
 function fillForm(c) {
+  SECRET_FIELDS.forEach(id => { const el = document.getElementById(id); if (el) delete el.dataset.clear; });
   const set = (id, v) => { const el = document.getElementById(id); if (!el) return; el.type === 'checkbox' ? el.checked = !!v : el.value = v ?? ''; };
   for (const s of ['ems','gmail','outlook']) {
     const d = c[s] || {};
@@ -1300,26 +1323,32 @@ function buildConfig() {
   const g = id => { const el = document.getElementById(id); return el ? el.value : ''; };
   const gb = id => { const el = document.getElementById(id); return el ? el.checked : false; };
   const isPh = v => !v || v.startsWith('•');
+  // "Sil" ile işaretlenen secret null gider → sunucu kayıtlı değeri siler;
+  // boş/maskeli gider → sunucu kayıtlı değeri korur.
+  const sec = id => { const el = document.getElementById(id);
+    if (el && el.dataset.clear === '1') return null;
+    const v = g(id); return isPh(v) ? '' : v; };
   const cfg = {};
   for (const s of ['ems','gmail','outlook']) {
     cfg[s] = {
       smtp_host: g(`${s}_smtp_host`), smtp_port: +g(`${s}_smtp_port`),
-      smtp_use_tls: s === 'ems' ? gb('ems_smtp_use_tls') : true,
-      ...(s === 'ems' ? { smtp_use_ssl: gb('ems_smtp_use_ssl'), tls_verify: gb('ems_tls_verify'),
+      // Gmail/Outlook için TLS bayrakları formda yok: gönderilmez ki config'te
+      // elle ayarlanmış değerler her kayıtta ezilmesin (varsayılanlar zaten açık).
+      ...(s === 'ems' ? { smtp_use_tls: gb('ems_smtp_use_tls'), imap_use_ssl: gb('ems_imap_use_ssl'),
+                          smtp_use_ssl: gb('ems_smtp_use_ssl'), tls_verify: gb('ems_tls_verify'),
                           tls_ca_file: g('ems_tls_ca_file').trim() } : {}),
       imap_host: g(`${s}_imap_host`), imap_port: +g(`${s}_imap_port`),
-      imap_use_ssl: s === 'ems' ? gb('ems_imap_use_ssl') : true,
       username: g(`${s}_username`),
-      password: isPh(g(`${s}_password`)) ? '' : g(`${s}_password`),
+      password: sec(`${s}_password`),
       test_address: g(`${s}_test_address`),
       label: g(`${s}_label`) || s.toUpperCase(),
       auth_method: authMethods[s] || 'password',
       mfa_method: g(`${s}_mfa_method`) || 'totp',
-      totp_secret: isPh(g(`${s}_totp_secret`)) ? '' : g(`${s}_totp_secret`),
+      totp_secret: sec(`${s}_totp_secret`),
     };
   }
   cfg.anthropic = {
-    api_key: isPh(g('anthropic_api_key')) ? '' : g('anthropic_api_key'),
+    api_key: sec('anthropic_api_key'),
     model: g('anthropic_model'),
   };
   cfg.test = {
@@ -1805,6 +1834,7 @@ async function loadDashboard() { await loadCombinations(); await loadResults(); 
 function refreshAll() { loadConfig(); loadDashboard(); toast('↻ Yenilendi','info'); }
 
 // ── INIT ───────────────────────────────────────────────────────────
+initSecretClearButtons();
 loadConfig();
 loadDashboard();
 </script>

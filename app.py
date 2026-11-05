@@ -132,9 +132,17 @@ def _env_flag(name: str) -> bool:
 
 def _is_loopback_addr(addr: str) -> bool:
     try:
-        return ipaddress.ip_address((addr or "").split("%")[0]).is_loopback
+        ip = ipaddress.ip_address((addr or "").split("%")[0])
     except ValueError:
         return False
+    mapped = getattr(ip, "ipv4_mapped", None)   # HOST=:: iken ::ffff:127.0.0.1
+    return ip.is_loopback or bool(mapped and mapped.is_loopback)
+
+
+# Ters proxy (nginx proxy_pass, ngrok --host-header=rewrite) arkasında istek
+# loopback'ten ve 'Host: localhost' ile gelir ama aslında uzaktaki bir
+# istemciye aittir. Parolasız modda bu başlıkları taşıyan istek reddedilir.
+_PROXY_HEADERS = ("X-Forwarded-For", "X-Forwarded-Host", "X-Real-IP", "Forwarded")
 
 
 def _hostname_of(netloc: str) -> str:
@@ -161,9 +169,16 @@ def _cross_site_request() -> bool:
     if origin == "null":
         return True   # sandbox iframe / file:// sayfası
     try:
-        return urlsplit(origin).netloc.lower() != (request.host or "").lower()
+        origin_host = urlsplit(origin).netloc.lower()
     except ValueError:
         return True
+    # Host'u yeniden yazan ters proxy arkasında tarayıcının gördüğü adres
+    # X-Forwarded-Host'tadır. Tarayıcı bu başlığı başka siteden preflight
+    # olmadan ekleyemez; bu yüzden karşılaştırmada güvenle kullanılabilir.
+    allowed = {(request.host or "").lower()}
+    fwd = request.headers.get("X-Forwarded-Host", "")
+    allowed.update(h.strip().lower() for h in fwd.split(",") if h.strip())
+    return origin_host not in allowed
 
 
 @app.before_request
@@ -187,7 +202,8 @@ def _security_gate():
         # kontrol edilir: aksi halde DNS rebinding ile kötü niyetli bir site
         # localhost'taki arayüzden config'i (şifreler dahil) okuyabilir.
         if (not _is_loopback_addr(request.remote_addr)
-                or _hostname_of(request.host) not in _LOOPBACK_HOSTNAMES):
+                or _hostname_of(request.host) not in _LOOPBACK_HOSTNAMES
+                or any(h in request.headers for h in _PROXY_HEADERS)):
             return Response(
                 "Arayüz parolasız çalışıyor ve yalnızca bu makineden (localhost) "
                 "erişilebilir. Ağdan erişim için UI_PASSWORD ortam değişkenini "
@@ -333,7 +349,9 @@ def save_config():
         secret_keys = (("password", "totp_secret") if section in SERVER_KEYS
                        else ("api_key",) if section in ("anthropic", "gemini") else ())
         for key in secret_keys:
-            if _is_unset(values.get(key)):
+            if key in values and values[key] is None:
+                new[key] = ""                      # formdan açıkça silindi
+            elif _is_unset(values.get(key)):
                 new[key] = old.get(key, "")
         merged[section] = new
     try:
@@ -378,10 +396,8 @@ def _same_target(form: dict, saved: dict) -> bool:
     formda host'u değiştirip şifreyi boş bırakan biri, kayıtlı şifreyi kendi
     sunucusuna gönderterek ele geçirebilirdi.
     """
-    def norm(v):
-        return str(v or "").strip().lower()
-    return all(norm(form.get(k)) == norm(saved.get(k))
-               for k in ("smtp_host", "imap_host", "username"))
+    from mail_transport import connection_fingerprint
+    return connection_fingerprint(form) == connection_fingerprint(saved)
 
 
 def _login_with_code(do_login, auth_method: str, username: str, password: str, code: str,
@@ -808,6 +824,7 @@ def stop_run():
             return jsonify({"ok": False, "error": "Çalışan süreç yok"})
         run_state["stopped"] = True
     _kill_tree(proc)
+    mfa_manager.clear_bridge()  # öldürülen süreç bekleyen 2FA isteğini temizleyemez
     with _run_lock:
         # Süreç bitti; okuyucu thread'i beklemeden durumu güncelle ki arayüz
         # hemen yeni koşu başlatabilsin. run_id kontrolü: araya yeni koşu
