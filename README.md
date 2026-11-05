@@ -13,6 +13,7 @@ mail_automation/
 ├── main.py               # CLI orkestratör (arayüz veya doğrudan çalıştırılabilir)
 ├── sender.py             # SMTP gönderim (11 senaryo tipi)
 ├── receiver.py           # IMAP alım & MIME ayrıştırma
+├── mail_transport.py     # SMTP/IMAP bağlantı + TLS ayarları (iç CA, 465 SSL)
 ├── analyzer.py           # Claude API analiz motoru
 ├── auth_manager.py       # 2FA / TOTP akış yöneticisi
 ├── csv_parser.py         # Test checklist CSV okuyucu
@@ -86,17 +87,22 @@ Diğer ortam değişkenleri:
 | `PORT` | `5000` (doluysa sıradaki boş port) | Sunucu portu |
 | `HOST` | `127.0.0.1` | Ağdan erişim için `HOST=0.0.0.0` ayarla |
 | `FLASK_DEBUG` | kapalı | `FLASK_DEBUG=1` ile debug/reloader açılır (yalnızca geliştirme için — debugger uzaktan kod çalıştırmaya izin verir) |
-| `UI_PASSWORD` | boş (auth kapalı) | Ayarlanırsa tüm arayüz HTTP Basic Auth ister |
+| `UI_PASSWORD` | boş | Ayarlanırsa tüm arayüz HTTP Basic Auth ister. **Boşsa arayüz yalnızca bu makineden (localhost) kullanılabilir**; ağdan gelen istekler 403 alır |
 | `UI_USERNAME` | `admin` | Basic Auth kullanıcı adı (`UI_PASSWORD` ile birlikte) |
+| `ALLOW_NO_AUTH` | kapalı | `1` ise parolasız arayüze ağdan erişime bilerek izin verir (önerilmez — kayıtlı şifreler açığa çıkar) |
+| `DATA_DIR` | repo kökü | `config.yaml`, `reports/`, `logs/` dizini (konteynerde kalıcı volume) |
 
 ```bash
 # Ağa açık + parola korumalı çalıştırma örneği
 HOST=0.0.0.0 UI_PASSWORD='guclu-parola' python app.py
 ```
 
-> **Güvenlik notu:** Varsayılan olarak arayüz yalnızca `localhost`'tan erişilebilir
-> ve kimlik doğrulama kapalıdır. `HOST=0.0.0.0` ile ağa açacaksanız mutlaka
-> `UI_PASSWORD` ayarlayın. `/api/config` yanıtlarında şifreler ve API key maskelenir.
+> **Güvenlik notu:** `UI_PASSWORD` yoksa arayüz yalnızca `localhost`'tan
+> kullanılabilir (uzak istekler ve yabancı `Host` başlıkları 403 alır — DNS
+> rebinding'e karşı). Ağa/internete açarken `UI_PASSWORD` zorunludur.
+> Başka sitelerden gelen durum değiştiren istekler (CSRF) reddedilir,
+> `/api/config` yanıtlarında şifreler ve API key maskelenir, bağlantı testi
+> kayıtlı şifreyi yalnızca kayıtlı sunucu+kullanıcı için kullanır.
 
 ---
 
@@ -222,6 +228,9 @@ python main.py --scenario plain_text
 # Bağlantı testi (mail göndermez)
 python main.py --dry-run
 
+# Birden fazla kombinasyon
+python main.py --combo 2,5,7
+
 # Belirli kombinasyon + senaryo
 python main.py --combo 2 --scenario attachment
 
@@ -248,10 +257,16 @@ ems:
   auth_method: "totp_password"    # password|app_password|totp_password|otp_only
   mfa_method: "totp"              # totp|sms|email_otp|push
   totp_secret: ""                 # Opsiyonel — boş bırakırsan her çalışmada sorar
+  # TLS — kurum içi sunucular için (hepsi opsiyonel)
+  smtp_use_ssl: false             # 465 doğrudan SSL; port 465 ise otomatik açılır
+  imap_use_starttls: false        # 143 üzerinde STARTTLS
+  tls_ca_file: ""                 # Self-signed / iç CA: kurum CA sertifikası (PEM)
+  tls_verify: true                # false = doğrulama kapalı (güvensiz, yalnızca test)
 
 anthropic:
   api_key: ""                     # https://console.anthropic.com → API Keys
-  model: "claude-opus-4-8"        # boş bırakılırsa varsayılan (claude-opus-4-8) kullanılır
+  model: "claude-opus-5-5"        # boş bırakılırsa varsayılan (claude-opus-5-5)
+  effort: "medium"                # low | medium | high — analiz derinliği/maliyet
 
 analysis:
   provider: "claude"              # claude | gemini — analiz için kullanılacak LLM
@@ -270,6 +285,29 @@ test:
 > `config.yaml` `.gitignore`'da tanımlıdır — şifreler ve secret'lar repoya gitmez.  
 > Repoya yalnızca `config.yaml.example` commit edilir.
 
+### Kurum içi (EMS) sunucunun sertifikası
+
+Kurum içi mail sunucuları çoğunlukla kendinden imzalı ya da kurumun kendi CA'sı
+ile imzalanmış sertifika kullanır; Python bunu varsayılan olarak reddeder
+(`certificate verify failed`). İki seçenek:
+
+1. **Önerilen:** Kurumun kök CA sertifikasını (PEM, BT ekibinden alınır) veri
+   dizinine koyun ve `tls_ca_file: "certs/kurum-ca.pem"` yazın. Doğrulama açık kalır.
+2. **Yalnızca test ortamı:** `tls_verify: false` — bağlantı şifreli ama sunucu
+   kimliği doğrulanmaz (araya girme saldırısına açık).
+
+Her ikisi de web arayüzünde EMS kartından ayarlanabilir; **🔌 Bağlantı Test Et**
+artık SMTP'nin yanında IMAP'i de sınar ve hata olursa sebebini (sertifika, port/TLS
+modu uyuşmazlığı, DNS, kimlik doğrulama) Türkçe açıklar.
+
+### Analiz modeli ve maliyet
+
+Varsayılan model **Claude Opus 5.5** (`claude-opus-5-5`). Her senaryo bir API
+çağrısıdır; tam matris (18 kombinasyon × 11 senaryo) ~200 çağrı yapar. Yanıtlar
+JSON şemasıyla (yapılandırılmış çıktı) alınır ve doğrulanır; geçersiz/eksik
+karar asla PASS sayılmaz. Daha ekonomik koşu için arayüzden Sonnet 5.5 ya da
+Haiku 5.5 seçilebilir veya `effort: low` kullanılabilir.
+
 ---
 
 ## 📋 Raporlar
@@ -278,6 +316,17 @@ Her test çalışmasının ardından iki dosya üretilir:
 
 - `reports/test_report.html` — Kombinasyon bazlı görsel rapor (web arayüzünden görüntülenebilir)
 - `reports/test_results.csv` — Google Sheets'e aktarılabilir sonuçlar
+
+Yarıda kalan her senaryo **FAIL** satırı olarak raporlanır (sessizce düşmez).
+Koşu durdurulursa (arayüzde **Durdur** / Ctrl-C) o ana kadarki sonuçlarla kısmi
+rapor yazılır. `main.py` çıkış kodları (CI/zamanlanmış koşular için):
+
+| Kod | Anlamı |
+| --- | --- |
+| `0` | Tüm (atlanmayan) senaryolar PASS |
+| `2` | Koşu tamamlandı, en az bir senaryo FAIL (dry-run'da: bağlantı hatası) |
+| `130` | Koşu durduruldu — kısmi rapor yazıldı |
+| `1` | Araç/config/CSV hatası ya da hiç sonuç üretilemedi |
 
 ---
 
@@ -289,11 +338,20 @@ arayüz/konfigürasyon çalışır:
 
 | Platform | Test Koşusu | Giden SMTP | Not |
 | --- | --- | --- | --- |
-| **Railway** (önerilen) | ✅ | ✅ açık | `railway.toml` hazır; volume için `/data` + `DATA_DIR=/data` |
-| **Fly.io / VPS** | ✅ | ✅ açık | Mail göndermeye tam uygun |
-| **Docker (kendi sunucun)** | ✅ | ✅ (sunucuna bağlı) | `docker compose up -d` yeterli |
+| **Railway** | ✅ | ⚠️ **yalnızca Pro plan** | Free/Trial/Hobby'de SMTP kapalı. Pro'ya geçince yeniden deploy edin. `railway.toml` hazır; volume `/data` + `DATA_DIR=/data` |
+| **Fly.io** | ✅ | ✅ (hesap bazlı engel yok*) | `fly.toml` hazır (volume + healthcheck) |
+| **VPS** (Hetzner, DigitalOcean …) | ✅ | ⚠️ sağlayıcıya bağlı | Yeni hesaplarda 465/587 kapalı olabilir; destekten açtırılır* |
+| **Kurum içi sunucu / Docker** | ✅ | ✅ (ağınıza bağlı) | EMS'e doğrudan erişim için en sorunsuz seçenek; `docker compose up -d` |
 | **Render** | ✅ arayüz | ❌ **engelli** | Ücretsiz/paylaşımlı planlarda giden SMTP portları kapalı — mail **gönderemez** |
 | **Vercel** | ❌ (60 sn serverless) | ❌ | Yalnızca arayüz demosu |
+
+\* Politikalar değişebilir; topluluk/forum bilgisine dayanır. Deploy sonrası
+mutlaka `/api/diagnostics/network` ile doğrulayın.
+
+> **EMS on-prem notu:** Bulut platformundan kurum içi EMS sunucusuna erişmek için
+> EMS'in SMTP/IMAP portlarının internete açık (ya da VPN üzerinden erişilebilir)
+> olması gerekir. Kurum ağı dışa kapalıysa uygulamayı kurum içindeki bir
+> makinede (Docker) çalıştırın.
 
 > ⚠️ **En kritik nokta — giden SMTP:** Bu araç gerçek mail gönderdiği için
 > sunucunun 587/465 portlarına **çıkışına izin veren** bir platform şarttır.
@@ -305,23 +363,32 @@ arayüz/konfigürasyon çalışır:
 > (ör. `https://siteniz.com/api/diagnostics/network`) — hangi mail portlarının
 > açık olduğunu ve mail gönderilip gönderilemeyeceğini tek bakışta gösterir.
 >
-> **Mail göndermek için:** Railway, Fly.io veya bir VPS kullanın; ya da
-> uygulamayı SMTP'si açık bir ağda çalıştırın.
+> **Mail göndermek için:** Railway Pro, Fly.io veya portu açık bir VPS kullanın;
+> ya da uygulamayı SMTP'si açık bir ağda çalıştırın. Teşhis sayfası config'e
+> kayıtlı sunucuların (ör. EMS) portlarını da dener ve DNS / zaman aşımı /
+> reddedilme ayrımını gösterir.
 
 Tüm platformlarda:
 
 1. Repoyu GitHub'dan bağlayın — yapılandırma dosyaları (`railway.toml`,
-   `render.yaml`, `vercel.json`, `Dockerfile`) hazır.
-2. **`UI_PASSWORD` env değişkenini mutlaka ayarlayın** — internete açık
-   arayüz parolasız kalmasın.
+   `fly.toml`, `render.yaml`, `vercel.json`, `Dockerfile`) hazır.
+2. **`UI_PASSWORD` env değişkeni zorunlu** — ayarlanmazsa arayüz ağdan
+   gelen her isteğe 403 döner (yalnızca localhost'ta parolasız çalışır).
 3. PaaS ortamları otomatik algılanır ve `0.0.0.0`'a bind edilir; yerelde
    varsayılan `127.0.0.1` olarak kalır.
 4. Healthcheck: `GET /api/health` (kimlik doğrulamasız, platform sağlık
    kontrolleri için).
 
 ```bash
-# Docker ile
+# Docker ile (parola .env dosyasından okunur)
+echo "UI_PASSWORD=guclu-parola" > .env
 docker compose up -d      # → http://localhost:5005
+
+# Fly.io ile
+fly launch --copy-config --no-deploy
+fly volumes create mail_data --size 1
+fly secrets set UI_PASSWORD='guclu-parola'
+fly deploy
 ```
 
 > Deploy edilen sunucunun SMTP (587/465) ve IMAP (993) portlarına **dışarı
@@ -411,9 +478,13 @@ python scripts/e2e_smoke.py --to alici@ornek.com --scenarios plain_text --dry-ru
 
 | Hata | Çözüm |
 | --- | --- |
-| SMTP auth hatası | `auth_method` ayarını kontrol et; Gmail için App Password kullan |
+| SMTP auth hatası | `auth_method` ayarını kontrol et; Gmail için App Password kullan. Kimlik hatasında o sunucunun kalan senaryoları hesap kilitlenmesin diye denenmez |
+| `certificate verify failed` | Kurum içi sertifika: `tls_ca_file` ile kurum CA'sını verin (bkz. *Kurum içi sunucunun sertifikası*) |
+| `wrong version number` / 465'te bekleme | TLS modu–port uyuşmazlığı: 465 → `smtp_use_ssl: true`, 587 → STARTTLS |
 | IMAP timeout | `wait_seconds` değerini artır (varsayılan: 15) |
-| Mesaj bulunamıyor | `subject_prefix` sunucu filtresine takılıyor olabilir |
+| "IMAP kontrol edilemedi" | Mesaj gitmiş olabilir ama alıcı kutusuna bağlanılamadı — IMAP host/port/SSL/şifre |
+| Mesaj bulunamıyor | Eşleştirme Message-ID ile yapılır; sunucu mesajı spam/başka klasöre almış olabilir |
+| Arayüz 403 "yalnızca localhost" | `UI_PASSWORD` ayarlayın (ağdan/konteynerden erişim) |
 | Claude API 401 | API key'i Konfigürasyon sayfasından güncelle |
 | 2FA modal açılmıyor | Tarayıcı popup engelleyicisini kapat |
 | TOTP kodu hatalı | `totp_secret` Base32 formatında olmalı, boşluk içermemeli |

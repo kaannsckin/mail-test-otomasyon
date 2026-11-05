@@ -12,3 +12,5 @@ attachments/
 data/
 tests/
 .pytest_cache
+.claude
+.env

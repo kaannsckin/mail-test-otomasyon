@@ -686,11 +686,12 @@ def run_scenario(
             recommendations = [
                 "Önce host/port ve TLS modunu (587 STARTTLS, 465 SSL) doğrulayın; "
                 "sunucunun açık olduğundan emin olun.",
-                "Render/Heroku ücretsiz planları ve bazı VPS sağlayıcıları giden SMTP'yi engeller.",
+                "Render/Heroku ücretsiz planları, Railway Hobby planı ve bazı VPS "
+                "sağlayıcıları (yeni hesaplarda) giden SMTP'yi engeller.",
                 "Kurumsal ağlarda 587/465 güvenlik duvarında kapalı olabilir — "
                 "bağlantı sessizce zaman aşımına uğrar; ağ yöneticinize danışın.",
-                "SMTP çıkışı açık bir host kullanın (Railway, Fly.io, VPS) ya da "
-                "uygulamayı yerel makinede çalıştırın.",
+                "SMTP çıkışı açık bir host kullanın (Railway Pro, Fly.io, portu açık "
+                "bir VPS) ya da uygulamayı yerel makinede çalıştırın.",
                 "Teşhis için /api/diagnostics/network adresini açın.",
             ]
         else:

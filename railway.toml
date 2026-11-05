@@ -5,6 +5,10 @@ healthcheckTimeout = 120
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
 
+# ⚠️ Railway giden SMTP'ye (25/465/587) YALNIZCA Pro planda izin verir;
+# Free/Trial/Hobby planlarda mail gönderilemez. Pro'ya geçtikten sonra servisi
+# yeniden deploy edin ve /api/diagnostics/network ile doğrulayın.
+#
 # Not: Config/rapor kalıcılığı için Railway panelinden bir Volume ekleyin
 # (mount path: /data) ve DATA_DIR=/data env değişkenini tanımlayın.
-# Arayüzü parolayla korumak için UI_PASSWORD env değişkenini ayarlayın.
+# UI_PASSWORD env değişkeni ZORUNLU: ayarlanmazsa arayüz ağdan 403 döner.

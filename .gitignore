@@ -1,5 +1,6 @@
 # Secrets & config
 config.yaml
+.env
 *.pem
 *.key
 

@@ -7,6 +7,8 @@ ve hata sınıflandırma, rapor toplama, CLI akışı) mock'larla test eder.
 Gerçek SMTP/IMAP/LLM bağlantısı kurulmaz.
 """
 
+import smtplib
+import ssl
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -795,3 +797,131 @@ class TestAnalyzerProviderSelection:
             _run_cli(["--config", str(cli_env), "--combo", "0", "--scenario", "plain_text"])
         assert MA.call_args.kwargs["provider"] == "gemini"
         assert MA.call_args.kwargs["model"] is None  # boş model → varsayılan
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Crash test regresyonları (gerçek sunucuyla yapılan uçtan uca koşudan)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestCrashRegressions:
+
+    def test_imap_error_not_reported_as_timeout(self, test_cfg):
+        # Eski: iç CA / yanlış IMAP şifresi / Türkçe konu öneki gibi her alım
+        # hatası "Mesaj teslim edilemedi — timeout" (HIGH) diye raporlanıyordu.
+        sender, analyzer = _sender_mock(), _analyzer_mock()
+        receiver = _receiver_mock(found=False)
+        receiver.last_error = ssl.SSLCertVerificationError("certificate verify failed")
+        receiver.is_auth_error.return_value = False
+        res = main_mod.run_scenario("plain_text", _combo(), 0, sender, receiver, analyzer, test_cfg)
+        assert res["analysis"]["passed"] is False
+        assert "IMAP" in res["analysis"]["summary"]
+        assert "timeout" not in res["analysis"]["summary"].lower()
+        assert any("tls_ca_file" in r for r in res["analysis"]["recommendations"])
+        analyzer.analyze.assert_not_called()
+
+    def test_true_not_found_still_goes_to_analyzer(self, test_cfg):
+        sender, analyzer = _sender_mock(), _analyzer_mock(passed=False)
+        receiver = _receiver_mock(found=False)
+        receiver.last_error = None
+        main_mod.run_scenario("plain_text", _combo(), 0, sender, receiver, analyzer, test_cfg)
+        analyzer.analyze.assert_called_once()
+
+    def test_smtp_auth_failure_flags_server(self, test_cfg):
+        sender, receiver, analyzer = _sender_mock(), _receiver_mock(), _analyzer_mock()
+        sender.send_plain_text.side_effect = smtplib.SMTPAuthenticationError(535, b"bad")
+        res = main_mod.run_scenario("plain_text", _combo(), 0, sender, receiver, analyzer, test_cfg)
+        assert res["auth_failed_server"] == "Gmail"
+        assert res["analysis"]["passed"] is False
+
+    def test_string_numbers_in_test_config(self, test_cfg):
+        # Eski: wait_seconds: "15" (metin) senaryoyu düşürüyordu
+        sender, receiver, analyzer = _sender_mock(), _receiver_mock(), _analyzer_mock()
+        cfg = {**test_cfg, "wait_seconds": "0", "max_retries": "1", "retry_interval": "x"}
+        res = main_mod.run_scenario("plain_text", _combo(), 0, sender, receiver, analyzer, cfg)
+        assert res["analysis"]["passed"] is True
+        assert receiver.wait_for_message.call_args.kwargs["retry_interval"] == 5
+
+    def test_auth_failure_blocks_rest_of_server_scenarios(self, cli_env):
+        # Eski: yanlış şifreyle 8 kombinasyonda ~480 başarısız giriş (hesap kilitlenir)
+        calls = []
+
+        def rs(sc_key, combo, *a, **k):
+            calls.append(sc_key)
+            return {"analysis": {"passed": False, "summary": "auth"},
+                    "auth_failed_server": combo.sender_server}
+
+        with patch.object(main_mod, "MailSender"), patch.object(main_mod, "MailReceiver"), \
+             patch.object(main_mod, "MailAnalyzer"), \
+             patch.object(main_mod, "run_scenario", side_effect=rs), \
+             patch.object(main_mod, "generate_html_report") as html, \
+             patch.object(main_mod, "generate_csv_results"), \
+             pytest.raises(SystemExit) as exc:
+            _run_cli(["--config", str(cli_env), "--combo", "0"])
+        assert len(calls) == 1                      # yalnızca ilk senaryo denendi
+        results = html.call_args[0][0]
+        assert len(results) == 11                   # kalanlar FAIL olarak raporlandı
+        assert all(r["analysis"]["passed"] is False for r in results)
+        assert "yeniden denenmedi" in results[1]["analysis"]["summary"]
+        assert exc.value.code == main_mod.EXIT_TEST_FAILURES
+
+    def test_interrupt_writes_partial_report(self, cli_env):
+        # Eski: Ctrl-C / arayüzden Durdur → o ana kadarki tüm sonuçlar kayboluyordu
+        seq = [{"analysis": {"passed": True}}, {"analysis": {"passed": True}}, KeyboardInterrupt()]
+        with patch.object(main_mod, "MailSender"), patch.object(main_mod, "MailReceiver"), \
+             patch.object(main_mod, "MailAnalyzer"), \
+             patch.object(main_mod, "run_scenario", side_effect=seq), \
+             patch.object(main_mod, "generate_html_report") as html, \
+             patch.object(main_mod, "generate_csv_results") as csvr, \
+             pytest.raises(SystemExit) as exc:
+            _run_cli(["--config", str(cli_env), "--combo", "0"])
+        assert exc.value.code == main_mod.EXIT_INTERRUPTED
+        assert len(html.call_args[0][0]) == 2 and csvr.called
+
+    def test_report_failure_does_not_lose_csv(self, cli_env):
+        with patch.object(main_mod, "MailSender"), patch.object(main_mod, "MailReceiver"), \
+             patch.object(main_mod, "MailAnalyzer"), \
+             patch.object(main_mod, "run_scenario", return_value={"analysis": {"passed": True}}), \
+             patch.object(main_mod, "generate_html_report", side_effect=TypeError("bozuk")), \
+             patch.object(main_mod, "generate_csv_results") as csvr:
+            _run_cli(["--config", str(cli_env), "--combo", "0", "--scenario", "plain_text"])
+        assert csvr.called
+
+    def test_multiple_combos_keep_original_index(self, cli_env):
+        seen = []
+
+        def rs(sc_key, combo, combo_index, *a, **k):
+            seen.append(combo_index)
+            return {"analysis": {"passed": True}}
+
+        with patch.object(main_mod, "MailSender"), patch.object(main_mod, "MailReceiver"), \
+             patch.object(main_mod, "MailAnalyzer"), \
+             patch.object(main_mod, "run_scenario", side_effect=rs), \
+             patch.object(main_mod, "generate_html_report"), \
+             patch.object(main_mod, "generate_csv_results"):
+            _run_cli(["--config", str(cli_env), "--combo", "5,2", "--scenario", "plain_text"])
+        assert seen == [5, 2]
+
+    def test_missing_explicit_csv_is_error(self, cli_env):
+        # Eski: olmayan --csv sessizce varsayılan checklist'e düşüyordu
+        with pytest.raises(SystemExit) as exc:
+            _run_cli(["--config", str(cli_env), "--csv", "olmayan.csv"])
+        assert exc.value.code == main_mod.EXIT_ERROR
+
+    def test_empty_sections_and_lowercase_log_level(self, tmp_path):
+        cfg = tmp_path / "c.yaml"
+        cfg.write_text("test:\nlogging:\n  level: debug\n  file: alt/dizin/x.log\n", encoding="utf-8")
+        loaded = main_mod.load_config(str(cfg))
+        assert loaded["test"] == {}
+        import logging
+        root = logging.getLogger()
+        before = list(root.handlers)
+        try:
+            with patch("os.getcwd", return_value=str(tmp_path)):
+                main_mod.setup_logging({"logging": {"level": "debug",
+                                                    "file": str(tmp_path / "alt" / "dizin" / "x.log")}})
+            assert (tmp_path / "alt" / "dizin").is_dir()
+        finally:
+            for h in list(root.handlers):
+                if h not in before:
+                    root.removeHandler(h)
+                    h.close()
