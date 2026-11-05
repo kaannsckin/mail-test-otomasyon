@@ -4,14 +4,16 @@ receiver.py — IMAP üzerinden mesajı polling ile bekler ve ham içeriği dön
 
 import imaplib
 import os
-import ssl
 import email
 import time
 import logging
+from datetime import datetime, timedelta
 from email.header import decode_header
+from email.parser import BytesHeaderParser
 from typing import Optional
 
 from auth_manager import generate_totp, mfa_manager
+from mail_transport import imap_connect
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +30,13 @@ class MailReceiver:
         self.host = server_config["imap_host"]
         self.port = server_config["imap_port"]
         self.use_ssl = server_config.get("imap_use_ssl", True)
-        self.username = server_config["username"]
-        self.password = server_config["password"]
+        # YAML'da 'password: 123456' int olarak okunur; imaplib str ister.
+        self.username = str(server_config.get("username") or "")
+        self.password = str(server_config.get("password") or "")
         self.auth_method = server_config.get("auth_method", "password")
-        self.totp_secret = server_config.get("totp_secret", "")
+        self.totp_secret = str(server_config.get("totp_secret") or "")
+        # Son bekleme turundaki hata (bulunamadı ≠ bağlanılamadı ayrımı için)
+        self.last_error: Optional[BaseException] = None
 
     def _login(self, imap):
         """auth_method'a göre giriş yapar; TOTP secret varsa kodu otomatik üretir.
@@ -58,72 +63,159 @@ class MailReceiver:
                     logger.warning("Şifre+TOTP girişi reddedildi, yalnızca şifre deneniyor.")
         imap.login(self.username, self.password)
 
-    def _connect(self) -> imaplib.IMAP4_SSL:
-        if self.use_ssl:
-            imap = imaplib.IMAP4_SSL(self.host, self.port,
-                                     ssl_context=ssl.create_default_context())
-        else:
-            imap = imaplib.IMAP4(self.host, self.port)
-        self._login(imap)
-        imap.select("INBOX")
+    def _connect(self) -> imaplib.IMAP4:
+        imap = imap_connect(self.config, timeout=30)
+        try:
+            self._login(imap)
+            status, _ = imap.select("INBOX")
+            if status != "OK":
+                raise imaplib.IMAP4.error("INBOX seçilemedi")
+        except Exception:
+            try:
+                imap.logout()
+            except Exception:
+                pass
+            raise
         return imap
+
+    # IMAP SEARCH SINCE tarihi yerel ayardan bağımsız İngilizce ay adı ister.
+    _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+    # Message-ID araması başarısız olursa taranacak en fazla yeni mesaj
+    FALLBACK_SCAN_LIMIT = 500
+
+    @staticmethod
+    def is_auth_error(exc: Optional[BaseException]) -> bool:
+        if exc is None:
+            return False
+        text = str(exc).lower()
+        return isinstance(exc, imaplib.IMAP4.error) and any(
+            w in text for w in ("authenticationfailed", "authentication failed",
+                                "invalid credentials", "login failed", "auth"))
+
+    def _fetch_full(self, imap, mail_id: bytes) -> Optional[bytes]:
+        # BODY.PEEK[]: RFC822'den farklı olarak mesajı \Seen işaretlemez.
+        typ, msg_data = imap.fetch(mail_id, "(BODY.PEEK[])")
+        if typ != "OK" or not msg_data:
+            return None
+        for item in msg_data:
+            if isinstance(item, tuple) and len(item) >= 2:
+                return item[1]
+        return None
+
+    def _candidates_by_header(self, imap, core_id: str) -> list:
+        """Sunucu tarafında Message-ID araması (hızlı, posta kutusu boyutundan bağımsız)."""
+        try:
+            typ, data = imap.search(None, "HEADER", "Message-ID", f'"{core_id}"')
+        except imaplib.IMAP4.error as e:
+            logger.debug(f"HEADER araması desteklenmiyor: {e}")
+            return []
+        if typ != "OK" or not data or not data[0]:
+            return []
+        return list(reversed(data[0].split()))
+
+    def _candidates_recent(self, imap, expected: str) -> list:
+        """Yedek yol: son 2 günün mesajlarının yalnızca Message-ID başlığını tarar."""
+        since = datetime.now() - timedelta(days=2)
+        since_str = f"{since.day:02d}-{self._MONTHS[since.month - 1]}-{since.year}"
+        typ, data = imap.search(None, "SINCE", since_str)
+        if typ != "OK" or not data or not data[0]:
+            return []
+        ids = data[0].split()[-self.FALLBACK_SCAN_LIMIT:]
+        typ, fetched = imap.fetch(b",".join(ids), "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
+        if typ != "OK":
+            return []
+        parser = BytesHeaderParser()
+        matches = []
+        for item in fetched or []:
+            if not (isinstance(item, tuple) and len(item) >= 2):
+                continue
+            seq = item[0].split()[0]
+            header = parser.parsebytes(item[1] or b"")
+            if self._unfold(header.get("Message-ID", "")) == expected:
+                matches.append(seq)
+        return list(reversed(matches))
 
     def wait_for_message(self, expected_msg_id: str, subject_prefix: str,
                          wait_seconds: int = 20, max_retries: int = 5,
                          retry_interval: int = 5) -> Optional[dict]:
         """
         Gelen kutusunu polling ile tarar. Beklenen Message-ID'li mesajı bulunca döndürür.
-        Returns: Mesaj detayları içeren dict veya None (bulunamazsa)
+        Returns: Mesaj detayları içeren dict veya None (bulunamazsa).
+        None döndüğünde ``self.last_error`` doluysa sebep bir bağlantı/kimlik
+        hatasıdır (mesaj gelmemiş olmayabilir); boşsa mesaj gerçekten bulunamadı.
+
+        ``subject_prefix`` geriye uyumluluk için tutulur; eşleştirme Message-ID ile
+        yapılır (konu ön eki Türkçe karakter içerse de IMAP araması bozulmaz).
         """
-        logger.info(f"Mesaj bekleniyor | msg_id={expected_msg_id} | max_wait={wait_seconds}s")
+        expected = self._unfold(expected_msg_id)
+        core_id = expected.strip("<>")
+        self.last_error = None
+        logger.info(f"Mesaj bekleniyor | msg_id={expected} | max_wait={wait_seconds}s")
         time.sleep(wait_seconds)  # İlk bekleme — mesajın gelmesi için
 
         for attempt in range(1, max_retries + 1):
+            imap = None
             try:
                 imap = self._connect()
-                # Subject ile ara (Message-ID header'ı bazı sunucularda filtrelenebilir)
-                _, data = imap.search(None, f'SUBJECT "{subject_prefix}"')
-                mail_ids = data[0].split()
+                candidates = self._candidates_by_header(imap, core_id)
+                if not candidates:
+                    candidates = self._candidates_recent(imap, expected)
 
-                for mail_id in reversed(mail_ids[-20:]):  # Son 20 mesaja bak
-                    _, msg_data = imap.fetch(mail_id, "(RFC822)")
-                    raw = msg_data[0][1]
+                for mail_id in candidates:
+                    raw = self._fetch_full(imap, mail_id)
+                    if not raw:
+                        continue
                     parsed = email.message_from_bytes(raw)
-
-                    if parsed.get("Message-ID", "").strip() == expected_msg_id.strip():
+                    if self._unfold(parsed.get("Message-ID", "")) == expected:
                         logger.info(f"✅ Mesaj bulundu (deneme {attempt}/{max_retries})")
-                        imap.logout()
-                        return self._extract_details(parsed, raw, mail_id.decode())
+                        self.last_error = None
+                        mid = mail_id.decode() if isinstance(mail_id, bytes) else str(mail_id)
+                        return self._extract_details(parsed, raw, mid)
 
-                imap.logout()
+                self.last_error = None
                 logger.debug(f"Mesaj bulunamadı (deneme {attempt}/{max_retries}), {retry_interval}s bekleniyor...")
-                time.sleep(retry_interval)
-
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — her deneme bağımsız
+                self.last_error = e
                 logger.error(f"IMAP hatası (deneme {attempt}): {e}")
+                if self.is_auth_error(e):
+                    # Yanlış şifreyle tekrar tekrar denemek kurumsal hesabı kilitler.
+                    logger.error("IMAP kimlik doğrulaması reddedildi — yeniden denenmeyecek.")
+                    return None
+            finally:
+                if imap is not None:
+                    try:
+                        imap.logout()
+                    except Exception:
+                        pass
+            if attempt < max_retries:
                 time.sleep(retry_interval)
 
-        logger.warning(f"❌ Mesaj {max_retries} denemede bulunamadı | msg_id={expected_msg_id}")
+        if self.last_error is not None:
+            logger.warning(f"❌ Mesaj kontrol edilemedi (IMAP hatası: {self.last_error}) | msg_id={expected}")
+        else:
+            logger.warning(f"❌ Mesaj {max_retries} denemede bulunamadı | msg_id={expected}")
         return None
 
     def _extract_details(self, msg: email.message.Message, raw: bytes, imap_id: str) -> dict:
         """Mesajdan tüm test için gerekli bilgileri çıkarır."""
+        get = lambda name: self._unfold(msg.get(name, ""))  # noqa: E731
         result = {
             "imap_id": imap_id,
             "raw_size": len(raw),
             "raw_bytes": raw,  # Claude API analizi için ham içerik
             "headers": {
-                "message_id": msg.get("Message-ID", ""),
-                "from": msg.get("From", ""),
-                "to": msg.get("To", ""),
-                "subject": self._decode_header(msg.get("Subject", "")),
-                "date": msg.get("Date", ""),
-                "content_type": msg.get("Content-Type", ""),
-                "in_reply_to": msg.get("In-Reply-To", ""),
-                "references": msg.get("References", ""),
-                "mime_version": msg.get("MIME-Version", ""),
-                "x_mailer": msg.get("X-Mailer", ""),
-                "content_transfer_encoding": msg.get("Content-Transfer-Encoding", ""),
+                "message_id": get("Message-ID"),
+                "from": get("From"),
+                "to": get("To"),
+                "subject": self._unfold(self._decode_header(msg.get("Subject", ""))),
+                "date": get("Date"),
+                "content_type": get("Content-Type"),
+                "in_reply_to": get("In-Reply-To"),
+                "references": get("References"),
+                "mime_version": get("MIME-Version"),
+                "x_mailer": get("X-Mailer"),
+                "content_transfer_encoding": get("Content-Transfer-Encoding"),
             },
             "parts": [],
             "attachments": [],
@@ -149,6 +241,23 @@ class MailReceiver:
                 "transfer_encoding": part.get("Content-Transfer-Encoding", ""),
             }
 
+            if content_type == "message/rfc822":
+                # İletilen mesaj (forward): iç başlıklar analize taşınır; eskiden
+                # boyutu 0 ve başlıksız görünüyordu.
+                inner = part.get_payload()
+                inner_msg = inner[0] if isinstance(inner, list) and inner else None
+                inner_headers = {}
+                if inner_msg is not None:
+                    inner_headers = {k: self._unfold(self._decode_header(inner_msg.get(k, "")))
+                                     for k in ("From", "To", "Subject", "Date", "Message-ID")}
+                result["attachments"].append({
+                    **part_info,
+                    "filename": self._decode_header(part.get_filename() or ""),
+                    "size": len(inner_msg.as_bytes()) if inner_msg is not None else 0,
+                    "encapsulated_headers": inner_headers,
+                })
+                continue
+
             if "attachment" in disposition:
                 filename = part.get_filename() or ""
                 payload = part.get_payload(decode=True)
@@ -156,7 +265,8 @@ class MailReceiver:
                     **part_info,
                     "filename": self._decode_header(filename),
                     "size": len(payload) if payload else 0,
-                    "payload_sample": payload[:64] if payload else None,
+                    # İlk baytlar (dosya imzası, ör. %PDF) — JSON'a uygun hex metin
+                    "payload_head_hex": payload[:16].hex() if payload else "",
                 })
             elif content_id and "inline" in disposition:
                 payload = part.get_payload(decode=True)
@@ -173,6 +283,20 @@ class MailReceiver:
                 except Exception:
                     text = ""
                 result["parts"].append({**part_info, "text_preview": text[:500]})
+
+    @staticmethod
+    def _unfold(value: str) -> str:
+        """RFC 5322 §2.2.3 — katlanmış header değerini tek satıra indirger.
+
+        78 oktetten uzun header'lar CRLF + boşluk ile katlanır; uzun bir
+        Message-ID (uzun host adı) ya da uzun bir thread'in References'ı bunu
+        rutin olarak tetikler. Ham değer saklanırsa hem eşleştirme bozulur hem
+        de analiz promptuna satır başlarıyla gider ve LLM bunu 'header bozulmuş'
+        diye raporlayabilir.
+        """
+        if not value:
+            return ""
+        return " ".join(value.split())
 
     @staticmethod
     def _decode_header(value: str) -> str:

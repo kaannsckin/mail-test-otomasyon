@@ -9,6 +9,8 @@ services:
     environment:
       - PORT=5000
       - DATA_DIR=/app/data
-      # Ağa açık çalıştırıyorsanız parola koyun:
-      # - UI_PASSWORD=degistir-beni
+      # Konteynere tarayıcıdan erişim "ağ" erişimi sayılır: parola zorunlu.
+      # Proje kökünde .env dosyasına UI_PASSWORD=... yazın.
+      - UI_PASSWORD=${UI_PASSWORD:?UI_PASSWORD ayarlayın (.env dosyasına UI_PASSWORD=... yazın)}
+      - UI_USERNAME=${UI_USERNAME:-admin}
     restart: unless-stopped

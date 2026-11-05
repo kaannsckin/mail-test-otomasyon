@@ -144,7 +144,7 @@ def _build_sdk_response(result: dict):
 def _patch_anthropic_client(result: dict):
     """analyzer.anthropic.Anthropic'i patch'ler, messages.create mock'unu döndürür."""
     client = MagicMock()
-    client.messages.create.return_value = _build_sdk_response(result)
+    client.beta.messages.create.return_value = _build_sdk_response(result)
     return patch("analyzer.anthropic.Anthropic", return_value=client), client
 
 
@@ -153,7 +153,7 @@ def mock_claude_pass():
     """Başarılı analiz döndüren Claude API mock'u."""
     patcher, client = _patch_anthropic_client(_PASS_RESULT)
     with patcher:
-        yield client.messages.create
+        yield client.beta.messages.create
 
 
 @pytest.fixture
@@ -164,7 +164,7 @@ def mock_claude_fail():
               "issues": ["Mesaj alınamadı"]}
     patcher, client = _patch_anthropic_client(result)
     with patcher:
-        yield client.messages.create
+        yield client.beta.messages.create
 
 
 # ── Alınan mesaj örneği ──────────────────────────────────────────────
@@ -223,6 +223,7 @@ def flask_client(tmp_path, monkeypatch):
     reports = tmp_path / "reports"
     reports.mkdir(exist_ok=True)
     monkeypatch.setattr(app_module, "REPORTS_DIR", reports)
+    monkeypatch.setattr(app_module, "RUN_PID_FILE", tmp_path / "run.pid")
     app_module.app.config["TESTING"] = True
     app_module.run_state.update({
         "running": False,
@@ -231,6 +232,9 @@ def flask_client(tmp_path, monkeypatch):
         "started_at": None,
         "finished_at": None,
         "exit_code": None,
+        "log_file": None,   # önceki testten kalan log dosyası sızmasın
+        "run_id": None,
+        "stopped": False,
     })
     with app_module.app.test_client() as client:
         yield client

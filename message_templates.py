@@ -8,7 +8,9 @@ sırasında kombinasyon indeksine göre otomatik rotasyon yapar.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from html import unescape
 from typing import Dict, List
 
 SIGNATURE_BLOCK = (
@@ -425,20 +427,174 @@ I18N_TEMPLATES: List[MessageTemplate] = [
 ]
 
 # ────────────────────────────────────────────────────────────────────
+#  SENARYO 10: complex_html — Rich CSS ve Media Query
+# ────────────────────────────────────────────────────────────────────
+# Not: Bu senaryo daha önce INLINE_IMAGE_TEMPLATES'i yeniden kullanıyordu;
+# o şablonlar {{CID}} yer tutucusu içerdiği için resimsiz HTML mesajda
+# çözümlenmeden kalıyordu. Bu yüzden kendi şablon seti tanımlandı.
+COMPLEX_HTML_TEMPLATES: List[MessageTemplate] = [
+    MessageTemplate(
+        subject_tag="Duyarlı (Responsive) HTML Render Testi",
+        length="short",
+        body=(
+            "<html><head><style>"
+            ".kart{background:#f4f7fb;border-left:4px solid #004a99;padding:16px;"
+            "font-family:Arial,Helvetica,sans-serif}"
+            ".vurgu{color:#004a99;font-weight:700}"
+            "@media only screen and (max-width:480px){"
+            ".kart{padding:8px;font-size:13px} .gizle-mobil{display:none !important}}"
+            "</style></head><body>"
+            "<div class='kart'>"
+            "<p class='vurgu'>Zengin CSS Render Sınaması</p>"
+            "<p>Bu mesaj, istemcinin <code>&lt;style&gt;</code> bloğunu ve CSS "
+            "sınıflarını koruyup korumadığını ölçer.</p>"
+            "<p class='gizle-mobil'>Bu satır yalnızca masaüstünde görünmelidir "
+            "(media query testi).</p>"
+            "<p>Türkçe: ğüşıöçĞÜŞİÖÇ</p>"
+            "</div>"
+            "{{SIGNATURE_HTML}}"
+            "</body></html>"
+        ),
+    ),
+    MessageTemplate(
+        subject_tag="CSS Media Query ve Kutu Modeli Doğrulaması",
+        length="medium",
+        body=(
+            "<html><head><style>"
+            "body{margin:0;background:#eef2f7}"
+            ".sarmal{max-width:600px;margin:0 auto;background:#ffffff;"
+            "font-family:'Segoe UI',Arial,sans-serif}"
+            ".baslik{background:linear-gradient(90deg,#004a99,#0077cc);"
+            "color:#fff;padding:20px}"
+            ".govde{padding:20px;line-height:1.6}"
+            ".rozet{display:inline-block;background:#e8f4ff;color:#004a99;"
+            "border-radius:12px;padding:4px 12px;font-size:12px}"
+            "@media only screen and (max-width:480px){"
+            ".sarmal{width:100% !important} .baslik{padding:12px}"
+            ".govde{padding:12px;font-size:14px}}"
+            "</style></head><body>"
+            "<div class='sarmal'>"
+            "<div class='baslik'><h2 style='margin:0'>Kurumsal Bülten Şablonu</h2></div>"
+            "<div class='govde'>"
+            "<span class='rozet'>Test</span> <span class='rozet'>Render</span>"
+            "<p>Bu şablon; gradient arka plan, yuvarlatılmış rozetler ve "
+            "<strong>max-width</strong> tabanlı duyarlı yerleşim içerir.</p>"
+            "<p>Bazı istemciler (Outlook Desktop) <code>&lt;style&gt;</code> "
+            "bloğunu kaldırır; bu durumda düzen bozulur ancak metin okunabilir "
+            "kalmalıdır.</p>"
+            "<p>Karakter Doğrulama: ğüşıöç ĞÜŞİÖÇ</p>"
+            "</div></div>"
+            "{{SIGNATURE_HTML}}"
+            "</body></html>"
+        ),
+    ),
+    MessageTemplate(
+        subject_tag="Gelişmiş CSS Yerleşim ve Yedekleme (Fallback) Analizi",
+        length="long",
+        body=(
+            "<html><head><style>"
+            "body{margin:0;padding:0;background:#e9edf2}"
+            ".dis{width:100%;padding:24px 0}"
+            ".ic{max-width:640px;margin:0 auto;background:#fff;border-radius:8px;"
+            "overflow:hidden;font-family:Arial,sans-serif;color:#222}"
+            ".ust{background:#12263f;color:#fff;padding:24px}"
+            ".sutunlar{display:flex;gap:16px;padding:20px}"
+            ".sutun{flex:1;background:#f6f8fa;padding:14px;border-radius:6px}"
+            ".alt{background:#f0f3f7;padding:16px;font-size:12px;color:#555}"
+            "@media only screen and (max-width:520px){"
+            ".sutunlar{display:block} .sutun{margin-bottom:12px}"
+            ".ust{padding:14px} .ic{border-radius:0}}"
+            "</style></head><body>"
+            "<div class='dis'><div class='ic'>"
+            "<div class='ust'><h1 style='margin:0;font-size:22px'>"
+            "Teknik Rapor: HTML Uyumluluk</h1>"
+            "<p style='margin:6px 0 0;opacity:.85'>Rich CSS ve Media Query Sınaması</p></div>"
+            "<div class='sutunlar'>"
+            "<div class='sutun'><strong>Flexbox</strong><p>Çok sütunlu yerleşim; "
+            "desteklenmeyen istemcide alt alta düşmelidir.</p></div>"
+            "<div class='sutun'><strong>Media Query</strong><p>520px altında tek "
+            "sütuna geçer.</p></div>"
+            "<div class='sutun'><strong>Tipografi</strong><p>ğüşıöç ĞÜŞİÖÇ "
+            "karakterleri bozulmamalıdır.</p></div>"
+            "</div>"
+            "<div class='alt'>Bu mesaj otomatik test altyapısı tarafından "
+            "üretilmiştir. Görüntüleme sorunlarında düz metin alternatifi "
+            "(text/plain) kullanılmalıdır.</div>"
+            "</div></div>"
+            "{{SIGNATURE_HTML}}"
+            "</body></html>"
+        ),
+    ),
+]
+
+# ────────────────────────────────────────────────────────────────────
+#  SENARYO 11: multi_attachment — Çoklu ek
+# ────────────────────────────────────────────────────────────────────
+MULTI_ATTACHMENT_TEMPLATES: List[MessageTemplate] = [
+    MessageTemplate(
+        subject_tag="Çoklu Ek İletim Testi",
+        length="short",
+        body=(
+            "Merhaba,\n\n"
+            "Bu mesaj birden fazla ek dosya içermektedir. Tüm eklerin "
+            "eksiksiz iletilip iletilmediğini kontrol ediniz.\n\n"
+            "Türkçe: ğüşıöçĞÜŞİÖÇ"
+            + SIGNATURE_BLOCK
+        ),
+    ),
+    MessageTemplate(
+        subject_tag="Karma Formatlı Çoklu Ek Doğrulaması",
+        length="medium",
+        body=(
+            "Merhaba,\n\n"
+            "Ekte farklı formatlarda dosyalar bulunmaktadır. Kontrol noktaları:\n"
+            "  • Her ekin adı ve uzantısı korunmuş mu?\n"
+            "  • Toplam boyut sunucu limitine takılmış mı?\n"
+            "  • MIME type'lar doğru atanmış mı?\n\n"
+            "Karakter sınaması: ğüşıöç ĞÜŞİÖÇ"
+            + SIGNATURE_BLOCK
+        ),
+    ),
+    MessageTemplate(
+        subject_tag="Toplu Doküman Aktarımı ve Bütünlük Denetimi",
+        length="long",
+        body=(
+            "Sayın Yetkili,\n\n"
+            "Bu mesaj, kurumsal yazışmalarda sıkça karşılaşılan çoklu doküman "
+            "aktarımı senaryosunu simüle etmektedir. multipart/mixed yapısı "
+            "içinde birden fazla ek taşınmakta olup, aşağıdaki hususlar "
+            "denetlenmelidir:\n\n"
+            "== Denetim Kapsamı ==\n"
+            "1. Ek sayısının gönderim ile birebir örtüşmesi\n"
+            "2. Dosya adlarındaki Türkçe karakterlerin (RFC 2231) korunması\n"
+            "3. base64 kodlamasının bozulmadan çözülebilmesi\n"
+            "4. Toplam mesaj boyutunun sunucu eşiğini aşmaması\n\n"
+            "Karakter Doğrulama: ğüşıöç ĞÜŞIÖÇ — çalışma, güncelleme, şifreleme."
+            + SIGNATURE_BLOCK
+        ),
+    ),
+]
+
+# ────────────────────────────────────────────────────────────────────
 #  Yardımcılar
 # ────────────────────────────────────────────────────────────────────
 ALL_TEMPLATES: Dict[str, List[MessageTemplate]] = {
     "plain_text": PLAIN_TEXT_TEMPLATES,
     "attachment": ATTACHMENT_TEMPLATES,
-    "multi_attachment": ATTACHMENT_TEMPLATES,
+    "multi_attachment": MULTI_ATTACHMENT_TEMPLATES,
     "inline_image": INLINE_IMAGE_TEMPLATES,
     "reply_chain": REPLY_CHAIN_TEMPLATES,
     "html_table": TABLE_TEMPLATES,
+    # CSV "Forward (Mesaj İletme) Akışı" → 'forward'; 'forward_chain' eski addır.
+    "forward": FORWARD_CHAIN_TEMPLATES,
     "forward_chain": FORWARD_CHAIN_TEMPLATES,
     "calendar_invite": CALENDAR_INVITE_TEMPLATES,
     "i18n": I18N_TEMPLATES,
-    "complex_html": INLINE_IMAGE_TEMPLATES,
+    "complex_html": COMPLEX_HTML_TEMPLATES,
 }
+
+# Gövdesi HTML olan senaryolar — sender bunları text/html olarak gönderir.
+HTML_SCENARIOS = frozenset({"html_table", "complex_html"})
 
 
 def get_template(scenario_key: str, rotation_index: int) -> MessageTemplate:
@@ -455,3 +611,28 @@ def get_reply_original(rotation_index: int) -> MessageTemplate:
 def resolve_inline_html(html: str, cid: str) -> str:
     """Inline image şablonundaki {{CID}} ve {{SIGNATURE_HTML}} yer tutucularını doldurur."""
     return html.replace("{{CID}}", cid).replace("{{SIGNATURE_HTML}}", SIGNATURE_HTML)
+
+
+def resolve_html(html: str) -> str:
+    """Resimsiz HTML şablonlarındaki {{SIGNATURE_HTML}} yer tutucusunu doldurur."""
+    return html.replace("{{SIGNATURE_HTML}}", SIGNATURE_HTML)
+
+
+_TAG_RE = re.compile(r"<[^>]+>")
+_STYLE_RE = re.compile(r"<(style|script)[^>]*>.*?</\1>", re.S | re.I)
+_BLOCK_BREAK_RE = re.compile(r"</(p|div|tr|h[1-6]|table)\s*>", re.I)
+
+
+def html_to_plain(html: str) -> str:
+    """HTML gövdeden okunabilir düz metin alternatifi üretir.
+
+    multipart/alternative'in text/plain bacağı için kullanılır: HTML'i
+    render edemeyen (ya da engelleyen) istemcide mesaj yine okunabilmelidir.
+    """
+    text = _STYLE_RE.sub("", html)
+    text = _BLOCK_BREAK_RE.sub("\n", text)
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.I)
+    text = _TAG_RE.sub("", text)
+    text = unescape(text)
+    lines = [line.strip() for line in text.splitlines()]
+    return "\n".join(line for line in lines if line).strip()

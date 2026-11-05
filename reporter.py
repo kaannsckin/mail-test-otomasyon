@@ -24,8 +24,15 @@ def _status_of(result: dict) -> str:
     return "PASS" if passed else "FAIL"
 
 
-def generate_html_report(results: List[dict], output_path: str):
-    """Test sonuçlarından profesyonel HTML rapor üretir."""
+def generate_html_report(results: List[dict], output_path: str, note: str = ""):
+    """Test sonuçlarından profesyonel HTML rapor üretir.
+
+    ``note`` doluysa (ör. koşu durduruldu) raporun başında uyarı olarak gösterilir.
+    """
+    note_html = (
+        '<div style="margin:16px 0;padding:12px 16px;border-radius:8px;background:#fff4e5;'
+        'border:1px solid #f0a500;color:#7a4b00;font-weight:600">⚠️ ' + _esc(note) + '</div>'
+    ) if note else ""
     total = len(results)
     passed = sum(1 for r in results if _status_of(r) == "PASS")
     skipped = sum(1 for r in results if _status_of(r) == "SKIP")
@@ -57,13 +64,18 @@ def generate_html_report(results: List[dict], output_path: str):
             sc_class = {"PASS": "pass", "FAIL": "fail", "SKIP": "skip"}[status]
             badge_label = {"PASS": "✅ PASS", "FAIL": "❌ FAIL", "SKIP": "⏭ ATLANDI"}[status]
             checks_html = ""
-            for ch in analysis.get("checks", []):
+            checks = analysis.get("checks", [])
+            for ch in checks if isinstance(checks, list) else []:
+                if not isinstance(ch, dict):
+                    ch = {"name": str(ch), "passed": False, "detail": ""}
                 ch_icon = "✅" if ch.get("passed") else "❌"
                 checks_html += (
                     f'<li>{ch_icon} <b>{_esc(ch.get("name", ""))}</b>: '
                     f'{_esc(ch.get("detail", ""))}</li>'
                 )
             issues = analysis.get("issues", [])
+            if not isinstance(issues, list):
+                issues = [issues] if issues else []
             issues_html = "".join(f"<li>⚠️ {_esc(i)}</li>" for i in issues) if issues else ""
 
             scenario_rows += f"""
@@ -171,6 +183,7 @@ def generate_html_report(results: List[dict], output_path: str):
   <div class="meta">Oluşturulma: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')} &nbsp;|&nbsp;
   Claude API Destekli Analiz</div>
 </div>
+{note_html}
 
 <div class="summary-bar">
   <div class="stat-card total"><div class="val">{total}</div><div class="lbl">Toplam Senaryo</div></div>

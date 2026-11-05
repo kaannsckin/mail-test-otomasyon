@@ -98,7 +98,7 @@ def _mock_claude():
     resp.stop_reason = "end_turn"
     resp.content = [block]
     client = MagicMock()
-    client.messages.create.return_value = resp
+    client.beta.messages.create.return_value = resp
     return client
 
 

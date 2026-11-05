@@ -545,7 +545,7 @@ class TestAnalyzerRobustness:
         resp.stop_reason = "refusal"
         resp.content = []
         client = MagicMock()
-        client.messages.create.return_value = resp
+        client.beta.messages.create.return_value = resp
         with patch("analyzer.anthropic.Anthropic", return_value=client):
             a = MailAnalyzer("sk-ant-test")
             result = a.analyze("plain_text", {"msg_id": "<x>"}, received_msg, combination_meta)
@@ -555,7 +555,7 @@ class TestAnalyzerRobustness:
         import anthropic as anthropic_sdk
         from analyzer import MailAnalyzer
         client = MagicMock()
-        client.messages.create.side_effect = anthropic_sdk.APIConnectionError(
+        client.beta.messages.create.side_effect = anthropic_sdk.APIConnectionError(
             request=MagicMock()
         )
         with patch("analyzer.anthropic.Anthropic", return_value=client):

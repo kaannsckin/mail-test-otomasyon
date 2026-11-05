@@ -1,0 +1,37 @@
+# Fly.io yapılandırması — `fly launch --copy-config` ile kullanın.
+# Kurulum:
+#   fly launch --copy-config --no-deploy      # uygulama adını/bölgeyi seçer
+#   fly volumes create mail_data --size 1      # config.yaml + raporlar kalıcı olsun
+#   fly secrets set UI_PASSWORD='guclu-parola' # ZORUNLU: parolasız arayüz ağdan 403 verir
+#   fly deploy
+# Deploy sonrası SMTP erişimini doğrulayın: https://<uygulama>.fly.dev/api/diagnostics/network
+
+app = "mail-test-otomasyon"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  DATA_DIR = "/data"
+  HOST = "0.0.0.0"
+  PORT = "5000"
+
+[[mounts]]
+  source = "mail_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 5000
+  force_https = true
+  # Uzun test koşusu sırasında makine boşta sanılıp durdurulmasın.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "30s"
+    method = "GET"
+    path = "/api/health"
+    timeout = "5s"

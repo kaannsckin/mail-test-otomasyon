@@ -12,16 +12,20 @@ Kullanım:
 import argparse
 import logging
 import os
+import re
+import signal
+import smtplib
 import sys
 import time
 import uuid
 import yaml
 from datetime import datetime
-from email.utils import make_msgid
+from email.utils import formatdate, make_msgid
 from pathlib import Path
 
 # Proje modülleri
-from csv_parser import parse_csv, TestCombination
+from csv_parser import parse_csv, TestCombination, SUPPORTED_SCENARIOS
+from mail_transport import explain_connection_error, resolve_path
 from sender import MailSender
 from receiver import MailReceiver
 from analyzer import MailAnalyzer
@@ -30,8 +34,21 @@ from message_templates import (
     get_template,
     get_reply_original,
     resolve_inline_html,
+    resolve_html,
+    html_to_plain,
+    HTML_SCENARIOS,
     SIGNATURE_HTML,
 )
+
+# Çıkış kodları: CI/zamanlanmış koşular ve web arayüzü sonucu ayırt edebilsin.
+EXIT_OK = 0              # tüm (atlanmayan) senaryolar PASS
+EXIT_ERROR = 1           # araç/config hatası ya da hiç sonuç üretilemedi
+EXIT_TEST_FAILURES = 2   # koşu tamamlandı, en az bir senaryo FAIL
+EXIT_INTERRUPTED = 130   # Ctrl-C / arayüzden durdurma (kısmi rapor yazılır)
+
+# prepare_test_files() tarafından üretilen ek örnek dosyalar — çoklu ek
+# senaryosunun tek dosyayla anlamsızlaşmaması için.
+EXTRA_TEST_FILES = ("test_files/test_data.csv", "test_files/test_notes.txt")
 
 # ------------------------------------------------------------------ #
 #  CSV path resolution
@@ -76,10 +93,12 @@ def resolve_csv_path(csv_path: str) -> str:
 #  Logging kurulumu
 # ------------------------------------------------------------------ #
 def setup_logging(config: dict):
-    log_dir = Path("logs")
-    log_dir.mkdir(exist_ok=True)
-    log_file = config.get("logging", {}).get("file", "logs/automation.log")
-    level = getattr(logging, config.get("logging", {}).get("level", "INFO"))
+    log_cfg = config.get("logging") or {}
+    log_file = Path(str(log_cfg.get("file") or "logs/automation.log"))
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    level = getattr(logging, str(log_cfg.get("level") or "INFO").upper(), None)
+    if not isinstance(level, int):
+        level = logging.INFO
 
     logging.basicConfig(
         level=level,
@@ -108,15 +127,68 @@ def get_server_config(config: dict, server_name: str) -> dict:
     return config[key]
 
 
-def _is_network_unreachable(exc: Exception) -> bool:
-    """Giden SMTP portu platform tarafından engellenmiş mi? (Errno 101/111/113)"""
+def load_config(path: str) -> dict:
+    """config.yaml'ı okur; boş bölümleri {} yapar (``test:`` altı boş kalsa da
+    çökmesin). Kök sözlük değilse ValueError."""
+    with open(path, "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f) or {}
+    if not isinstance(config, dict):
+        raise ValueError("config.yaml kökü 'anahtar: değer' yapısında olmalı")
+    return {k: (v if v is not None else {}) for k, v in config.items()}
+
+
+def _num(value, default, cast=int):
+    """Config'den sayı oku: '15' (metin) da kabul edilir, bozuksa varsayılan."""
+    try:
+        return cast(float(value)) if value not in (None, "") else default
+    except (TypeError, ValueError):
+        logger.warning(f"Geçersiz sayısal config değeri {value!r} — varsayılan {default} kullanılıyor")
+        return default
+
+
+def _is_auth_failure(exc: BaseException) -> bool:
     err = exc
     while err is not None:
-        if isinstance(err, OSError) and getattr(err, "errno", None) in (101, 111, 113):
+        if isinstance(err, smtplib.SMTPAuthenticationError):
             return True
         err = err.__cause__ or err.__context__
+    return False
+
+
+# Giden SMTP portu kesildiğinde ortaya çıkan hatalar. Güvenlik duvarı paketi
+# REJECT ederse ECONNREFUSED/ENETUNREACH gelir; DROP ederse (kurumsal ağlarda
+# en yaygın davranış) hiçbir errno gelmez, bağlantı zaman aşımına uğrar.
+_BLOCKED_PORT_ERRNOS = (
+    97,   # EAFNOSUPPORT — adres ailesi desteklenmiyor (kısıtlı konteyner/sandbox)
+    101,  # ENETUNREACH  — ağa erişilemiyor
+    110,  # ETIMEDOUT    — bağlantı zaman aşımı
+    111,  # ECONNREFUSED — bağlantı reddedildi
+    113,  # EHOSTUNREACH — host'a erişilemiyor
+)
+
+_BLOCKED_PORT_TEXTS = (
+    "network is unreachable", "no route to host", "timed out", "timeout",
+    "connection refused", "address family not supported",
+)
+
+
+def _is_network_unreachable(exc: Exception) -> bool:
+    """Giden SMTP portu engelli ya da erişilemez mi?
+
+    Yalnızca gönderim/bağlantı hatalarında çağrılır. Zaman aşımı da yakalanır:
+    paketi DROP eden güvenlik duvarları errno üretmez, sadece bekletir — bu
+    durumda kullanıcı teşhis mesajı yerine anlamsız bir 'timed out' görüyordu.
+    """
+    err = exc
+    while err is not None:
+        if isinstance(err, OSError):
+            if getattr(err, "errno", None) in _BLOCKED_PORT_ERRNOS:
+                return True
+            if isinstance(err, TimeoutError):   # socket.timeout errno taşımaz
+                return True
+        err = err.__cause__ or err.__context__
     text = str(exc).lower()
-    return "network is unreachable" in text or "no route to host" in text
+    return any(t in text for t in _BLOCKED_PORT_TEXTS)
 
 
 # ------------------------------------------------------------------ #
@@ -167,6 +239,24 @@ startxref
             f.write(png_bytes)
         logger.debug(f"Test PNG oluşturuldu: {img_path}")
 
+    # Çoklu ek senaryosu için farklı MIME tiplerinde küçük dosyalar
+    csv_path = "test_files/test_data.csv"
+    if not os.path.exists(csv_path):
+        with open(csv_path, "w", encoding="utf-8") as f:
+            f.write("id,ürün,adet,açıklama\n"
+                    "1,Şarj Kablosu,12,Türkçe karakter testi ğüşıöç\n"
+                    "2,Güç Kaynağı,3,İkinci satır\n")
+        logger.debug(f"Test CSV oluşturuldu: {csv_path}")
+
+    txt_path = "test_files/test_notes.txt"
+    if not os.path.exists(txt_path):
+        with open(txt_path, "w", encoding="utf-8") as f:
+            f.write("Mail Otomasyon — Test Notları\n"
+                    "================================\n"
+                    "Bu dosya çoklu ek senaryosu için üretilmiştir.\n"
+                    "Karakter sınaması: ğüşıöç ĞÜŞİÖÇ\n")
+        logger.debug(f"Test TXT oluşturuldu: {txt_path}")
+
 
 # ------------------------------------------------------------------ #
 #  Tek senaryo çalıştır
@@ -201,11 +291,18 @@ def _resolve_attachment_paths(test_config: dict) -> list[str]:
 #  Subject builder helpers
 # ------------------------------------------------------------------ #
 SCENARIO_LABELS: dict[str, str] = {
-    "plain_text":   "Plain Text",
-    "attachment":   "Ek Dosya",
-    "inline_image": "Inline Görsel",
-    "reply_chain":  "Reply Chain",
-    "smime":        "S/MIME İmza",
+    "plain_text":       "Plain Text",
+    "attachment":       "Ek Dosya",
+    "inline_image":     "Inline Görsel",
+    "reply_chain":      "Reply Chain",
+    "smime":            "S/MIME İmza",
+    "calendar_invite":  "Takvim Daveti",
+    "i18n":             "Uluslararası Alfabe",
+    "complex_html":     "Zengin HTML",
+    "html_table":       "HTML Tablo",
+    "forward":          "Mesaj İletme",
+    "forward_chain":    "Mesaj İletme",
+    "multi_attachment": "Çoklu Ek",
 }
 
 LENGTH_LABELS: dict[str, str] = {
@@ -248,6 +345,103 @@ def _attachment_tag(paths: list[str]) -> str:
     types_str = "+".join(exts)
     size_str = _format_file_size(total_size)
     return f"{count} Ek: {types_str}, {size_str}"
+
+
+def _resolve_multi_attachment_paths(test_config: dict) -> list[str]:
+    """Çoklu ek senaryosu için dosya listesi.
+
+    Öncelik ``test_multi_attachment_paths``; tanımlı değilse normal ek
+    yolları + prepare_test_files()'ın ürettiği örnek dosyalar kullanılır.
+    Senaryonun anlamlı olması için en az iki farklı dosya hedeflenir.
+    """
+    repo_root = Path(__file__).parent
+
+    explicit = test_config.get("test_multi_attachment_paths")
+    if explicit and isinstance(explicit, list):
+        resolved = []
+        for raw in explicit:
+            p = Path(raw)
+            if p.exists():
+                resolved.append(str(p))
+            elif (repo_root / p).exists():
+                resolved.append(str(repo_root / p))
+            else:
+                logger.warning(f"Çoklu ek dosyası bulunamadı: {raw}")
+        return resolved
+
+    paths = list(_resolve_attachment_paths(test_config))
+    for extra in EXTRA_TEST_FILES:
+        # prepare_test_files() dosyaları çalışma dizinine (web arayüzünde
+        # DATA_DIR) yazar; repo kökü yalnızca yedek.
+        for candidate in (Path(extra), repo_root / extra):
+            if candidate.exists():
+                if str(candidate) not in paths:
+                    paths.append(str(candidate))
+                break
+    return paths
+
+
+_BODY_CLOSE_RE = re.compile(r"</body\s*>", re.IGNORECASE)
+
+
+def _stamp_html_run_id(html: str, run_id: str) -> str:
+    """HTML gövdeye Run ID'yi </body> öncesine iliştirir.
+
+    Düz metinde olduğu gibi sona eklemek </html>'den sonra metin bırakır ve
+    bazı istemcilerde görünmez; bu yüzden gövdenin içine yazılır.
+
+    Konum aramasında ``str.lower()`` KULLANILMAZ: Türkçe 'İ' küçültüldüğünde
+    iki karaktere ('i' + U+0307) açılır, dizgenin boyu değişir ve küçük harfli
+    kopyada bulunan indeks orijinal metinde kayar (kapanış etiketinin '<'
+    karakteri yenirdi). Regex doğrudan orijinal metin üzerinde çalışır.
+    """
+    stamp = (f"<p style=\"font-size:11px;color:#999;margin-top:16px\">"
+             f"[Run ID: {run_id}]</p>")
+    matches = list(_BODY_CLOSE_RE.finditer(html))
+    if matches:
+        idx = matches[-1].start()
+        return html[:idx] + stamp + html[idx:]
+    return html + stamp
+
+
+def _skipped_result(combo: TestCombination, scenario_key: str,
+                    test_time: str, reason: str) -> dict:
+    """Senaryo çalıştırılamadığında PASS/FAIL yerine SKIP sonucu üretir."""
+    return {
+        "combination": combo.label,
+        "scenario_type": scenario_key,
+        "scenario_key": scenario_key,
+        "test_time": test_time,
+        "analysis": {
+            "passed": None,
+            "confidence": "N/A",
+            "checks": [],
+            "summary": reason,
+            "issues": [],
+            "recommendations": [],
+        },
+        "skipped": True,
+    }
+
+
+def _error_result(combo: TestCombination, scenario_key: str, test_time: str,
+                  summary: str, detail: str, recommendations: list | None = None,
+                  check_name: str = "Çalıştırma") -> dict:
+    """Senaryo yarıda kaldığında FAIL sonucu — sonuç ASLA sessizce düşmez."""
+    return {
+        "combination": combo.label,
+        "scenario_type": scenario_key,
+        "scenario_key": scenario_key,
+        "test_time": test_time,
+        "analysis": {
+            "passed": False,
+            "confidence": "HIGH",
+            "checks": [{"name": check_name, "passed": False, "detail": detail}],
+            "summary": summary,
+            "issues": [detail],
+            "recommendations": recommendations or [],
+        },
+    }
 
 
 def _inline_image_tag(image_path: str) -> str:
@@ -294,10 +488,10 @@ def run_scenario(
 
     ``combo_index`` mesaj şablonu rotasyonu (kısa/orta/uzun) için kullanılır.
     """
-    subject_prefix = test_config.get("subject_prefix", "[AUTO-TEST]")
-    wait = test_config.get("wait_seconds", 15)
-    retries = test_config.get("max_retries", 3)
-    retry_int = test_config.get("retry_interval", 5)
+    subject_prefix = str(test_config.get("subject_prefix") or "[AUTO-TEST]")
+    wait = _num(test_config.get("wait_seconds"), 15)
+    retries = max(1, _num(test_config.get("max_retries"), 3))
+    retry_int = _num(test_config.get("retry_interval"), 5)
     image_path = test_config.get("test_image_path", "test_files/test_image.png")
 
     attachment_paths = _resolve_attachment_paths(test_config)
@@ -310,19 +504,39 @@ def run_scenario(
 
     if scenario_key == "attachment":
         detail_tag = _attachment_tag(attachment_paths)
+    elif scenario_key == "multi_attachment":
+        multi_paths = _resolve_multi_attachment_paths(test_config)
+        detail_tag = _attachment_tag(multi_paths)
     elif scenario_key == "inline_image":
         detail_tag = _inline_image_tag(image_path)
     elif scenario_key == "reply_chain":
         detail_tag = "Eksiz, Thread Testi"
     elif scenario_key == "smime":
         detail_tag = "Dijital İmzalı"
+    elif scenario_key == "calendar_invite":
+        detail_tag = "iTIP Daveti, ICS Ekli"
+    elif scenario_key == "i18n":
+        # Başlığın kendisi test edilen şey: ASCII dışı karakterler subject
+        # header'ında RFC 2047 ile kodlanmalı. Bu yüzden şablonun emoji/çok
+        # alfabeli etiketi doğrudan konuya taşınır.
+        detail_tag = tmpl.subject_tag
+    elif scenario_key == "complex_html":
+        detail_tag = "Zengin CSS + Media Query"
+    elif scenario_key == "html_table":
+        detail_tag = "HTML Tablo Yapısı"
+    elif scenario_key in ("forward", "forward_chain"):
+        detail_tag = "İletilmiş Mesaj, RFC822 Kapsüllü"
     else:
         detail_tag = "Eksiz"
 
     subject = _build_subject(
         subject_prefix, run_id, scenario_key, length_label, combo.label, detail_tag,
     )
-    body = f"{tmpl.body}\n\n[Run ID: {run_id}]"
+    if scenario_key in HTML_SCENARIOS:
+        html_body = resolve_html(tmpl.body)
+        body = _stamp_html_run_id(html_body, run_id)
+    else:
+        body = f"{tmpl.body}\n\n[Run ID: {run_id}]"
 
     combination_meta = {
         "sender_server": combo.sender_server,
@@ -355,8 +569,8 @@ def run_scenario(
             )
 
         elif scenario_key == "smime":
-            cert = test_config.get("smime_cert_path", "")
-            key = test_config.get("smime_key_path", "")
+            cert = str(resolve_path(test_config.get("smime_cert_path", "")) or "")
+            key = str(resolve_path(test_config.get("smime_key_path", "")) or "")
             if cert and key and os.path.exists(cert) and os.path.exists(key):
                 send_meta = sender.send_smime_signed(to_address, subject, body, cert, key)
             else:
@@ -396,23 +610,93 @@ def run_scenario(
                 body,
             )
 
+        elif scenario_key == "multi_attachment":
+            paths = _resolve_multi_attachment_paths(test_config)
+            if not paths:
+                return _skipped_result(
+                    combo, scenario_key, test_time,
+                    "Çoklu ek senaryosu için en az bir dosya bulunamadı.",
+                )
+            send_meta = sender.send_with_attachment(to_address, subject, body, paths)
+            send_meta["scenario"] = "multi_attachment"
+
+        elif scenario_key in HTML_SCENARIOS:
+            send_meta = sender.send_html_message(
+                to_address, subject, body, html_to_plain(body), scenario=scenario_key,
+            )
+
+        elif scenario_key == "i18n":
+            send_meta = sender.send_i18n(to_address, subject, body)
+
+        elif scenario_key == "calendar_invite":
+            send_meta = sender.send_calendar_invite(
+                to_address, subject, body,
+                summary=tmpl.subject_tag,
+                duration_minutes=int(test_config.get("calendar_duration_minutes", 30)),
+                location=test_config.get("calendar_location", "Çevrimiçi Toplantı"),
+            )
+
+        elif scenario_key in ("forward", "forward_chain"):
+            # Reply chain gibi: önce gerçek bir orijinal mesaj gönderilir,
+            # sonra o mesaj message/rfc822 olarak kapsüllenip iletilir.
+            orig_tmpl = get_reply_original(combo_index)
+            orig_length = LENGTH_LABELS.get(orig_tmpl.length, orig_tmpl.length)
+            orig_subject = _build_subject(
+                subject_prefix, f"ORIG-{run_id}", scenario_key,
+                orig_length, combo.label, "İletme Kaynağı, Eksiz",
+            )
+            orig_body = f"{orig_tmpl.body}\n\n[Run ID: {run_id}]"
+
+            original_meta = sender.send_plain_text(to_address, orig_subject, orig_body)
+            time.sleep(5)
+            send_meta = sender.send_forward(
+                to_address, orig_subject, body,
+                {
+                    "subject": orig_subject,
+                    "from": sender.from_address,
+                    "to": to_address,
+                    "date": formatdate(localtime=True),
+                    "msg_id": original_meta.get("msg_id", ""),
+                    "body": orig_body,
+                },
+            )
+
         else:
             raise ValueError(f"Bilinmeyen senaryo tipi: {scenario_key}")
 
     except Exception as e:
         logger.error(f"Gönderim hatası ({scenario_key}): {e}", exc_info=True)
+        hint = explain_connection_error(e, getattr(sender, "config", None))
+        if _is_auth_failure(e):
+            summary = f"SMTP kimlik doğrulaması reddedildi: {e}"
+            recommendations = [hint or "Kullanıcı adı/şifreyi kontrol edin",
+                               "Hesap kilitlenmesin diye bu sunucunun kalan senaryoları denenmeyecek."]
+            result = _error_result(combo, scenario_key, test_time, summary, str(e),
+                                   recommendations, check_name="Gönderim")
+            result["auth_failed_server"] = combo.sender_server
+            return result
         if _is_network_unreachable(e):
-            summary = ("Sunucu giden SMTP portuna çıkamıyor (Network is unreachable) — "
-                       "platform mail portlarını engelliyor.")
+            target = ""
+            sc = getattr(sender, "config", None)
+            if isinstance(sc, dict) and sc.get("smtp_host"):
+                target = f" ({sc.get('smtp_host')}:{sc.get('smtp_port')})"
+            summary = (f"SMTP bağlantısı kurulamadı{target}. "
+                       + (f"{hint} " if hint else "")
+                       + "Diğer olasılık: giden SMTP portuna erişim ağ/platform tarafından engelli.")
             recommendations = [
-                "Render/Heroku ücretsiz planları giden SMTP'yi engeller.",
-                "SMTP çıkışı açık bir host kullanın (Railway, Fly.io, VPS) ya da "
-                "uygulamayı yerel makinede çalıştırın.",
+                "Önce host/port ve TLS modunu (587 STARTTLS, 465 SSL) doğrulayın; "
+                "sunucunun açık olduğundan emin olun.",
+                "Render/Heroku ücretsiz planları, Railway Hobby planı ve bazı VPS "
+                "sağlayıcıları (yeni hesaplarda) giden SMTP'yi engeller.",
+                "Kurumsal ağlarda 587/465 güvenlik duvarında kapalı olabilir — "
+                "bağlantı sessizce zaman aşımına uğrar; ağ yöneticinize danışın.",
+                "SMTP çıkışı açık bir host kullanın (Railway Pro, Fly.io, portu açık "
+                "bir VPS) ya da uygulamayı yerel makinede çalıştırın.",
                 "Teşhis için /api/diagnostics/network adresini açın.",
             ]
         else:
-            summary = f"Mesaj gönderilemedi: {e}"
-            recommendations = ["SMTP bağlantı ayarlarını kontrol edin"]
+            summary = f"Mesaj gönderilemedi: {e}" + (f" — {hint}" if hint else "")
+            recommendations = ([hint] if hint else []) + ["SMTP bağlantı ayarlarını kontrol edin"]
         return {
             "combination": combo.label,
             "scenario_type": scenario_key,
@@ -453,6 +737,26 @@ def run_scenario(
         retry_interval=retry_int,
     )
 
+    receive_error = getattr(receiver, "last_error", None) if received is None else None
+    if isinstance(receive_error, BaseException):
+        # Mesaj gelmiş olabilir ama kontrol edilemedi — "teslim edilemedi
+        # (timeout)" demek yanıltıcı olurdu.
+        hint = explain_connection_error(receive_error, getattr(receiver, "config", None))
+        result = _error_result(
+            combo, scenario_key, test_time,
+            f"Alıcı posta kutusu (IMAP) kontrol edilemedi: {receive_error}"
+            + (f" — {hint}" if hint else ""),
+            str(receive_error),
+            ([hint] if hint else []) + ["IMAP host/port/SSL ve kimlik bilgilerini kontrol edin"],
+            check_name="Mesaj Alımı (IMAP)",
+        )
+        result["send_meta"] = {k: v for k, v in send_meta.items() if k != "raw_bytes"}
+        is_auth = getattr(receiver, "is_auth_error", None)
+        if callable(is_auth) and is_auth(receive_error) is True:
+            result["auth_failed_server"] = combo.receiver_server
+        logger.info(f"◼ Sonuç: ❌ FAIL | {combo.label} / {scenario_key} | IMAP hatası")
+        return result
+
     analysis = analyzer.analyze(
         scenario_key, send_meta, received, combination_meta
     )
@@ -481,11 +785,32 @@ def run_scenario(
 # ------------------------------------------------------------------ #
 #  Ana çalıştırıcı
 # ------------------------------------------------------------------ #
+def _combo_list(value: str) -> list[int]:
+    """'3' → [3], '1,4,7' → [1, 4, 7] (sırası korunur, tekrarlar atılır)."""
+    out: list[int] = []
+    for part in str(value).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            n = int(part)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"geçersiz kombinasyon indeksi: {part!r}")
+        if n < 0:
+            raise argparse.ArgumentTypeError(f"kombinasyon indeksi negatif olamaz: {n}")
+        if n not in out:
+            out.append(n)
+    if not out:
+        raise argparse.ArgumentTypeError("en az bir kombinasyon indeksi gerekli")
+    return out
+
+
 def main():
     parser = argparse.ArgumentParser(description="Mail Otomasyon Testi")
     parser.add_argument("--config", default="config.yaml", help="Config dosyası yolu")
     parser.add_argument("--csv", default=None, help="Test CSV dosyası yolu")
-    parser.add_argument("--combo", type=int, default=None, help="Sadece N. kombinasyonu çalıştır (0-index)")
+    parser.add_argument("--combo", type=_combo_list, default=None,
+                        help="Yalnızca bu kombinasyon(lar)ı çalıştır (0-index): 3 veya 1,4,7")
     parser.add_argument("--scenario", default=None,
                         help="Sadece belirtilen senaryo tipini çalıştır "
                              "(plain_text|attachment|inline_image|smime|reply_chain)")
@@ -496,129 +821,244 @@ def main():
     if not os.path.exists(args.config):
         print(f"[HATA] Config dosyası bulunamadı: {args.config}")
         print("Web arayüzünden config.yaml oluşturun veya --config ile dosya belirtin.")
-        sys.exit(1)
-    with open(args.config, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
+        sys.exit(EXIT_ERROR)
+    try:
+        config = load_config(args.config)
+    except (OSError, ValueError, yaml.YAMLError) as e:
+        print(f"[HATA] Config okunamadı: {e}")
+        sys.exit(EXIT_ERROR)
 
     setup_logging(config)
     logger.info("=" * 60)
     logger.info("Mail Otomasyon Başlıyor")
     logger.info("=" * 60)
 
-    test_config = config.get("test", {})
-    csv_path = args.csv or test_config.get("csv_input", "mail_test_checklist.csv")
-    csv_path = resolve_csv_path(csv_path)
+    test_config = config.get("test") or {}
+    if args.csv:
+        explicit = Path(args.csv)
+        if not explicit.exists() and not (Path(__file__).parent / explicit).exists():
+            logger.error(f"CSV dosyası bulunamadı: {args.csv}")
+            sys.exit(EXIT_ERROR)
+        csv_path = resolve_csv_path(args.csv)
+    else:
+        configured = str(test_config.get("csv_input") or "mail_test_checklist.csv")
+        csv_path = resolve_csv_path(configured)
+        if Path(csv_path).name != Path(configured).name:
+            logger.warning(f"CSV bulunamadı: {configured} — yerine {csv_path} kullanılıyor")
 
     # Test dosyalarını hazırla
     prepare_test_files()
 
     # CSV oku
-    combinations = parse_csv(csv_path)
+    try:
+        combinations = parse_csv(csv_path)
+    except (OSError, ValueError, UnicodeDecodeError) as e:
+        logger.error(f"CSV okunamadı ({csv_path}): {e}")
+        sys.exit(EXIT_ERROR)
     if not combinations:
         logger.error("CSV'den test senaryosu okunamadı!")
-        sys.exit(1)
+        sys.exit(EXIT_ERROR)
+    if not any(c.scenarios for c in combinations):
+        logger.error(
+            f"CSV'de {len(combinations)} kombinasyon bulundu ama hiç senaryo satırı okunamadı. "
+            "Dosya ayracını (virgül/noktalı virgül) ve sütun başlıklarını kontrol edin.")
+        sys.exit(EXIT_ERROR)
 
-    # Filtrele
+    # Filtrele — orijinal indeks korunur (şablon rotasyonu kombinasyona bağlı)
+    indexed = list(enumerate(combinations))
     if args.combo is not None:
-        if args.combo >= len(combinations):
-            logger.error(f"Kombinasyon indeksi {args.combo} geçersiz (toplam: {len(combinations)})")
-            sys.exit(1)
-        combinations = [combinations[args.combo]]
-        logger.info(f"Sadece kombinasyon #{args.combo} çalıştırılıyor: {combinations[0].label}")
+        invalid = [i for i in args.combo if i >= len(combinations)]
+        if invalid:
+            logger.error(f"Kombinasyon indeksi {invalid} geçersiz (toplam: {len(combinations)})")
+            sys.exit(EXIT_ERROR)
+        indexed = [(i, combinations[i]) for i in args.combo]
+        for i, c in indexed:
+            logger.info(f"Seçili kombinasyon #{i}: {c.label}")
+    combinations = [c for _, c in indexed]
+
+    # Arayüzdeki "Durdur" SIGTERM gönderir: Ctrl-C gibi ele alınır ki finally
+    # blokları (2FA köprüsü temizliği) çalışsın ve o ana kadarki sonuçlar
+    # raporlansın. Dry-run dahil tüm modlarda geçerli.
+    def _on_sigterm(signum, frame):
+        raise KeyboardInterrupt
+    try:
+        signal.signal(signal.SIGTERM, _on_sigterm)
+    except (ValueError, OSError):
+        pass  # ana thread değil (testler) — yoksay
 
     # Dry-run
     if args.dry_run:
-        logger.info("DRY RUN — Bağlantı testleri:")
-        for combo in combinations:
-            for server_name in {combo.sender_server, combo.receiver_server}:
-                try:
-                    sc = get_server_config(config, server_name)
-                    sender = MailSender(sc)
-                    conn = sender._connect()
-                    conn.quit()
-                    logger.info(f"  ✅ SMTP OK: {server_name} ({sc['smtp_host']})")
-                except Exception as e:
-                    logger.error(f"  ❌ SMTP FAIL: {server_name} — {e}")
-                    if _is_network_unreachable(e):
-                        logger.error(
-                            "     ↳ 'Network is unreachable' — bu sunucu giden SMTP "
-                            "portuna (587/465) çıkamıyor. Render/Heroku gibi ücretsiz "
-                            "platformlar mail portlarını engeller. SMTP çıkışı açık bir "
-                            "host (Railway, Fly.io, VPS) veya yerel çalıştırma gerekir. "
-                            "Teşhis: /api/diagnostics/network adresini açın."
-                        )
+        try:
+            _dry_run(config, combinations)
+        except KeyboardInterrupt:
+            logger.warning("⏹ Dry-run durduruldu.")
+            sys.exit(EXIT_INTERRUPTED)
         return
 
+    _run_all(args, config, test_config, indexed)
+
+
+def _dry_run(config: dict, combinations: list) -> None:
+    logger.info("DRY RUN — Bağlantı testleri (mail gönderilmez):")
+    failures = 0
+    checked = set()
+    for combo in combinations:
+        for server_name in (combo.sender_server, combo.receiver_server):
+            if server_name in checked:
+                continue
+            checked.add(server_name)
+            try:
+                sc = get_server_config(config, server_name)
+            except ValueError as e:
+                failures += 1
+                logger.error(f"  ❌ {server_name}: {e}")
+                continue
+            for proto, connect in (("SMTP", lambda: MailSender(sc)._connect().quit()),
+                                   ("IMAP", lambda: MailReceiver(sc)._connect().logout())):
+                host = sc.get("smtp_host" if proto == "SMTP" else "imap_host")
+                try:
+                    connect()
+                    logger.info(f"  ✅ {proto} OK: {server_name} ({host})")
+                except Exception as e:  # noqa: BLE001
+                    failures += 1
+                    logger.error(f"  ❌ {proto} FAIL: {server_name} ({host}) — {e}")
+                    hint = explain_connection_error(e, sc)
+                    if hint:
+                        logger.error(f"     ↳ {hint}")
+                    if proto == "SMTP" and _is_network_unreachable(e):
+                        logger.error(
+                            "     ↳ Giden SMTP portuna (587/465) ulaşılamıyor — "
+                            "bağlantı engelleniyor veya zaman aşımına uğruyor. "
+                            "Ücretsiz PaaS'lar (Render/Heroku), bazı VPS sağlayıcıları ve "
+                            "kurumsal güvenlik duvarları bu portları kapatır. "
+                            "Teşhis: /api/diagnostics/network adresini açın."
+                        )
+    if failures:
+        logger.error(f"DRY RUN: {failures} bağlantı başarısız.")
+        sys.exit(EXIT_TEST_FAILURES)
+    logger.info("DRY RUN: tüm bağlantılar başarılı.")
+
+
+def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
     # Analiz için LLM — analysis.provider: claude (varsayılan) | gemini
-    provider = (config.get("analysis", {}).get("provider") or "claude").lower()
+    provider = (str((config.get("analysis") or {}).get("provider") or "claude")).lower()
     if provider == "gemini":
-        gemini_cfg = config.get("gemini", {})
+        gemini_cfg = config.get("gemini") or {}
         analyzer = MailAnalyzer(
             api_key=gemini_cfg.get("api_key", ""),
             model=gemini_cfg.get("model") or None,
             provider="gemini",
         )
     else:
-        anthropic_cfg = config.get("anthropic", {})
-        analyzer = MailAnalyzer(
-            api_key=anthropic_cfg.get("api_key", ""),
-            model=anthropic_cfg.get("model") or None,
-        )
+        anthropic_cfg = config.get("anthropic") or {}
+        analyzer_kwargs = {"api_key": anthropic_cfg.get("api_key", ""),
+                           "model": anthropic_cfg.get("model") or None}
+        if anthropic_cfg.get("effort"):
+            analyzer_kwargs["effort"] = anthropic_cfg["effort"]
+        analyzer = MailAnalyzer(**analyzer_kwargs)
     logger.info(f"Analiz sağlayıcısı: {provider} ({analyzer.model})")
 
     all_results = []
+    auth_failed: dict[str, str] = {}   # sunucu → ilk kimlik hatası
+    interrupted = False
     Path("reports").mkdir(exist_ok=True)
 
-    for combo_idx, combo in enumerate(combinations):
-        logger.info(f"\n{'='*60}")
-        logger.info(f"Kombinasyon [{combo_idx+1}/{len(combinations)}]: {combo.label}")
-        logger.info(f"{'='*60}")
+    try:
+        for combo_idx, combo in indexed:
+            logger.info(f"\n{'='*60}")
+            logger.info(f"Kombinasyon [#{combo_idx}]: {combo.label}")
+            logger.info(f"{'='*60}")
 
-        # Sender/Receiver kurulumu
-        try:
-            sender_config = get_server_config(config, combo.sender_server)
-            receiver_config = get_server_config(config, combo.receiver_server)
-        except ValueError as e:
-            logger.error(f"Config hatası: {e} — kombinasyon atlanıyor.")
-            continue
-
-        sender = MailSender(sender_config)
-        receiver = MailReceiver(receiver_config)
-
-        scenarios_to_run = list(combo.scenarios.keys())
-        if args.scenario:
-            scenarios_to_run = [s for s in scenarios_to_run if s == args.scenario]
-
-        for sc_key in scenarios_to_run:
+            # Sender/Receiver kurulumu
             try:
-                result = run_scenario(
-                    sc_key, combo, combo_idx, sender, receiver, analyzer, test_config,
-                )
+                sender_config = get_server_config(config, combo.sender_server)
+                receiver_config = get_server_config(config, combo.receiver_server)
+                sender = MailSender(sender_config)
+                receiver = MailReceiver(receiver_config)
+            except (ValueError, KeyError, TypeError) as e:
+                logger.error(f"Config hatası: {e} — kombinasyon atlanıyor.")
+                continue
+
+            scenarios_to_run = list(combo.scenarios.keys())
+            if args.scenario:
+                scenarios_to_run = [s for s in scenarios_to_run if s == args.scenario]
+
+            for sc_key in scenarios_to_run:
+                test_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                if sc_key not in SUPPORTED_SCENARIOS:
+                    logger.warning(f"Desteklenmeyen senaryo tipi atlandı: {sc_key}")
+                    all_results.append(_skipped_result(
+                        combo, sc_key, test_time,
+                        f"CSV'deki senaryo tipi desteklenmiyor: {sc_key}"))
+                    continue
+                blocked = [srv for srv in (combo.sender_server, combo.receiver_server)
+                           if srv in auth_failed]
+                if blocked:
+                    srv = blocked[0]
+                    all_results.append(_error_result(
+                        combo, sc_key, test_time,
+                        f"{srv} kimlik doğrulaması bu koşuda daha önce reddedildi — "
+                        "hesap kilitlenmesin diye yeniden denenmedi.",
+                        auth_failed[srv],
+                        ["Şifre/uygulama şifresi/2FA ayarlarını düzeltip testi yeniden çalıştırın."],
+                        check_name="Kimlik Doğrulama"))
+                    continue
+                try:
+                    result = run_scenario(
+                        sc_key, combo, combo_idx, sender, receiver, analyzer, test_config,
+                    )
+                except Exception as e:  # noqa: BLE001 — sonuç asla sessizce düşmesin
+                    logger.error(f"Beklenmeyen hata ({sc_key}): {e}", exc_info=True)
+                    result = _error_result(
+                        combo, sc_key, test_time,
+                        f"Senaryo beklenmeyen bir hatayla yarıda kaldı: {type(e).__name__}: {e}",
+                        f"{type(e).__name__}: {e}",
+                        ["Logları inceleyin; tekrarlıyorsa hata kaydı açın."])
+                failed_srv = result.get("auth_failed_server") if isinstance(result, dict) else None
+                if failed_srv and failed_srv not in auth_failed:
+                    auth_failed[failed_srv] = (result.get("analysis") or {}).get("summary", "")
+                    logger.error(f"🔒 {failed_srv}: kimlik doğrulama reddedildi — bu sunucunun "
+                                 "kalan senaryoları denenmeyecek.")
                 all_results.append(result)
                 time.sleep(3)
-            except Exception as e:
-                logger.error(f"Beklenmeyen hata ({sc_key}): {e}", exc_info=True)
+    except KeyboardInterrupt:
+        interrupted = True
+        logger.warning("⏹ Koşu durduruldu — o ana kadarki sonuçlar raporlanıyor.")
 
-    # Raporla
-    if all_results:
-        html_path = test_config.get("report_output", "reports/test_report.html")
-        csv_path_out = test_config.get("results_csv", "reports/test_results.csv")
-        generate_html_report(all_results, html_path)
-        generate_csv_results(all_results, csv_path_out)
-        logger.info(f"\n{'='*60}")
-        logger.info(f"TEST TAMAMLANDI")
-        total = len(all_results)
-        passed = sum(1 for r in all_results if r.get("analysis", {}).get("passed"))
-        skipped = sum(1 for r in all_results if r.get("analysis", {}).get("passed") is None)
-        effective = total - skipped
-        rate = round(passed / effective * 100, 1) if effective else 0
-        logger.info(f"Sonuç: {passed}/{effective} PASS ({rate}%) | {skipped} atlandı")
-        logger.info(f"HTML Rapor: {html_path}")
-        logger.info(f"CSV Sonuçlar: {csv_path_out}")
-        logger.info(f"{'='*60}")
-    else:
+    # Raporla (durdurulsa bile)
+    if not all_results:
         logger.warning("Hiçbir test sonucu üretilemedi.")
+        sys.exit(EXIT_INTERRUPTED if interrupted else EXIT_ERROR)
 
+    html_path = test_config.get("report_output", "reports/test_report.html")
+    csv_path_out = test_config.get("results_csv", "reports/test_results.csv")
+    note = ("Koşu kullanıcı tarafından DURDURULDU — bu rapor kısmi sonuçları içerir; "
+            "çalıştırılmayan senaryolar listede yoktur.") if interrupted else ""
+    try:
+        generate_html_report(all_results, html_path, note=note)
+    except Exception as e:  # noqa: BLE001 — biri bozulsa diğeri yine yazılsın
+        logger.error(f"HTML rapor yazılamadı: {e}", exc_info=True)
+    try:
+        generate_csv_results(all_results, csv_path_out)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"CSV sonuç yazılamadı: {e}", exc_info=True)
+    logger.info(f"\n{'='*60}")
+    logger.info("TEST DURDURULDU (kısmi sonuç)" if interrupted else "TEST TAMAMLANDI")
+    total = len(all_results)
+    passed = sum(1 for r in all_results if (r.get("analysis") or {}).get("passed") is True)
+    skipped = sum(1 for r in all_results if (r.get("analysis") or {}).get("passed") is None)
+    effective = total - skipped
+    failed = effective - passed
+    rate = round(passed / effective * 100, 1) if effective else 0
+    logger.info(f"Sonuç: {passed}/{effective} PASS ({rate}%) | {skipped} atlandı")
+    logger.info(f"HTML Rapor: {html_path}")
+    logger.info(f"CSV Sonuçlar: {csv_path_out}")
+    logger.info(f"{'='*60}")
+
+    if interrupted:
+        sys.exit(EXIT_INTERRUPTED)
+    if failed:
+        sys.exit(EXIT_TEST_FAILURES)
 
 if __name__ == "__main__":
     main()

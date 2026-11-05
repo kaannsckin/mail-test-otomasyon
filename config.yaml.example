@@ -18,6 +18,11 @@ ems:
   auth_method: "password"             # password | app_password | totp_password | otp_only
   mfa_method: "totp"                  # totp | sms | email_otp | push
   totp_secret: ""                     # Opsiyonel — boş bırakırsan her çalışmada manuel girersin
+  # ── TLS (kurum içi sunucular için) ───────────────────────────────
+  # smtp_use_ssl: true                # 465 (doğrudan SSL). Port 465 ise otomatik.
+  # imap_use_starttls: false          # 143 üzerinde STARTTLS
+  tls_verify: true                    # Sertifika doğrulaması (kapatmak güvensiz — yalnızca test)
+  tls_ca_file: ""                     # Self-signed / iç CA ise kurum CA sertifikası (PEM), ör. certs/kurum-ca.pem
 
 gmail:
   smtp_host: "smtp.gmail.com"
@@ -51,7 +56,8 @@ outlook:
 
 anthropic:
   api_key: ""                         # https://console.anthropic.com → API Keys
-  model: "claude-opus-4-8"            # boş bırakılırsa varsayılan kullanılır
+  model: "claude-opus-5-5"            # boş bırakılırsa varsayılan (claude-opus-5-5)
+  effort: "medium"                    # low | medium | high — analiz derinliği / maliyet
 
 test:
   wait_seconds: 15
@@ -63,6 +69,21 @@ test:
   csv_input: "mail_test_checklist.csv"
   report_output: "reports/test_report.html"
   results_csv: "reports/test_results.csv"
+
+  # ── Çoklu ek senaryosu (multi_attachment) ────────────────────────
+  # Tanımlanmazsa prepare_test_files() örnek dosyaları otomatik üretir.
+  # test_multi_attachment_paths:
+  #   - "test_files/test_document.pdf"
+  #   - "test_files/test_data.csv"
+  #   - "test_files/test_notes.txt"
+
+  # ── Takvim daveti senaryosu (calendar_invite) ────────────────────
+  calendar_duration_minutes: 30
+  calendar_location: "Çevrimiçi Toplantı"
+
+  # ── S/MIME senaryosu — tanımlı değilse otomatik atlanır ──────────
+  # smime_cert_path: "certs/test_cert.pem"
+  # smime_key_path:  "certs/test_key.pem"
 
 logging:
   level: "INFO"
