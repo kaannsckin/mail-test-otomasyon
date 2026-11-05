@@ -122,15 +122,18 @@ class TestReceiverLogin:
     def test_non_ssl_uses_plain_imap4(self, server_cfg):
         cfg = {**server_cfg, "imap_use_ssl": False}
         imap = MagicMock()
+        imap.select.return_value = ("OK", [b"1"])
         with patch("imaplib.IMAP4", return_value=imap) as plain, \
              patch("imaplib.IMAP4_SSL") as ssl_cls:
             MailReceiver(cfg)._connect()
-        plain.assert_called_once_with("imap.test.local", 993)
+        plain.assert_called_once_with("imap.test.local", 993, timeout=30)
+        imap.starttls.assert_not_called()
         ssl_cls.assert_not_called()
         imap.select.assert_called_once_with("INBOX")
 
     def test_ssl_connection_uses_default_context(self, server_cfg):
         imap = MagicMock()
+        imap.select.return_value = ("OK", [b"1"])
         with patch("imaplib.IMAP4_SSL", return_value=imap) as cls:
             MailReceiver(server_cfg)._connect()
         assert cls.call_args.kwargs["ssl_context"] is not None
@@ -290,6 +293,7 @@ class TestFoldedHeaders:
         """Asıl etki: katlanmış id eşleşmezse mesaj 'bulunamadı' sayılırdı."""
         raw = self._raw_folded()
         inst = MagicMock()
+        inst.select.return_value = ("OK", [b"1"])
         inst.search.return_value = ("OK", [b"1"])
         inst.fetch.return_value = ("OK", [(b"1 (RFC822 {500})", raw)])
         with patch("imaplib.IMAP4_SSL", return_value=inst), \
@@ -303,6 +307,7 @@ class TestFoldedHeaders:
         """Beklenen id de katlanmış gelebilir (config/log üzerinden taşınırsa)."""
         raw = self._raw_folded()
         inst = MagicMock()
+        inst.select.return_value = ("OK", [b"1"])
         inst.search.return_value = ("OK", [b"1"])
         inst.fetch.return_value = ("OK", [(b"1 (RFC822 {500})", raw)])
         with patch("imaplib.IMAP4_SSL", return_value=inst), \

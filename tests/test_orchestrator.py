@@ -636,17 +636,21 @@ class TestMainCli:
 
     def test_dry_run_connects_without_sending(self, cli_env):
         with patch.object(main_mod, "MailSender") as MS, \
+             patch.object(main_mod, "MailReceiver") as MR, \
              patch.object(main_mod, "generate_html_report") as gen:
             _run_cli(["--config", str(cli_env), "--combo", "0", "--dry-run"])
         assert MS.return_value._connect.called
+        assert MR.return_value._connect.called      # IMAP de sınanır
         MS.return_value.send_plain_text.assert_not_called()
         gen.assert_not_called()
 
     def test_dry_run_logs_blocked_port_guidance(self, cli_env, caplog):
-        with patch.object(main_mod, "MailSender") as MS:
+        with patch.object(main_mod, "MailSender") as MS, \
+             patch.object(main_mod, "MailReceiver"):
             MS.return_value._connect.side_effect = OSError(101, "Network is unreachable")
-            with caplog.at_level("ERROR"):
+            with caplog.at_level("ERROR"), pytest.raises(SystemExit) as exc:
                 _run_cli(["--config", str(cli_env), "--combo", "0", "--dry-run"])
+        assert exc.value.code == main_mod.EXIT_TEST_FAILURES
         assert "diagnostics/network" in caplog.text
 
     def test_single_combo_runs_all_scenarios(self, cli_env):
@@ -694,10 +698,16 @@ class TestMainCli:
              patch.object(main_mod, "MailAnalyzer"), \
              patch.object(main_mod, "run_scenario", side_effect=flaky), \
              patch.object(main_mod, "generate_html_report") as html, \
-             patch.object(main_mod, "generate_csv_results"):
+             patch.object(main_mod, "generate_csv_results"), \
+             pytest.raises(SystemExit) as exc:
             _run_cli(["--config", str(cli_env), "--combo", "0"])
-        # 11 senaryodan biri patladı, kalan 10'u raporlandı
-        assert len(html.call_args[0][0]) == 10
+        # Regresyon: patlayan senaryo eskiden rapordan SESSİZCE düşüyordu
+        # ("126/126 PASS" ama 54 senaryo kayıp). Artık FAIL olarak raporlanır.
+        results = html.call_args[0][0]
+        assert len(results) == 11
+        failed = [r for r in results if r["analysis"]["passed"] is False]
+        assert len(failed) == 1 and "beklenmeyen" in failed[0]["analysis"]["summary"]
+        assert exc.value.code == main_mod.EXIT_TEST_FAILURES
 
     def test_unknown_server_skips_combination(self, cli_env, tmp_path):
         cfg = yaml.safe_load(cli_env.read_text(encoding="utf-8"))
@@ -706,9 +716,11 @@ class TestMainCli:
         with patch.object(main_mod, "MailSender"), patch.object(main_mod, "MailReceiver"), \
              patch.object(main_mod, "MailAnalyzer"), \
              patch.object(main_mod, "run_scenario") as rs, \
-             patch.object(main_mod, "generate_html_report"):
+             patch.object(main_mod, "generate_html_report"), \
+             pytest.raises(SystemExit) as exc:
             _run_cli(["--config", str(cli_env), "--combo", "0"])
         rs.assert_not_called()
+        assert exc.value.code == main_mod.EXIT_ERROR
 
     def test_no_results_skips_reporting(self, cli_env, caplog):
         cfg = yaml.safe_load(cli_env.read_text(encoding="utf-8"))
@@ -717,8 +729,9 @@ class TestMainCli:
         with patch.object(main_mod, "MailSender"), patch.object(main_mod, "MailReceiver"), \
              patch.object(main_mod, "MailAnalyzer"), \
              patch.object(main_mod, "generate_html_report") as html, \
-             caplog.at_level("WARNING"):
+             caplog.at_level("WARNING"), pytest.raises(SystemExit) as exc:
             _run_cli(["--config", str(cli_env), "--combo", "0"])
+        assert exc.value.code == main_mod.EXIT_ERROR
         html.assert_not_called()
         assert "Hiçbir test sonucu üretilemedi" in caplog.text
 
@@ -735,8 +748,9 @@ class TestMainCli:
              patch.object(main_mod, "run_scenario", side_effect=results), \
              patch.object(main_mod, "generate_html_report"), \
              patch.object(main_mod, "generate_csv_results"), \
-             caplog.at_level("INFO"):
+             caplog.at_level("INFO"), pytest.raises(SystemExit) as exc:
             _run_cli(["--config", str(cli_env), "--combo", "0"])
+        assert exc.value.code == main_mod.EXIT_TEST_FAILURES   # 3 FAIL var
         # Atlananlar paydaya girmemeli: 6/9 = %66.7 (11 değil)
         assert "Sonuç: 6/9 PASS (66.7%)" in caplog.text
         assert "2 atlandı" in caplog.text

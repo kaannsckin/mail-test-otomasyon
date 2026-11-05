@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Mail Test Otomasyon</title>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<!-- Fontlar render'ı bloklamasın: kapalı/yavaş ağda sayfa sistem fontuyla hemen açılır -->
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <style>
 :root{
   --bg:#0a0e17;--surface:#111827;--panel:#1a2236;--border:#1e3a5f;
@@ -306,9 +307,12 @@ input.has-value{border-color:rgba(0,255,148,.4)}
               <div class="form-group"><label>Sunucu Etiketi</label><input id="ems_label" placeholder="EMS On-Prem"></div>
               <div class="form-group">
                 <label>Güvenlik</label>
-                <div class="toggle-row"><input id="ems_smtp_use_tls" type="checkbox" checked><span>SMTP StartTLS</span></div>
-                <div class="toggle-row"><input id="ems_imap_use_ssl" type="checkbox" checked><span>IMAP SSL</span></div>
+                <div class="toggle-row"><input id="ems_smtp_use_tls" type="checkbox" checked><span>SMTP StartTLS (587)</span></div>
+                <div class="toggle-row"><input id="ems_smtp_use_ssl" type="checkbox"><span>SMTP SSL (465)</span></div>
+                <div class="toggle-row"><input id="ems_imap_use_ssl" type="checkbox" checked><span>IMAP SSL (993)</span></div>
+                <div class="toggle-row"><input id="ems_tls_verify" type="checkbox" checked><span>Sertifikayı doğrula</span></div>
               </div>
+              <div class="form-group full"><label>Kurum CA Sertifikası (PEM yolu, opsiyonel)</label><input id="ems_tls_ca_file" placeholder="certs/kurum-ca.pem — self-signed/iç CA için; boşsa sistem CA'ları"></div>
             </div>
             <div class="btn-row"><button class="btn btn-ghost btn-sm" onclick="testConn('ems')">🔌 Bağlantı Test Et</button></div>
           </div>
@@ -348,9 +352,9 @@ input.has-value{border-color:rgba(0,255,148,.4)}
             <div class="form-group full"><label>API Key</label><input id="anthropic_api_key" type="password" placeholder="sk-ant-api03-..."></div>
             <div class="form-group"><label>Model</label>
               <select id="anthropic_model">
-                <option value="claude-sonnet-4-20250514">claude-sonnet-4 (Önerilen)</option>
-                <option value="claude-opus-4-20250514">claude-opus-4 (Güçlü)</option>
-                <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 (Hızlı)</option>
+                <option value="claude-opus-5-5">Claude Opus 5.5 (Önerilen)</option>
+                <option value="claude-sonnet-5-5">Claude Sonnet 5.5 (Dengeli)</option>
+                <option value="claude-haiku-5-5">Claude Haiku 5.5 (Hızlı / ekonomik)</option>
               </select>
             </div>
           </div>
@@ -1143,6 +1147,33 @@ python main.py --csv /yol/baska.csv    # Farklı CSV dosyası kullan</div>
 <div class="toast-container" id="toasts"></div>
 
 <script>
+// ── HTTP & GÜVENLİ METİN ───────────────────────────────────────────
+// Sunucu JSON yerine HTML/metin hata sayfası döndürse (401/403/413/500)
+// bile arayüz çökmesin; her çağrı {ok:false, error} biçiminde sonuçlanır.
+async function api(url, opts) {
+  let r;
+  try { r = await fetch(url, opts); }
+  catch (e) { return { ok: false, error: 'Sunucuya ulaşılamadı: ' + e.message }; }
+  const type = r.headers.get('content-type') || '';
+  if (type.includes('application/json')) {
+    try {
+      const data = await r.json();
+      if (!r.ok && data && typeof data === 'object') {
+        if (data.ok === undefined) data.ok = false;
+        if (!data.error) data.error = 'HTTP ' + r.status;
+      }
+      return data;
+    } catch (e) { /* aşağıda metin olarak ele alınır */ }
+  }
+  let text = '';
+  try { text = (await r.text()).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(); } catch (e) {}
+  return { ok: false, error: `HTTP ${r.status}${text ? ': ' + text.slice(0, 200) : ''}` };
+}
+// Sunucudan/CSV'den/SMTP yanıtından gelen metinler HTML olarak yorumlanmasın (XSS).
+function esc(v) {
+  return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
 // ── LOCAL STORAGE ──────────────────────────────────────────────────
 // Yalnızca secret İÇERMEYEN alanlar tarayıcıda saklanır (form doldurma
 // kolaylığı için). Şifre/TOTP/API key sunucu tarafında config.yaml'da
@@ -1219,7 +1250,11 @@ function fillForm(c) {
     set(`${s}_username`, d.username);
     set(`${s}_password`, d.password ? '••••••••' : '');
     set(`${s}_test_address`, d.test_address); set(`${s}_label`, d.label);
-    if (s === 'ems') { set('ems_smtp_use_tls', d.smtp_use_tls); set('ems_imap_use_ssl', d.imap_use_ssl); }
+    if (s === 'ems') {
+      set('ems_smtp_use_tls', d.smtp_use_tls ?? true); set('ems_imap_use_ssl', d.imap_use_ssl ?? true);
+      set('ems_smtp_use_ssl', d.smtp_use_ssl ?? (+d.smtp_port === 465));
+      set('ems_tls_verify', d.tls_verify ?? true); set('ems_tls_ca_file', d.tls_ca_file);
+    }
     if (d.auth_method) {
       authMethods[s] = d.auth_method;
       const card = document.querySelector(`#authGrid-${s} [data-method="${d.auth_method}"]`);
@@ -1230,7 +1265,16 @@ function fillForm(c) {
     if (d.totp_secret) { const el = document.getElementById(`${s}_totp_secret`); if (el) el.placeholder = '(kayıtlı — değiştirmek için girin)'; }
   }
   const a = c.anthropic || {};
-  set('anthropic_api_key', a.api_key ? '••••••••••••' : ''); set('anthropic_model', a.model);
+  set('anthropic_api_key', a.api_key ? '••••••••••••' : '');
+  if (a.model) {
+    // Listede olmayan (eski/özel) model kaybolmasın: seçenek olarak ekle
+    const sel = document.getElementById('anthropic_model');
+    if (sel && ![...sel.options].some(o => o.value === a.model)) {
+      const opt = document.createElement('option'); opt.value = a.model; opt.textContent = a.model + ' (config)';
+      sel.appendChild(opt);
+    }
+    set('anthropic_model', a.model);
+  }
   const t = c.test || {};
   set('test_wait_seconds', t.wait_seconds); set('test_max_retries', t.max_retries);
   set('test_retry_interval', t.retry_interval); set('test_subject_prefix', t.subject_prefix);
@@ -1242,10 +1286,12 @@ async function loadConfig() {
   const cached = lsLoad();
   if (cached) fillForm(cached);
   try {
-    const res = await fetch('/api/config').then(r => r.json());
+    const res = await api('/api/config');
     if (res.ok && res.config) {
       fillForm(res.config);
       lsSave(res.config);
+    } else if (!res.ok) {
+      toast('Config okunamadı: ' + res.error, 'err');
     }
   } catch(e) { /* sunucu yoksa localStorage ile devam et */ }
 }
@@ -1259,6 +1305,8 @@ function buildConfig() {
     cfg[s] = {
       smtp_host: g(`${s}_smtp_host`), smtp_port: +g(`${s}_smtp_port`),
       smtp_use_tls: s === 'ems' ? gb('ems_smtp_use_tls') : true,
+      ...(s === 'ems' ? { smtp_use_ssl: gb('ems_smtp_use_ssl'), tls_verify: gb('ems_tls_verify'),
+                          tls_ca_file: g('ems_tls_ca_file').trim() } : {}),
       imap_host: g(`${s}_imap_host`), imap_port: +g(`${s}_imap_port`),
       imap_use_ssl: s === 'ems' ? gb('ems_imap_use_ssl') : true,
       username: g(`${s}_username`),
@@ -1281,18 +1329,19 @@ function buildConfig() {
     csv_input: g('test_csv_input'),
     report_output: 'reports/test_report.html', results_csv: 'reports/test_results.csv',
   };
-  cfg.logging = { level: 'INFO', file: 'logs/automation.log' };
   return cfg;
 }
 
-async function saveConfig() {
+async function saveConfig(silent=false) {
   const cfg = buildConfigFull();
   lsSave(cfg);
-  const res = await fetch('/api/config', {
+  const res = await api('/api/config', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({config: cfg}),
-  }).then(r => r.json());
-  res.ok ? toast('✅ Konfigürasyon kaydedildi','ok') : toast('Kayıt hatası: '+res.error,'err');
+  });
+  if (res.ok) { if (!silent) toast('✅ Konfigürasyon kaydedildi','ok'); }
+  else toast('Kayıt hatası: '+res.error,'err');
+  return !!res.ok;
 }
 
 async function importConfigFile(input) {
@@ -1301,7 +1350,7 @@ async function importConfigFile(input) {
   const form = new FormData();
   form.append('file', file);
   toast('📂 Config yükleniyor...', 'info');
-  const res = await fetch('/api/config/import', {method:'POST', body: form}).then(r => r.json());
+  const res = await api('/api/config/import', {method:'POST', body: form});
   if (res.ok) {
     toast('✅ Config başarıyla yüklendi', 'ok');
     lsSave(res.config);
@@ -1357,10 +1406,10 @@ function onMfaMethodChange(srv) {
 async function previewTotp(srv) {
   const secret = document.getElementById(`${srv}_totp_secret`)?.value;
   if (!secret) { toast('Secret girin','warn'); return; }
-  const res = await fetch('/api/mfa/totp-preview', {
+  const res = await api('/api/mfa/totp-preview', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({secret}),
-  }).then(r => r.json());
+  });
   const preview = document.getElementById(`totpPreview-${srv}`);
   if (res.ok) {
     preview.style.display = 'block';
@@ -1375,10 +1424,10 @@ async function previewTotp(srv) {
 async function checkSecurity(srv) {
   toast(`🛡 ${srv.toUpperCase()} güvenlik testi...`, 'info');
   const cfg = buildConfigFull();
-  const res = await fetch('/api/config/test-connection', {
+  const res = await api('/api/config/test-connection', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({server: srv, server_config: cfg[srv]}),
-  }).then(r => r.json());
+  });
   const badges = document.getElementById(`secBadges-${srv}`);
   if (res.ok) {
     badges.innerHTML = `
@@ -1398,10 +1447,10 @@ async function checkSecurity(srv) {
 async function testConn(srv) {
   toast(`🔌 ${srv.toUpperCase()} test ediliyor...`, 'info');
   const cfg = buildConfigFull();
-  const res = await fetch('/api/config/test-connection', {
+  const res = await api('/api/config/test-connection', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({server: srv, server_config: cfg[srv]}),
-  }).then(r => r.json());
+  });
   if (res.ok) toast(res.message, 'ok');
   else if (res.needs_mfa) openConnMfaModal(srv, res);
   else toast('❌ ' + res.error, 'err');
@@ -1430,10 +1479,10 @@ async function submitConnMFA() {
   closeConnMfaModal();
   toast(`🔌 ${connMfaServer.toUpperCase()} 2FA ile test ediliyor...`, 'info');
   const cfg = buildConfigFull();
-  const res = await fetch('/api/config/test-connection', {
+  const res = await api('/api/config/test-connection', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({server: connMfaServer, mfa_code: code, server_config: cfg[connMfaServer]}),
-  }).then(r => r.json());
+  });
   res.ok ? toast(res.message, 'ok') : toast('❌ ' + res.error, 'err');
 }
 
@@ -1471,16 +1520,16 @@ function closeMFAModal() {
 async function submitMFA() {
   const code = document.getElementById('mfaCodeInput').value.trim();
   if (!code) { toast('Kod boş olamaz', 'warn'); return; }
-  const res = await fetch('/api/mfa/submit', {
+  const res = await api('/api/mfa/submit', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({code}),
-  }).then(r => r.json());
+  });
   if (res.ok) { closeMFAModal(); toast('✅ Kod gönderildi, devam ediliyor...', 'ok'); }
   else toast('❌ ' + (res.error || 'Hata'), 'err');
 }
 
 async function cancelMFA() {
-  await fetch('/api/mfa/cancel', {method:'POST'});
+  await api('/api/mfa/cancel', {method:'POST'});
   closeMFAModal();
   toast('2FA iptal edildi — test durabilir', 'warn');
 }
@@ -1489,7 +1538,7 @@ async function cancelMFA() {
 function startMFAPoll() {
   clearInterval(mfaPollInterval);
   mfaPollInterval = setInterval(async () => {
-    const res = await fetch('/api/mfa/status').then(r => r.json());
+    const res = await api('/api/mfa/status');
     if (res.pending && !document.getElementById('mfaModal').classList.contains('visible')) {
       openMFAModal(res.challenge);
     }
@@ -1505,7 +1554,7 @@ function stopMFAPoll() { clearInterval(mfaPollInterval); closeMFAModal(); }
 let allCombinations = [];
 
 async function loadCombinations() {
-  const res = await fetch('/api/combinations').then(r => r.json());
+  const res = await api('/api/combinations');
   if (!res.ok) { toast(res.error, 'err'); return; }
   allCombinations = res.combinations;
   renderComboGrid(allCombinations);
@@ -1516,9 +1565,9 @@ function renderComboGrid(combos) {
   document.getElementById('comboGrid').innerHTML = combos.map(c => `
     <div class="combo-card ${selectedCombos.has(c.index)||selectedCombos.has('all')?'selected':''}"
          onclick="toggleCombo(${c.index},this)">
-      <div class="combo-label">🔀 ${c.label}</div>
-      <div class="combo-meta">Alan: <b>${c.receiver_server}</b>/${c.receiver_client}<br>Gönderen: <b>${c.sender_server}</b>/${c.sender_client}</div>
-      <span class="combo-badge">${c.step_count} adım</span>
+      <div class="combo-label">🔀 ${esc(c.label)}</div>
+      <div class="combo-meta">Alan: <b>${esc(c.receiver_server)}</b>/${esc(c.receiver_client)}<br>Gönderen: <b>${esc(c.sender_server)}</b>/${esc(c.sender_client)}</div>
+      <span class="combo-badge">${esc(c.step_count)} adım</span>
     </div>`).join('');
 }
 
@@ -1529,10 +1578,10 @@ function renderDashCombos(combos) {
     <thead><tr><th>#</th><th>Kombinasyon</th><th>Alan</th><th>Gönderen</th><th>Adım</th></tr></thead>
     <tbody>${combos.map(c => `<tr>
       <td style="color:var(--muted);font-family:var(--mono)">${c.index+1}</td>
-      <td>${c.label}</td>
-      <td style="font-family:var(--mono);font-size:12px">${c.receiver_server}/${c.receiver_client}</td>
-      <td style="font-family:var(--mono);font-size:12px">${c.sender_server}/${c.sender_client}</td>
-      <td style="font-family:var(--mono);color:var(--accent)">${c.step_count}</td>
+      <td>${esc(c.label)}</td>
+      <td style="font-family:var(--mono);font-size:12px">${esc(c.receiver_server)}/${esc(c.receiver_client)}</td>
+      <td style="font-family:var(--mono);font-size:12px">${esc(c.sender_server)}/${esc(c.sender_client)}</td>
+      <td style="font-family:var(--mono);color:var(--accent)">${esc(c.step_count)}</td>
     </tr>`).join('')}</tbody></table>`;
   document.getElementById('st-combos').textContent = combos.length;
 }
@@ -1550,12 +1599,14 @@ document.querySelectorAll('.pill:not(.disabled)').forEach(p => {
 
 // ── RUNNER ─────────────────────────────────────────────────────────
 async function startRun() {
-  const body = { dry_run: document.getElementById('runMode').value === 'dry_run', config: buildConfigFull() };
-  if (!selectedCombos.has('all') && selectedCombos.size > 0) body.combo = [...selectedCombos][0];
+  // Formdaki kaydedilmemiş değişiklikler de koşuya yansısın: önce kaydet.
+  if (!(await saveConfig(true))) return;
+  const body = { dry_run: document.getElementById('runMode').value === 'dry_run' };
+  if (!selectedCombos.has('all') && selectedCombos.size > 0) body.combo = [...selectedCombos].sort((a,b)=>a-b);
   if (selectedScenario !== 'all') body.scenario = selectedScenario;
-  const res = await fetch('/api/run/start', {
+  const res = await api('/api/run/start', {
     method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body),
-  }).then(r => r.json());
+  });
   if (!res.ok) { toast('❌ '+res.error,'err'); return; }
   toast('▶ Test başlatıldı', 'ok');
   setRunningUI(true);
@@ -1566,16 +1617,17 @@ async function startRun() {
 }
 
 async function stopRun() {
-  await fetch('/api/run/stop', {method:'POST'});
-  toast('■ Durduruldu', 'info');
+  const res = await api('/api/run/stop', {method:'POST'});
+  toast(res.ok ? '■ Durduruldu' : ('■ ' + (res.error || 'Durdurulamadı')), 'info');
   setRunningUI(false); stopMFAPoll();
 }
 
 async function quickRun() {
-  const res = await fetch('/api/run/start', {
+  if (!(await saveConfig(true))) return;
+  const res = await api('/api/run/start', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({config: buildConfigFull()}),
-  }).then(r => r.json());
+    body: JSON.stringify({}),
+  });
   if (!res.ok) { toast('❌ '+res.error,'err'); return; }
   toast('▶ Tüm testler başlatıldı', 'ok');
   setRunningUI(true); startLogStream(); startStatusPoll(); startMFAPoll();
@@ -1604,11 +1656,11 @@ function animateProgress() {
   }, 800);
 }
 
-function finishProgress(ok) {
+function finishProgress(ok, label) {
   clearInterval(progressAnim);
   const fill = document.getElementById('progressFill');
-  fill.style.width='100%'; fill.style.background = ok ? 'var(--accent2)' : 'var(--danger)';
-  document.getElementById('runProgressLabel').textContent = ok ? '✅ Tamamlandı' : '❌ Hata ile sonlandı';
+  fill.style.width='100%'; fill.style.background = ok ? 'var(--accent2)' : (label ? 'var(--warn)' : 'var(--danger)');
+  document.getElementById('runProgressLabel').textContent = label || (ok ? '✅ Tamamlandı' : '❌ Hata ile sonlandı');
 }
 
 // ── LOGS ───────────────────────────────────────────────────────────
@@ -1618,7 +1670,7 @@ function startLogStream() {
   logOffset = 0;
   logPollInterval = setInterval(async () => {
     try {
-      const res = await fetch(`/api/run/logs?offset=${logOffset}`).then(r => r.json());
+      const res = await api(`/api/run/logs?offset=${logOffset}`);
       if (res.lines && res.lines.length > 0) {
         res.lines.forEach(line => appendLog(line));
         logOffset = res.next_offset;
@@ -1656,11 +1708,20 @@ function toggleAutoScroll() { autoScroll=!autoScroll; document.getElementById('a
 function startStatusPoll() {
   clearInterval(pollInterval);
   pollInterval = setInterval(async () => {
-    const res = await fetch('/api/run/status').then(r => r.json());
-    if (!res.running) {
+    const res = await api('/api/run/status');
+    if (res.running === false) {
       clearInterval(pollInterval); setRunningUI(false); stopMFAPoll();
-      finishProgress(res.exit_code === 0);
-      res.exit_code === 0 ? toast('✅ Test tamamlandı','ok') : toast(`⚠️ Test bitti (kod: ${res.exit_code})`,'err');
+      if (res.stopped) {
+        finishProgress(false, '■ Kullanıcı tarafından durduruldu');
+        toast('■ Test durduruldu', 'info');
+      } else {
+        // main.py çıkış kodları: 0 hepsi PASS · 2 tamamlandı ama FAIL var ·
+        // 130 durduruldu (kısmi rapor) · 1 araç/config hatası
+        if (res.exit_code === 0) { finishProgress(true); toast('✅ Test tamamlandı — tüm senaryolar başarılı','ok'); }
+        else if (res.exit_code === 2) { finishProgress(false, '⚠️ Tamamlandı — başarısız senaryolar var'); toast('⚠️ Test tamamlandı: başarısız senaryolar var (Sonuçlar sekmesi)','err'); }
+        else if (res.exit_code === 130) { finishProgress(false, '■ Durduruldu — kısmi rapor yazıldı'); toast('■ Test durduruldu, kısmi rapor yazıldı','info'); }
+        else { finishProgress(false); toast(`❌ Test hata ile sonlandı (kod: ${res.exit_code}) — Canlı Loglar'a bakın`,'err'); }
+      }
       loadResults();
     }
   }, 2000);
@@ -1668,7 +1729,7 @@ function startStatusPoll() {
 
 // ── RESULTS ────────────────────────────────────────────────────────
 async function loadResults() {
-  const res = await fetch('/api/results/latest').then(r => r.json());
+  const res = await api('/api/results/latest');
   const tbody = document.getElementById('resultsBody');
   if (!res.ok) { tbody.innerHTML='<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:32px">Henüz sonuç yok.</td></tr>'; return; }
   const rows=res.results, total=rows.length, pass=rows.filter(r=>r['Sonuç']==='PASS').length;
@@ -1686,11 +1747,11 @@ async function loadResults() {
     const confColor = conf==='HIGH'?'accent2':conf==='MEDIUM'?'warn':'danger';
     return `<tr>
       <td>${ok?'<span class="badge-pass">PASS</span>':'<span class="badge-fail">FAIL</span>'}</td>
-      <td style="font-size:12px;font-family:var(--mono)">${r['Kombinasyon']||''}</td>
-      <td>${r['Senaryo Tipi']||''}</td>
-      <td><span style="font-family:var(--mono);font-size:11px;color:var(--${confColor})">${conf}</span></td>
-      <td style="font-size:12px;color:var(--muted)">${(r['Özet']||'').slice(0,80)}</td>
-      <td style="font-size:11px;font-family:var(--mono);color:var(--muted)">${r['Test Zamanı']||''}</td>
+      <td style="font-size:12px;font-family:var(--mono)">${esc(r['Kombinasyon'])}</td>
+      <td>${esc(r['Senaryo Tipi'])}</td>
+      <td><span style="font-family:var(--mono);font-size:11px;color:var(--${confColor})">${esc(conf)}</span></td>
+      <td style="font-size:12px;color:var(--muted)" title="${esc(r['Özet'])}">${esc((r['Özet']||'').slice(0,80))}</td>
+      <td style="font-size:11px;font-family:var(--mono);color:var(--muted)">${esc(r['Test Zamanı'])}</td>
     </tr>`;
   }).join('');
   renderDashResults(rows.slice(0,5));
@@ -1702,22 +1763,22 @@ function renderDashResults(rows) {
     <thead><tr><th>Sonuç</th><th>Kombinasyon</th><th>Senaryo</th><th>Özet</th></tr></thead>
     <tbody>${rows.map(r=>`<tr>
       <td>${r['Sonuç']==='PASS'?'<span class="badge-pass">PASS</span>':'<span class="badge-fail">FAIL</span>'}</td>
-      <td style="font-size:12px;font-family:var(--mono)">${r['Kombinasyon']||''}</td>
-      <td style="font-size:12px">${r['Senaryo Tipi']||''}</td>
-      <td style="font-size:12px;color:var(--muted)">${(r['Özet']||'').slice(0,60)}</td>
+      <td style="font-size:12px;font-family:var(--mono)">${esc(r['Kombinasyon'])}</td>
+      <td style="font-size:12px">${esc(r['Senaryo Tipi'])}</td>
+      <td style="font-size:12px;color:var(--muted)">${esc((r['Özet']||'').slice(0,60))}</td>
     </tr>`).join('')}</tbody></table>`;
 }
 
 // ── REPORTS ────────────────────────────────────────────────────────
 async function loadReports() {
-  const res = await fetch('/api/reports').then(r=>r.json());
+  const res = await api('/api/reports');
   const list = document.getElementById('reportList');
-  if (!res.reports.length) { list.innerHTML='<div style="color:var(--muted);font-size:13px">Henüz rapor yok.</div>'; return; }
+  if (!res.ok || !res.reports || !res.reports.length) { list.innerHTML='<div style="color:var(--muted);font-size:13px">Henüz rapor yok.</div>'; return; }
   list.innerHTML = res.reports.map(r=>`<div class="report-item">
-    <div><div class="report-name">${r.name}</div><div class="report-meta">${r.mtime} · ${(r.size/1024).toFixed(1)} KB · ${r.type.toUpperCase()}</div></div>
+    <div><div class="report-name">${esc(r.name)}</div><div class="report-meta">${esc(r.mtime)} · ${(r.size/1024).toFixed(1)} KB · ${esc(String(r.type).toUpperCase())}</div></div>
     <div style="display:flex;gap:8px">
-      ${r.type==='html'?`<button class="btn btn-ghost btn-sm" onclick="openReport('${r.name}')">👁 Görüntüle</button>`:''}
-      <a class="btn btn-ghost btn-sm" href="/api/reports/${r.name}" download>⬇ İndir</a>
+      ${r.type==='html'?`<button class="btn btn-ghost btn-sm" data-name="${esc(r.name)}" onclick="openReport(this.dataset.name)">👁 Görüntüle</button>`:''}
+      <a class="btn btn-ghost btn-sm" href="/api/reports/${encodeURIComponent(r.name)}" download>⬇ İndir</a>
     </div>
   </div>`).join('');
 }
@@ -1725,7 +1786,7 @@ async function loadReports() {
 function openReport(name) {
   document.getElementById('reportViewer').style.display='block';
   document.getElementById('reportViewerTitle').textContent=name;
-  document.getElementById('reportFrame').src='/api/reports/'+name;
+  document.getElementById('reportFrame').src='/api/reports/'+encodeURIComponent(name);
   document.getElementById('reportViewer').scrollIntoView({behavior:'smooth'});
 }
 function closeReport() { document.getElementById('reportViewer').style.display='none'; document.getElementById('reportFrame').src=''; }
@@ -1733,7 +1794,8 @@ function closeReport() { document.getElementById('reportViewer').style.display='
 // ── TOAST ──────────────────────────────────────────────────────────
 function toast(msg, type='info') {
   const el = document.createElement('div');
-  el.className = `toast ${type}`; el.innerHTML = `<span>${msg}</span>`;
+  el.className = `toast ${type}`;
+  const span = document.createElement('span'); span.textContent = msg; el.appendChild(span);
   document.getElementById('toasts').appendChild(el);
   setTimeout(()=>el.remove(), 4500);
 }

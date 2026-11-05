@@ -16,6 +16,7 @@ haberleşir (challenge.json → modal, response.json → kod).
 """
 
 import json
+import os
 import threading
 import time
 import logging
@@ -30,7 +31,11 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 # Flask süreci ile main.py subprocess'inin ortak kullandığı köprü dizini.
-DEFAULT_BRIDGE_DIR = Path(__file__).parent / "logs" / "mfa_bridge"
+# app.py çözümlediği veri dizinini DATA_DIR olarak alt sürece aktarır; böylece
+# repo kökü yazılamayan konteynerlerde de iki süreç aynı dizini görür.
+DEFAULT_BRIDGE_DIR = (
+    Path(os.environ["DATA_DIR"]) if os.environ.get("DATA_DIR") else Path(__file__).parent
+) / "logs" / "mfa_bridge"
 
 # Aynı sunucu için kısa süre içinde tekrar kod istenirse (ör. IMAP polling
 # yeniden bağlanmaları) kullanıcıyı tekrar rahatsız etmemek için önbellek süresi.

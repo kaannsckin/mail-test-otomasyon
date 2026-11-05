@@ -30,7 +30,7 @@ def _response(status: int) -> httpx.Response:
 
 def _analyze_with(error: Exception, received_msg, combination_meta) -> dict:
     client = MagicMock()
-    client.messages.create.side_effect = error
+    client.beta.messages.create.side_effect = error
     with patch("analyzer.anthropic.Anthropic", return_value=client):
         analyzer = MailAnalyzer("sk-ant-test")
         return analyzer.analyze("plain_text", {"msg_id": "<a@b>"}, received_msg, combination_meta)
@@ -76,7 +76,7 @@ class TestClaudeApiErrors:
         resp = MagicMock()
         resp.stop_reason = "refusal"
         client = MagicMock()
-        client.messages.create.return_value = resp
+        client.beta.messages.create.return_value = resp
         with patch("analyzer.anthropic.Anthropic", return_value=client):
             result = MailAnalyzer("sk-ant-test").analyze(
                 "plain_text", {}, received_msg, combination_meta)
@@ -86,8 +86,8 @@ class TestClaudeApiErrors:
     def test_sdk_configured_with_retries(self):
         with patch("analyzer.anthropic.Anthropic") as cls:
             MailAnalyzer("sk-ant-test")
-        assert cls.call_args.kwargs["max_retries"] == 3
-        assert cls.call_args.kwargs["timeout"] == 60.0
+        assert cls.call_args.kwargs["max_retries"] == 2
+        assert cls.call_args.kwargs["timeout"] == 120.0
 
 
 class TestGeminiApiErrors:

@@ -14,31 +14,96 @@ import re
 from typing import Optional
 
 import anthropic
-import httpx  # anthropic SDK'nın bağımlılığı — ek paket gerektirmez
+import httpx  # Gemini REST çağrısı için (requirements.txt'te açıkça listeli)
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "claude-opus-4-8"
+DEFAULT_MODEL = "claude-opus-5-5"
+DEFAULT_EFFORT = "medium"
 DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+
+# Güncel Claude modellerinde düşünme (thinking) her zaman açıktır ve max_tokens
+# bütçesinden pay alır; 2000 gibi düşük bir sınır yanıtı JSON'un ortasında
+# keserdi. 16000, akışsız (non-streaming) isteklerin önerilen üst sınırıdır.
+CLAUDE_MAX_TOKENS = 16000
+# Sınıflandırıcı bir isteği reddederse API aynı isteği uygun modelde yeniden
+# çalıştırır ("default" = Anthropic'in kategoriye göre önerdiği model).
+FALLBACK_BETA = "server-side-fallback-2026-07-01"
+
+# Analiz kararının şeması: yapılandırılmış çıktı (output_config.format) ile
+# model geçerli JSON döndürmeye zorlanır; yanıt yine de doğrulanır.
+VERDICT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "passed": {"type": "boolean"},
+        "confidence": {"type": "string", "enum": ["HIGH", "MEDIUM", "LOW"]},
+        "checks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "passed": {"type": "boolean"},
+                    "detail": {"type": "string"},
+                },
+                "required": ["name", "passed", "detail"],
+                "additionalProperties": False,
+            },
+        },
+        "summary": {"type": "string"},
+        "issues": {"type": "array", "items": {"type": "string"}},
+        "recommendations": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["passed", "confidence", "checks", "summary", "issues", "recommendations"],
+    "additionalProperties": False,
+}
+
+
+def _json_default(value):
+    """json.dumps'ın bilmediği tipler (ör. ek dosyasının ilk baytları) prompt'u
+    çökertmesin — eskiden her ekli senaryo burada TypeError ile düşüyordu."""
+    if isinstance(value, (bytes, bytearray)):
+        return f"<{len(value)} bayt ikili veri>"
+    return str(value)
+
+
+def _dumps(value) -> str:
+    return json.dumps(value, ensure_ascii=False, indent=2, default=_json_default)
+
+
+def _failure(summary: str, issue: str, check_name: str = "Analiz") -> dict:
+    return {
+        "passed": False,
+        "confidence": "LOW",
+        "checks": [{"name": check_name, "passed": False, "detail": issue}],
+        "summary": summary,
+        "issues": [issue],
+        "recommendations": [],
+    }
 
 
 class MailAnalyzer:
     def __init__(self, api_key: str, model: Optional[str] = None,
-                 provider: str = "claude"):
+                 provider: str = "claude", effort: Optional[str] = None):
         self.provider = (provider or "claude").lower().strip()
         if self.provider not in ("claude", "gemini"):
             raise ValueError(
                 f"Bilinmeyen provider: {provider}. 'claude' veya 'gemini' kullanın."
             )
-        self.api_key = api_key
+        self.api_key = str(api_key or "")
+        self.effort = (effort or DEFAULT_EFFORT).lower().strip()
+        # Yapılandırılmış çıktı / fallback / effort'u desteklemeyen eski bir
+        # model seçilmişse ilk 400'den sonra sade isteğe geçilir (yapışkan).
+        self._enhanced = True
         if self.provider == "gemini":
             self.model = model or DEFAULT_GEMINI_MODEL
             self.client = None
         else:
             self.model = model or DEFAULT_MODEL
-            # SDK 429/5xx hatalarında otomatik exponential backoff ile yeniden dener.
-            self.client = anthropic.Anthropic(api_key=api_key, max_retries=3, timeout=60.0)
+            # SDK 408/409/429/5xx ve bağlantı hatalarında exponential backoff ile
+            # yeniden dener. Düşünen modeller için 120 sn; en kötü durum ~6 dk.
+            self.client = anthropic.Anthropic(api_key=self.api_key, max_retries=2, timeout=120.0)
 
     def analyze(self, scenario_type: str, send_meta: dict,
                 received_msg: Optional[dict], combination: dict) -> dict:
@@ -74,12 +139,11 @@ class MailAnalyzer:
             f"Alan İstemci: {combination['receiver_client']}"
         )
 
-        headers_str = json.dumps(received_msg["headers"], ensure_ascii=False, indent=2)
-        parts_str = json.dumps(received_msg["parts"][:5], ensure_ascii=False, indent=2)
-        attachments_str = json.dumps(received_msg["attachments"], ensure_ascii=False, indent=2)
-        inline_str = json.dumps(received_msg["inline_images"], ensure_ascii=False, indent=2)
-        send_meta_str = json.dumps({k: v for k, v in send_meta.items() if k != "raw_bytes"},
-                                   ensure_ascii=False, indent=2)
+        headers_str = _dumps(received_msg.get("headers", {}))
+        parts_str = _dumps(received_msg.get("parts", [])[:5])
+        attachments_str = _dumps(received_msg.get("attachments", []))
+        inline_str = _dumps(received_msg.get("inline_images", []))
+        send_meta_str = _dumps({k: v for k, v in send_meta.items() if k != "raw_bytes"})
 
         scenario_checks = {
             "plain_text": """
@@ -253,27 +317,60 @@ Sadece JSON döndür, markdown veya açıklama ekleme."""
     # ------------------------------------------------------------------ #
     #  Claude API çağrısı
     # ------------------------------------------------------------------ #
+    def _claude_request(self, prompt: str):
+        kwargs = {
+            "model": self.model,
+            "max_tokens": CLAUDE_MAX_TOKENS,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if not self._enhanced:
+            return self.client.messages.create(**kwargs)
+        return self.client.beta.messages.create(
+            **kwargs,
+            output_config={
+                "effort": self.effort,
+                "format": {"type": "json_schema", "schema": VERDICT_SCHEMA},
+            },
+            betas=[FALLBACK_BETA],
+            fallbacks="default",
+        )
+
     def _call_claude(self, prompt: str) -> str:
         try:
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=2000,
-                messages=[{"role": "user", "content": prompt}],
-            )
+            try:
+                response = self._claude_request(prompt)
+            except anthropic.BadRequestError as e:
+                if not self._enhanced:
+                    raise
+                # Seçilen model yapılandırılmış çıktı/effort/fallback'i
+                # desteklemiyor olabilir (eski model) — sade istekle tekrar dene.
+                logger.warning(
+                    f"Model ({self.model}) gelişmiş istek parametrelerini reddetti, "
+                    f"sade istekle devam ediliyor: {e}")
+                self._enhanced = False
+                response = self._claude_request(prompt)
+
             if response.stop_reason == "refusal":
-                return json.dumps({
-                    "passed": False,
-                    "confidence": "LOW",
-                    "checks": [],
-                    "summary": "Claude analizi reddetti (refusal).",
-                    "issues": ["stop_reason=refusal"],
-                    "recommendations": ["Mesaj içeriğini kontrol edin"],
-                })
-            text = next((b.text for b in response.content if b.type == "text"), "")
+                return json.dumps(_failure(
+                    "Claude analizi reddetti (refusal).", "stop_reason=refusal",
+                    check_name="LLM Analizi"))
+            text = next((b.text for b in response.content
+                         if getattr(b, "type", None) == "text"), "")
+            if response.stop_reason == "max_tokens":
+                logger.error("Claude yanıtı max_tokens sınırında kesildi.")
+                return json.dumps(_failure(
+                    "Analiz yanıtı token sınırında kesildi.", "stop_reason=max_tokens",
+                    check_name="LLM Analizi"))
             return text
         except anthropic.AuthenticationError as e:
             error_msg = "API key geçersiz — Konfigürasyon sayfasından güncelleyin."
             exc: Exception = e
+        except anthropic.PermissionDeniedError as e:
+            error_msg = "API key'in bu modele/özelliğe erişim izni yok."
+            exc = e
+        except anthropic.NotFoundError as e:
+            error_msg = f"Model bulunamadı: {self.model} — Konfigürasyondan güncel bir model seçin."
+            exc = e
         except anthropic.RateLimitError as e:
             error_msg = "Claude API rate limit aşıldı — daha sonra tekrar deneyin."
             exc = e
@@ -283,16 +380,13 @@ Sadece JSON döndür, markdown veya açıklama ekleme."""
         except anthropic.APIConnectionError as e:
             error_msg = "Claude API'ye bağlanılamadı — ağ bağlantısını kontrol edin."
             exc = e
+        except Exception as e:  # noqa: BLE001 — bozuk yanıt gövdesi vb. koşuyu düşürmesin
+            error_msg = f"Beklenmeyen API yanıtı ({type(e).__name__})."
+            exc = e
 
         logger.error(f"Claude API hatası: {exc}")
-        return json.dumps({
-            "passed": False,
-            "confidence": "LOW",
-            "checks": [],
-            "summary": f"Claude API erişim hatası: {error_msg}",
-            "issues": [str(exc)],
-            "recommendations": [],
-        })
+        return json.dumps(_failure(f"Claude API erişim hatası: {error_msg}", str(exc),
+                                   check_name="LLM Analizi"))
 
     # ------------------------------------------------------------------ #
     #  Gemini API çağrısı (REST)
@@ -301,7 +395,8 @@ Sadece JSON döndür, markdown veya açıklama ekleme."""
         url = f"{GEMINI_API_BASE}/{self.model}:generateContent"
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"maxOutputTokens": 2000},
+            "generationConfig": {"maxOutputTokens": 8192,
+                                 "responseMimeType": "application/json"},
         }
         try:
             resp = httpx.post(
@@ -327,21 +422,97 @@ Sadece JSON döndür, markdown veya açıklama ekleme."""
     # ------------------------------------------------------------------ #
     #  Response parser
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def _extract_json(text: str):
+        """Yanıttaki ilk geçerli JSON nesnesini döndürür.
+
+        Önce tamamı denenir; olmazsa her '{' konumundan raw_decode ile
+        okunur — böylece JSON'dan sonra gelen ve '}' içeren açıklama metni
+        (eski açgözlü regex'i bozan durum) ya da markdown çiti sorun olmaz.
+        """
+        text = (text or "").strip()
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        decoder = json.JSONDecoder()
+        for match in re.finditer(r"\{", text):
+            try:
+                obj, _ = decoder.raw_decode(text, match.start())
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict):
+                return obj
+        raise ValueError("JSON bulunamadı")
+
+    @staticmethod
+    def _as_bool(value) -> Optional[bool]:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str) and value.strip().lower() in ("true", "false"):
+            return value.strip().lower() == "true"
+        return None
+
+    def _normalize_verdict(self, data: dict) -> dict:
+        """LLM kararını doğrular; şüpheli her durum FAIL/LOW'a düşer.
+
+        Eskiden "passed": "false" (metin) PASS sayılıyor, passed anahtarı
+        olmayan yanıt "atlandı" sayılıp başarı oranından düşülüyor, checks
+        metin gelince rapor üretimi çöküyordu.
+        """
+        notes = []
+        passed = self._as_bool(data.get("passed"))
+        if passed is None:
+            notes.append(f"Analiz yanıtında geçerli 'passed' değeri yok: {data.get('passed')!r}")
+            passed = False
+
+        confidence = str(data.get("confidence") or "").upper()
+        if confidence not in ("HIGH", "MEDIUM", "LOW"):
+            confidence = "LOW"
+
+        raw_checks = data.get("checks", [])
+        checks = []
+        if isinstance(raw_checks, list):
+            for item in raw_checks:
+                if isinstance(item, dict):
+                    ok = self._as_bool(item.get("passed"))
+                    checks.append({"name": str(item.get("name") or "Kontrol"),
+                                   "passed": bool(ok),
+                                   "detail": str(item.get("detail") or "")})
+                else:
+                    checks.append({"name": str(item), "passed": False, "detail": ""})
+        elif raw_checks:
+            notes.append("Analiz yanıtında 'checks' liste değil")
+
+        def _str_list(value):
+            if isinstance(value, list):
+                return [str(v) for v in value if v not in (None, "")]
+            return [str(value)] if value not in (None, "") else []
+
+        issues = _str_list(data.get("issues")) + notes
+        if notes:
+            confidence = "LOW"
+        return {
+            "passed": passed,
+            "confidence": confidence,
+            "checks": checks,
+            "summary": str(data.get("summary") or ("Analiz yanıtı eksik." if notes else "")),
+            "issues": issues,
+            "recommendations": _str_list(data.get("recommendations")),
+        }
+
     def _parse_response(self, response: str, scenario_type: str) -> dict:
         try:
-            # JSON blok varsa çıkar
-            match = re.search(r'\{.*\}', response, re.DOTALL)
-            if match:
-                return json.loads(match.group())
-            return json.loads(response)
-        except json.JSONDecodeError:
-            logger.error(f"Claude yanıtı parse edilemedi: {response[:200]}")
+            data = self._extract_json(response)
+        except ValueError:
+            logger.error(f"LLM yanıtı parse edilemedi: {str(response)[:200]}")
             return {
                 "passed": False,
                 "confidence": "LOW",
                 "checks": [{"name": "Parse Hatası", "passed": False,
-                             "detail": "Claude yanıtı JSON olarak okunamadı"}],
+                             "detail": "LLM yanıtı JSON olarak okunamadı"}],
                 "summary": "Analiz yanıtı işlenemedi.",
                 "issues": ["JSON parse hatası"],
                 "recommendations": [],
             }
+        return self._normalize_verdict(data)

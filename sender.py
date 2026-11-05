@@ -21,6 +21,7 @@ from email.utils import formatdate, make_msgid
 from typing import Optional
 
 from auth_manager import generate_totp, mfa_manager
+from mail_transport import smtp_connect
 
 logger = logging.getLogger(__name__)
 
@@ -119,17 +120,27 @@ def _detect_scripts(text: str) -> list[str]:
     ]
 
 
+def _mime_filename(name: str):
+    """ASCII ad olduğu gibi; ASCII dışı ad RFC 2231 üçlüsü olarak döner."""
+    try:
+        name.encode("ascii")
+        return name
+    except UnicodeEncodeError:
+        return ("utf-8", "", name)
+
+
 class MailSender:
     def __init__(self, server_config: dict):
         self.config = server_config
         self.host = server_config["smtp_host"]
         self.port = server_config["smtp_port"]
         self.use_tls = server_config.get("smtp_use_tls", True)
-        self.username = server_config["username"]
-        self.password = server_config["password"]
+        # YAML'da 'password: 123456' int olarak okunur; smtplib str ister.
+        self.username = str(server_config.get("username") or "")
+        self.password = str(server_config.get("password") or "")
         self.from_address = server_config["test_address"]
         self.auth_method = server_config.get("auth_method", "password")
-        self.totp_secret = server_config.get("totp_secret", "")
+        self.totp_secret = str(server_config.get("totp_secret") or "")
 
     def _login(self, smtp: smtplib.SMTP):
         """auth_method'a göre giriş yapar; TOTP secret varsa kodu otomatik üretir.
@@ -157,12 +168,17 @@ class MailSender:
         smtp.login(self.username, self.password)
 
     def _connect(self) -> smtplib.SMTP:
-        smtp = smtplib.SMTP(self.host, self.port, timeout=30)
-        smtp.ehlo()
-        if self.use_tls:
-            smtp.starttls(context=ssl.create_default_context())
-            smtp.ehlo()
-        self._login(smtp)
+        # TLS modu (465 SSL / STARTTLS / düz), iç CA ve doğrulama ayarları
+        # mail_transport'ta — web arayüzünün bağlantı testi de aynı kodu kullanır.
+        smtp = smtp_connect(self.config, timeout=30)
+        try:
+            self._login(smtp)
+        except Exception:
+            try:
+                smtp.close()
+            except Exception:
+                pass
+            raise
         logger.debug(f"SMTP bağlantısı kuruldu: {self.host}:{self.port}")
         return smtp
 
@@ -215,10 +231,17 @@ class MailSender:
                 part = MIMEBase("application", "octet-stream")
                 part.set_payload(f.read())
             encoders.encode_base64(part)
-            part.add_header("Content-Disposition", f'attachment; filename="{filename}"')
             part.replace_header("Content-Type", self._guess_mime(filename))
+            # Türkçe/ASCII dışı dosya adı RFC 2231 (filename*=utf-8'') ile
+            # kodlanır; eskiden tüm başlık tek bir encoded-word'e dönüşüyor ve
+            # istemciler eki göremiyordu.
+            part.set_param("name", _mime_filename(filename))
+            part.add_header("Content-Disposition", "attachment", filename=_mime_filename(filename))
             msg.attach(part)
             attached_files.append({"name": filename, "size": os.path.getsize(p)})
+
+        if not attached_files:
+            logger.warning("Hiçbir ek dosya bulunamadı — mesaj eksiz gidiyor; analiz bunu FAIL sayacak.")
 
         sent_at = self._send(msg, to_address)
         names = ", ".join(a["name"] for a in attached_files)

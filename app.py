@@ -3,18 +3,27 @@ app.py — Mail Otomasyon Web Arayüzü (Flask)
 Çalıştır: python app.py  →  http://localhost:5000 (boşsa) / otomatik alternatif port
 """
 
-import csv, hmac, json, logging, os, queue, socket, subprocess, sys, threading, time
+import csv, errno, hmac, ipaddress, json, logging, os, queue, signal, socket, subprocess, sys, threading, time, uuid
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import yaml
 from flask import Flask, Response, jsonify, render_template, request, send_file, send_from_directory
-from auth_manager import mfa_manager, generate_totp, totp_remaining_seconds
+
+# Türkçe Windows konsolu (cp1254) emoji içeren print'lerde çökmesin.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(errors="replace")
+    except (AttributeError, ValueError):
+        pass
 
 BASE_DIR = Path(__file__).parent
 
 app = Flask(__name__, template_folder=str(BASE_DIR / "templates"))
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0  # tarayıcı bayat JS/CSS önbelleklemesin
+# Config içe aktarma ve JSON gövdeleri için üst sınır (aşılırsa 413).
+app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
 
 
 def _writable_dir(path: Path) -> bool:
@@ -61,14 +70,35 @@ REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 print(f"📁 Veri dizini: {DATA_DIR}")
 
+# main.py alt süreci ve MFA köprüsü aynı veri dizinini kullansın
+# (çözümlenmiş değer: DATA_DIR yazılamadığı için /tmp'ye düşülmüş olabilir).
+os.environ["DATA_DIR"] = str(DATA_DIR)
+from auth_manager import mfa_manager, generate_totp, totp_remaining_seconds  # noqa: E402
+
 run_state = {
     "running": False,
     "process": None,
+    "run_id": None,
+    "stopped": False,
     "log_queue": queue.Queue(),
     "started_at": None,
     "finished_at": None,
     "exit_code": None,
 }
+# start/stop/bitiş geçişleri tek kilit altında — çift tıklama veya
+# stop→start yarışında iki koşu aynı anda başlayamasın.
+_run_lock = threading.Lock()
+RUN_PID_FILE = LOGS_DIR / "run.pid"
+
+SUPPORTED_SCENARIO_KEYS = None  # csv_parser'dan tembel yüklenir
+
+
+def _supported_scenarios() -> set:
+    global SUPPORTED_SCENARIO_KEYS
+    if SUPPORTED_SCENARIO_KEYS is None:
+        from csv_parser import SUPPORTED_SCENARIOS
+        SUPPORTED_SCENARIO_KEYS = set(SUPPORTED_SCENARIOS)
+    return SUPPORTED_SCENARIO_KEYS
 
 # ── PLATFORM ────────────────────────────────────────────────────
 def _is_serverless() -> bool:
@@ -87,29 +117,165 @@ def _default_host() -> str:
     return "127.0.0.1"
 
 
-# ── AUTH (opsiyonel) ───────────────────────────────────────────
+# ── AUTH & İSTEK GÜVENLİĞİ ─────────────────────────────────────
 # UI_PASSWORD ayarlanırsa tüm istekler HTTP Basic Auth gerektirir.
-# Ayarlanmazsa mevcut davranış korunur (yalnızca localhost'ta kullan).
+# Ayarlanmazsa arayüz YALNIZCA bu makineden (loopback) kullanılabilir;
+# ağdan/PaaS proxy'sinden gelen istekler reddedilir. Bilinçli olarak
+# parolasız ağ erişimi isteyenler ALLOW_NO_AUTH=1 ayarlayabilir.
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+_LOOPBACK_HOSTNAMES = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes")
+
+
+def _is_loopback_addr(addr: str) -> bool:
+    try:
+        return ipaddress.ip_address((addr or "").split("%")[0]).is_loopback
+    except ValueError:
+        return False
+
+
+def _hostname_of(netloc: str) -> str:
+    """'host:port' / '[::1]:5000' → 'host' / '::1' (küçük harf)."""
+    try:
+        return (urlsplit("//" + (netloc or "")).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def _secure_equals(given: str, expected: str) -> bool:
+    # compare_digest str ile yalnızca ASCII kabul eder; Türkçe karakterli
+    # parolada TypeError → 500 olmasın diye bayt karşılaştırılır.
+    return hmac.compare_digest((given or "").encode("utf-8"), (expected or "").encode("utf-8"))
+
+
+def _cross_site_request() -> bool:
+    """Durum değiştiren istek başka bir siteden mi geliyor? (CSRF)"""
+    if request.headers.get("Sec-Fetch-Site", "").lower() == "cross-site":
+        return True
+    origin = request.headers.get("Origin")
+    if origin is None:
+        return False  # tarayıcı dışı istemci (curl, testler) — Origin göndermez
+    if origin == "null":
+        return True   # sandbox iframe / file:// sayfası
+    try:
+        return urlsplit(origin).netloc.lower() != (request.host or "").lower()
+    except ValueError:
+        return True
+
+
 @app.before_request
-def _require_basic_auth():
+def _security_gate():
     if request.path == "/api/health":
         return None  # platform healthcheck'leri kimlik bilgisi gönderemez
+
     password = os.environ.get("UI_PASSWORD", "")
-    if not password:
-        return None
-    username = os.environ.get("UI_USERNAME", "admin")
-    auth = request.authorization
-    if (auth and auth.type == "basic"
-            and hmac.compare_digest(auth.username or "", username)
-            and hmac.compare_digest(auth.password or "", password)):
-        return None
-    return Response(
-        "Kimlik doğrulama gerekli", 401,
-        {"WWW-Authenticate": 'Basic realm="Mail Otomasyon"'},
-    )
+    if password:
+        username = os.environ.get("UI_USERNAME", "admin")
+        auth = request.authorization
+        if not (auth and auth.type == "basic"
+                and _secure_equals(auth.username, username)
+                and _secure_equals(auth.password, password)):
+            return Response(
+                "Kimlik doğrulama gerekli", 401,
+                {"WWW-Authenticate": 'Basic realm="Mail Otomasyon", charset="UTF-8"'},
+            )
+    elif not _env_flag("ALLOW_NO_AUTH"):
+        # Parolasız mod yalnızca yerel kullanım içindir. Host başlığı da
+        # kontrol edilir: aksi halde DNS rebinding ile kötü niyetli bir site
+        # localhost'taki arayüzden config'i (şifreler dahil) okuyabilir.
+        if (not _is_loopback_addr(request.remote_addr)
+                or _hostname_of(request.host) not in _LOOPBACK_HOSTNAMES):
+            return Response(
+                "Arayüz parolasız çalışıyor ve yalnızca bu makineden (localhost) "
+                "erişilebilir. Ağdan erişim için UI_PASSWORD ortam değişkenini "
+                "ayarlayın.", 403, {"Content-Type": "text/plain; charset=utf-8"},
+            )
+
+    if request.method not in _SAFE_METHODS and _cross_site_request():
+        return jsonify({"ok": False, "error": "Başka bir siteden gelen istek reddedildi"}), 403
+    return None
+
+
+@app.errorhandler(413)
+def _too_large(_e):
+    return jsonify({"ok": False, "error": "İstek çok büyük (en fazla 2 MB)"}), 413
+
 
 # ── CONFIG ──────────────────────────────────────────────────────
 SECRET_MASK = "••••••••"
+SERVER_KEYS = ("ems", "gmail", "outlook")
+
+
+class ConfigError(ValueError):
+    """config.yaml okunamıyor ya da beklenen yapıda değil."""
+
+
+class _NoAliasLoader(yaml.SafeLoader):
+    """YAML anchor/alias (&a / *a) reddedilir.
+
+    Alias'lar iç içe çoğaltılarak birkaç yüz baytlık bir dosya gigabaytlarca
+    belleğe açılabilir ("billion laughs"). Config dosyasında alias'a ihtiyaç yok.
+    """
+
+    def compose_node(self, parent, index):
+        if self.check_event(yaml.events.AliasEvent):
+            event = self.peek_event()
+            raise yaml.composer.ComposerError(
+                None, None, "YAML alias (*) desteklenmiyor", event.start_mark)
+        return super().compose_node(parent, index)
+
+
+class _NoAliasDumper(yaml.SafeDumper):
+    def ignore_aliases(self, data):
+        return True
+
+
+def _yaml_load(text: str):
+    return yaml.load(text, Loader=_NoAliasLoader)  # noqa: S506 — SafeLoader türevi
+
+
+def _yaml_dump(data: dict, fh) -> None:
+    yaml.dump(data, fh, Dumper=_NoAliasDumper, allow_unicode=True,
+              default_flow_style=False, sort_keys=False)
+
+
+def _normalize_config(data) -> dict:
+    """Kök sözlük olmalı; bölümler sözlük ya da boş olmalı (boş → {})."""
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ConfigError("Config kökü bir sözlük (anahtar: değer) olmalı")
+    out = {}
+    for key, value in data.items():
+        if not isinstance(key, str):
+            raise ConfigError(f"Geçersiz bölüm adı: {key!r}")
+        if value is None:
+            value = {}
+        if not isinstance(value, dict):
+            raise ConfigError(f"'{key}' bölümü anahtar: değer listesi olmalı")
+        out[key] = value
+    return out
+
+
+def _read_config() -> dict:
+    """config.yaml'ı güvenle okur; yoksa {} döner, bozuksa ConfigError."""
+    if not CONFIG_PATH.exists():
+        return {}
+    try:
+        text = CONFIG_PATH.read_text(encoding="utf-8")
+        return _normalize_config(_yaml_load(text))
+    except (UnicodeDecodeError, yaml.YAMLError) as e:
+        raise ConfigError(f"config.yaml okunamadı: {e}") from e
+
+
+def _write_config(data: dict) -> None:
+    tmp = CONFIG_PATH.with_name(CONFIG_PATH.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        _yaml_dump(data, f)
+    os.replace(tmp, CONFIG_PATH)  # yarım yazılmış config kalmasın
 
 def _is_unset(value) -> bool:
     """Boş ya da maskeden ibaret (UI'dan dokunulmadan dönen) secret değeri."""
@@ -129,58 +295,75 @@ def _mask_secrets(data: dict) -> dict:
             data[section]["api_key"] = SECRET_MASK
     return data
 
+def _json_body() -> dict:
+    """JSON gövdeyi sözlük olarak döndürür; bozuk/eksik gövde → {}."""
+    data = request.get_json(silent=True)
+    return data if isinstance(data, dict) else {}
+
+
 @app.route("/api/config", methods=["GET"])
 def get_config():
-    if CONFIG_PATH.exists():
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-        return jsonify({"ok": True, "config": _mask_secrets(data)})
-    return jsonify({"ok": True, "config": None})
+    try:
+        data = _read_config()
+    except ConfigError as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    if not CONFIG_PATH.exists():
+        return jsonify({"ok": True, "config": None})
+    return jsonify({"ok": True, "config": _mask_secrets(data)})
 
 @app.route("/api/config", methods=["POST"])
 def save_config():
-    data = request.json.get("config", {})
-    existing = {}
-    if CONFIG_PATH.exists():
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            existing = yaml.safe_load(f) or {}
-    for srv in ["ems", "gmail", "outlook"]:
-        if srv in data and srv in existing:
-            for key in ("password", "totp_secret"):
-                if _is_unset(data[srv].get(key)):
-                    data[srv][key] = existing[srv].get(key, "")
-    for section in ("anthropic", "gemini"):
-        if section in data and isinstance(existing.get(section), dict):
-            if _is_unset(data[section].get("api_key")):
-                data[section]["api_key"] = existing[section].get("api_key", "")
-    # UI'ın göndermediği bölümler (analysis, gemini, logging vb.) silinmesin
-    for section, value in existing.items():
-        if section not in data:
-            data[section] = value
     try:
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        incoming = _normalize_config(_json_body().get("config"))
+    except ConfigError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    if not incoming:
+        return jsonify({"ok": False, "error": "Kaydedilecek config boş"}), 400
+    try:
+        existing = _read_config()
+    except ConfigError:
+        existing = {}  # bozuk dosya: formdan gelen geçerli config ile onarılır
+
+    # Alan bazında birleştir: formda olmayan anahtarlar (calendar_*, smime_*,
+    # smtp_use_ssl, tls_* ...) silinmesin; boş/maskeli secret'lar korunur.
+    merged = {k: dict(v) for k, v in existing.items()}
+    for section, values in incoming.items():
+        old = existing.get(section, {})
+        new = {**old, **values}
+        secret_keys = (("password", "totp_secret") if section in SERVER_KEYS
+                       else ("api_key",) if section in ("anthropic", "gemini") else ())
+        for key in secret_keys:
+            if _is_unset(values.get(key)):
+                new[key] = old.get(key, "")
+        merged[section] = new
+    try:
+        _write_config(merged)
         return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+    except OSError as e:
+        return jsonify({"ok": False, "error": f"Config yazılamadı: {e}"}), 500
 
 @app.route("/api/config/import", methods=["POST"])
 def import_config():
     if "file" not in request.files:
         return jsonify({"ok": False, "error": "Dosya bulunamadı"}), 400
     f = request.files["file"]
-    if not f.filename.endswith((".yaml", ".yml")):
+    if not (f.filename or "").lower().endswith((".yaml", ".yml")):
         return jsonify({"ok": False, "error": "Yalnızca .yaml / .yml dosyaları kabul edilir"}), 400
     try:
-        content = f.read().decode("utf-8")
-        data = yaml.safe_load(content)
-        if not isinstance(data, dict):
-            return jsonify({"ok": False, "error": "Geçersiz YAML yapısı"}), 400
-        with open(CONFIG_PATH, "w", encoding="utf-8") as out:
-            yaml.dump(data, out, allow_unicode=True, default_flow_style=False, sort_keys=False)
-        return jsonify({"ok": True, "config": _mask_secrets(data)})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        data = _normalize_config(_yaml_load(f.read().decode("utf-8-sig")))
+    except UnicodeDecodeError:
+        return jsonify({"ok": False, "error": "Dosya UTF-8 kodlamalı olmalı"}), 400
+    except yaml.YAMLError as e:
+        return jsonify({"ok": False, "error": f"YAML okunamadı: {e}"}), 400
+    except ConfigError as e:
+        return jsonify({"ok": False, "error": f"Geçersiz YAML yapısı: {e}"}), 400
+    if not data:
+        return jsonify({"ok": False, "error": "Dosya boş"}), 400
+    try:
+        _write_config(data)
+    except OSError as e:
+        return jsonify({"ok": False, "error": f"Config yazılamadı: {e}"}), 500
+    return jsonify({"ok": True, "config": _mask_secrets(data)})
 
 @app.route("/api/config/export", methods=["GET"])
 def export_config():
@@ -188,63 +371,118 @@ def export_config():
         return jsonify({"ok": False, "error": "Henüz kaydedilmiş config yok"}), 404
     return send_file(CONFIG_PATH, as_attachment=True, download_name="config.yaml", mimetype="text/yaml")
 
+def _same_target(form: dict, saved: dict) -> bool:
+    """Formdaki sunucu/kullanıcı kayıtlı olanla aynı mı?
+
+    Kayıtlı şifre yalnızca kayıtlı host+kullanıcı için kullanılır; aksi halde
+    formda host'u değiştirip şifreyi boş bırakan biri, kayıtlı şifreyi kendi
+    sunucusuna gönderterek ele geçirebilirdi.
+    """
+    def norm(v):
+        return str(v or "").strip().lower()
+    return all(norm(form.get(k)) == norm(saved.get(k))
+               for k in ("smtp_host", "imap_host", "username"))
+
+
+def _login_with_code(do_login, auth_method: str, username: str, password: str, code: str,
+                     fallback_errors: tuple):
+    if auth_method == "otp_only" and code:
+        do_login(username, code)
+    elif auth_method == "totp_password" and code:
+        try:
+            do_login(username, password + code)
+        except fallback_errors:
+            do_login(username, password)
+    else:
+        do_login(username, password)
+
+
 @app.route("/api/config/test-connection", methods=["POST"])
 def test_connection():
-    server_key    = request.json.get("server")
-    mfa_code      = request.json.get("mfa_code", "")
-    body_sc       = request.json.get("server_config") or {}
+    import imaplib, smtplib
+    from mail_transport import explain_connection_error, imap_connect, smtp_connect
+
+    body       = _json_body()
+    server_key = str(body.get("server") or "")
+    mfa_code   = str(body.get("mfa_code") or "").strip()
+    body_sc    = body.get("server_config") if isinstance(body.get("server_config"), dict) else {}
     try:
-        if CONFIG_PATH.exists():
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                config = yaml.safe_load(f) or {}
-            sc = config.get(server_key, {})
-        else:
-            sc = {}
-        # Form değerleri kaydedilmeden test edilebilir; secret alanı boş/maskeli
-        # geldiyse dosyadaki kayıtlı değer kullanılır.
-        if body_sc:
-            merged = dict(body_sc)
-            for key in ("password", "totp_secret"):
-                if _is_unset(merged.get(key)) and sc.get(key):
-                    merged[key] = sc[key]
-            sc = merged
-        if not sc:
-            return jsonify({"ok": False, "error": f"'{server_key}' için config bulunamadı — önce ayarları kaydedin"})
-
-        auth_method = sc.get("auth_method", "password")
-        totp_secret = sc.get("totp_secret", "")
-        mfa_method  = sc.get("mfa_method", "totp")
-
-        code = ""
-        if auth_method in ("totp_password", "otp_only"):
-            if totp_secret and mfa_method == "totp":
-                code = generate_totp(totp_secret)
-            elif mfa_code:
-                code = mfa_code
-            else:
-                return jsonify({
-                    "ok": False, "needs_mfa": True,
-                    "mfa_method": mfa_method,
-                    "server_label": sc.get("label", server_key.upper()),
-                    "error": "2FA kodu gerekli",
-                })
-
-        import smtplib
-        smtp = smtplib.SMTP(sc["smtp_host"], sc["smtp_port"], timeout=10)
-        smtp.ehlo()
-        if sc.get("smtp_use_tls"): smtp.starttls()
-        pwd = sc["password"]
-        if auth_method == "totp_password" and code:
-            try: smtp.login(sc["username"], pwd + code)
-            except smtplib.SMTPException: smtp.login(sc["username"], pwd)
-        elif auth_method == "otp_only" and code:
-            smtp.login(sc["username"], code)
-        else:
-            smtp.login(sc["username"], pwd)
-        smtp.quit()
-        return jsonify({"ok": True, "message": f"✅ {server_key.upper()} bağlantısı başarılı"})
-    except Exception as e:
+        saved = _read_config().get(server_key, {})
+    except ConfigError as e:
         return jsonify({"ok": False, "error": str(e)})
+
+    # Form değerleri kaydedilmeden test edilebilir; secret alanı boş/maskeli
+    # geldiyse — ve hedef aynıysa — dosyadaki kayıtlı değer kullanılır.
+    sc = dict(saved)
+    if body_sc:
+        sc = dict(body_sc)
+        for key in ("password", "totp_secret"):
+            if _is_unset(sc.get(key)):
+                sc[key] = saved.get(key, "") if _same_target(body_sc, saved) else ""
+    if not sc:
+        return jsonify({"ok": False, "error": f"'{server_key}' için config bulunamadı — önce ayarları kaydedin"})
+
+    auth_method = sc.get("auth_method", "password")
+    totp_secret = sc.get("totp_secret", "")
+    mfa_method  = sc.get("mfa_method", "totp")
+    label       = sc.get("label") or server_key.upper()
+
+    code = ""
+    if auth_method in ("totp_password", "otp_only"):
+        if totp_secret and mfa_method == "totp":
+            code = generate_totp(totp_secret)
+        elif mfa_code:
+            code = mfa_code
+        else:
+            return jsonify({
+                "ok": False, "needs_mfa": True,
+                "mfa_method": mfa_method,
+                "server_label": label,
+                "error": "2FA kodu gerekli",
+            })
+
+    username, password = sc.get("username", ""), sc.get("password", "")
+    if not sc.get("smtp_host") or not sc.get("smtp_port"):
+        return jsonify({"ok": False, "error": "SMTP sunucu adı ve portu gerekli"})
+    if not password and auth_method != "otp_only":
+        return jsonify({"ok": False, "error": "Şifre boş — formda şifreyi girin"})
+
+    stage = "SMTP"
+    try:
+        smtp = smtp_connect(sc, timeout=15)
+        try:
+            _login_with_code(smtp.login, auth_method, username, password, code,
+                             (smtplib.SMTPException,))
+        finally:
+            try:
+                smtp.quit()
+            except Exception:
+                pass
+
+        imap_note = ""
+        if sc.get("imap_host") and sc.get("imap_port"):
+            if auth_method == "otp_only" and not totp_secret:
+                imap_note = " (IMAP, tek kullanımlık kod yeniden kullanılamayacağı için test edilmedi)"
+            else:
+                stage = "IMAP"
+                imap = imap_connect(sc, timeout=15)
+                try:
+                    _login_with_code(imap.login, auth_method, username, password, code,
+                                     (imaplib.IMAP4.error,))
+                    status, _ = imap.select("INBOX", readonly=True)
+                    if status != "OK":
+                        raise imaplib.IMAP4.error("INBOX açılamadı")
+                finally:
+                    try:
+                        imap.logout()
+                    except Exception:
+                        pass
+                imap_note = " (SMTP + IMAP)"
+        return jsonify({"ok": True, "message": f"✅ {label} bağlantısı başarılı{imap_note}"})
+    except Exception as e:  # noqa: BLE001 — her hata kullanıcıya açıklanır
+        hint = explain_connection_error(e, sc)
+        msg = f"{stage}: {e}"
+        return jsonify({"ok": False, "error": f"{msg} — {hint}" if hint else msg, "stage": stage})
 
 # ── 2FA / MFA ───────────────────────────────────────────────────
 @app.route("/api/mfa/status", methods=["GET"])
@@ -254,11 +492,14 @@ def mfa_status():
 
 @app.route("/api/mfa/submit", methods=["POST"])
 def mfa_submit():
-    code = request.json.get("code", "").strip()
+    raw = _json_body().get("code")
+    code = str(raw).strip() if isinstance(raw, (str, int)) and not isinstance(raw, bool) else ""
     if not code:
         return jsonify({"ok": False, "error": "Kod boş olamaz"})
+    if len(code) > 32 or any(ch.isspace() for ch in code):
+        return jsonify({"ok": False, "error": "Geçersiz kod biçimi"})
     ok = mfa_manager.submit_code(code)
-    return jsonify({"ok": ok})
+    return jsonify({"ok": ok, **({} if ok else {"error": "Bekleyen 2FA isteği yok"})})
 
 @app.route("/api/mfa/cancel", methods=["POST"])
 def mfa_cancel():
@@ -266,8 +507,8 @@ def mfa_cancel():
 
 @app.route("/api/mfa/totp-preview", methods=["POST"])
 def totp_preview():
-    secret = request.json.get("secret", "")
-    if not secret:
+    secret = _json_body().get("secret")
+    if not isinstance(secret, str) or not secret.strip():
         return jsonify({"ok": False, "error": "Secret boş"})
     code = generate_totp(secret)
     return jsonify({"ok": bool(code), "code": code, "remaining": totp_remaining_seconds()})
@@ -292,12 +533,11 @@ def get_combinations():
         return jsonify({"ok": False, "error": str(e)})
 
 def _get_csv_path():
-    if CONFIG_PATH.exists():
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f)
-        raw = cfg.get("test", {}).get("csv_input", "mail_test_checklist.csv")
-    else:
+    try:
+        raw = _read_config().get("test", {}).get("csv_input") or "mail_test_checklist.csv"
+    except ConfigError:
         raw = "mail_test_checklist.csv"
+    raw = str(raw)
 
     # Resolve relative paths against repo root and fall back to a likely CSV
     repo_root = Path(__file__).parent
@@ -345,11 +585,37 @@ _DIAG_TARGETS = [
     ("HTTPS (kontrol)",         "api.github.com",         443),
 ]
 
+def _classify_socket_error(e: OSError) -> str:
+    if isinstance(e, socket.gaierror):
+        return "dns"
+    if isinstance(e, (socket.timeout, TimeoutError)) or getattr(e, "errno", None) == errno.ETIMEDOUT:
+        return "timeout"
+    if isinstance(e, ConnectionRefusedError):
+        return "refused"
+    return "unreachable"
+
+
 @app.route("/api/diagnostics/network")
 def diagnostics_network():
     results = []
-    any_smtp_open = False
-    for label, host, port in _DIAG_TARGETS:
+    targets = list(_DIAG_TARGETS)
+    # Kayıtlı sunucuların kendi portları da denenir (ör. kurum içi EMS).
+    try:
+        cfg = _read_config()
+    except ConfigError:
+        cfg = {}
+    for key in SERVER_KEYS:
+        sc = cfg.get(key) or {}
+        for proto, host_key, port_key in (("SMTP", "smtp_host", "smtp_port"),
+                                          ("IMAP", "imap_host", "imap_port")):
+            host, port = sc.get(host_key), sc.get(port_key)
+            if host and port and (host, int(port)) not in {(h, p) for _, h, p in targets}:
+                try:
+                    targets.append((f"{sc.get('label') or key.upper()} {proto} (config)", str(host), int(port)))
+                except (TypeError, ValueError):
+                    pass
+
+    for label, host, port in targets:
         entry = {"label": label, "host": host, "port": port}
         start = time.time()
         try:
@@ -357,20 +623,28 @@ def diagnostics_network():
                 pass
             entry["reachable"] = True
             entry["ms"] = round((time.time() - start) * 1000)
-            if port in (25, 465, 587):
-                any_smtp_open = True
         except OSError as e:
             entry["reachable"] = False
+            entry["reason"] = _classify_socket_error(e)
             entry["error"] = f"{type(e).__name__}: {e}"
         results.append(entry)
 
+    smtp_entries = [r for r in results if r["port"] in (25, 465, 587)]
+    any_smtp_open = any(r["reachable"] for r in smtp_entries)
     https_ok = any(r["reachable"] for r in results if r["port"] == 443)
-    if https_ok and not any_smtp_open:
-        verdict = ("Bu sunucu internete çıkabiliyor ANCAK giden SMTP portları "
-                   "(587/465) engelli. Platform (ör. Render ücretsiz plan) mail "
-                   "göndermeye izin vermiyor — SMTP çıkışı açık bir host gerekir.")
-    elif any_smtp_open:
+    smtp_reasons = {r.get("reason") for r in smtp_entries if not r["reachable"]}
+    if any_smtp_open:
         verdict = "SMTP portları açık — bu sunucudan mail gönderilebilir."
+    elif smtp_reasons == {"dns"}:
+        verdict = ("Mail sunucularının adları çözümlenemiyor (DNS). Sunucunun DNS/dış ağ "
+                   "erişimi kısıtlı ya da yalnızca bir HTTP proxy üzerinden çıkabiliyor — "
+                   "SMTP/IMAP için doğrudan ağ erişimi gerekir.")
+    elif https_ok:
+        verdict = ("Bu sunucu internete çıkabiliyor ANCAK giden SMTP portları "
+                   "(587/465) engelli. Platform (ör. Render ücretsiz plan, bazı VPS "
+                   "sağlayıcılarında yeni hesaplar) mail göndermeye izin vermiyor — "
+                   "SMTP çıkışı açık bir host gerekir ya da sağlayıcıdan port açılması "
+                   "istenmeli.")
     else:
         verdict = "Sunucunun dış ağ erişimi kısıtlı görünüyor."
 
@@ -378,6 +652,57 @@ def diagnostics_network():
                     "smtp_available": any_smtp_open, "targets": results})
 
 # ── RUNNER ──────────────────────────────────────────────────────
+def _parse_combos(value):
+    """combo: int | "3" | [1, 4] | "1,4" → sıralı benzersiz int listesi (geçersizse ValueError)."""
+    if value is None or value == "" or value == []:
+        return []
+    items = value if isinstance(value, list) else str(value).split(",")
+    out = []
+    for item in items:
+        if isinstance(item, bool):
+            raise ValueError
+        n = int(str(item).strip())
+        if n < 0:
+            raise ValueError
+        if n not in out:
+            out.append(n)
+    return out
+
+
+def _kill_tree(proc: subprocess.Popen, grace: float = 5.0) -> None:
+    """main.py'yi önce nazikçe (SIGTERM), olmazsa zorla sonlandırır."""
+    try:
+        proc.terminate()
+        proc.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
+        try:
+            proc.kill()
+            proc.wait(timeout=grace)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    except OSError:
+        pass
+
+
+def _reap_orphan_run() -> None:
+    """Önceki app sürecinden kalan (app öldürülmüş ama main.py yaşayan) koşuyu temizler."""
+    try:
+        pid = int(RUN_PID_FILE.read_text().strip())
+    except (OSError, ValueError):
+        return
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+        if b"main.py" in cmdline:
+            os.kill(pid, signal.SIGTERM)
+            print(f"⚠️  Önceki çalıştırmadan kalan test süreci sonlandırıldı (pid {pid})")
+    except (OSError, AttributeError):
+        pass  # süreç yok / /proc yok (Windows, macOS) / yetki yok
+    try:
+        RUN_PID_FILE.unlink()
+    except OSError:
+        pass
+
+
 @app.route("/api/run/start", methods=["POST"])
 def start_run():
     if _is_serverless():
@@ -386,77 +711,136 @@ def start_run():
             "error": ("Bu platform (Vercel/serverless) uzun süreli test koşusunu "
                       "desteklemiyor — istekler 60 sn ile sınırlı ve arka plan "
                       "süreci yaşatılamıyor. Konfigürasyon arayüzü çalışır; test "
-                      "koşusu için Railway, Render veya Docker kullanın "
+                      "koşusu için Railway, Fly.io, VPS veya Docker kullanın "
                       "(README → Web'de Yayınlama)."),
         }), 400
-    if run_state["running"]:
-        return jsonify({"ok": False, "error": "Zaten bir test çalışıyor"}), 400
-    body      = request.json or {}
-    cmd       = [sys.executable, str(BASE_DIR / "main.py"), "--config", str(CONFIG_PATH)]
-    if body.get("combo") is not None: cmd += ["--combo", str(body["combo"])]
-    if body.get("scenario"):          cmd += ["--scenario", body["scenario"]]
-    if body.get("dry_run"):           cmd += ["--dry-run"]
-    run_state.update({"log_queue": queue.Queue(), "running": True,
-                      "started_at": datetime.now().isoformat(),
-                      "finished_at": None, "exit_code": None})
-    mfa_manager.clear_bridge()  # önceki çalışmadan kalan challenge dosyaları
-    log_file = LOGS_DIR / f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-    run_state["log_file"] = str(log_file)
 
-    def _run():
+    body = _json_body()
+    try:
+        combos = _parse_combos(body.get("combo", body.get("combos")))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Geçersiz kombinasyon seçimi"}), 400
+    scenario = body.get("scenario")
+    if scenario is not None and (not isinstance(scenario, str)
+                                 or (scenario and scenario not in _supported_scenarios())):
+        return jsonify({"ok": False, "error": "Geçersiz senaryo tipi"}), 400
+
+    cmd = [sys.executable, str(BASE_DIR / "main.py"), "--config", str(CONFIG_PATH)]
+    if combos:
+        cmd += ["--combo", ",".join(str(c) for c in combos)]
+    if scenario:
+        cmd += ["--scenario", scenario]
+    if body.get("dry_run"):
+        cmd += ["--dry-run"]
+
+    with _run_lock:
+        if run_state["running"]:
+            return jsonify({"ok": False, "error": "Zaten bir test çalışıyor"}), 400
+        mfa_manager.clear_bridge()  # önceki çalışmadan kalan challenge dosyaları
+        log_file = LOGS_DIR / f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        # MFA_INTERACTIVE=1: subprocess'teki sender/receiver, TOTP secret yoksa
+        # kodu köprü üzerinden arayüz modal'ından ister. UTF-8 zorlanır ki Türkçe
+        # Windows'ta (cp1254) emoji/ğüş içeren loglar okuyucu thread'i öldürmesin.
+        env = {**os.environ, "MFA_INTERACTIVE": "1", "PYTHONUTF8": "1",
+               "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1",
+               "DATA_DIR": str(DATA_DIR)}
         try:
-            # MFA_INTERACTIVE=1: subprocess'teki sender/receiver, TOTP secret yoksa
-            # kodu köprü üzerinden arayüz modal'ından ister.
-            env = {**os.environ, "MFA_INTERACTIVE": "1"}
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    text=True, encoding="utf-8", cwd=BASE_DIR, env=env)
-            run_state["process"] = proc
+            # cwd=DATA_DIR: main.py reports/ logs/ test_files/ dizinlerini çalışma
+            # dizinine yazar; arayüz de raporları DATA_DIR/reports'tan okur.
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="replace", cwd=str(DATA_DIR), env=env,
+            )
+        except OSError as e:
+            return jsonify({"ok": False, "error": f"Test süreci başlatılamadı: {e}"}), 500
+        run_id = uuid.uuid4().hex
+        run_state.update({"log_queue": queue.Queue(), "running": True, "process": proc,
+                          "run_id": run_id, "stopped": False, "log_file": str(log_file),
+                          "started_at": datetime.now().isoformat(),
+                          "finished_at": None, "exit_code": None})
+        try:
+            RUN_PID_FILE.write_text(str(proc.pid))
+        except OSError:
+            pass
+
+    def _pump():
+        try:
             with open(log_file, "w", encoding="utf-8") as lf:
                 for line in proc.stdout:
                     line = line.rstrip()
                     run_state["log_queue"].put(line)
                     lf.write(line + "\n")
                     lf.flush()
-            proc.wait(); run_state["exit_code"] = proc.returncode
-        except Exception as e:
-            err = f"[HATA] {e}"
+        except Exception as e:  # noqa: BLE001 — log okuyucu asla sessizce ölmesin
+            err = f"[HATA] Log okunamadı: {e}"
             run_state["log_queue"].put(err)
-            with open(log_file, "a", encoding="utf-8") as lf:
-                lf.write(err + "\n")
+            try:
+                with open(log_file, "a", encoding="utf-8") as lf:
+                    lf.write(err + "\n")
+            except OSError:
+                pass
         finally:
-            run_state.update({"running": False, "finished_at": datetime.now().isoformat()})
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                _kill_tree(proc)
+            with _run_lock:
+                if run_state.get("run_id") == run_id:  # yeni bir koşuyu ezme
+                    run_state.update({"running": False, "process": None,
+                                      "exit_code": proc.returncode,
+                                      "finished_at": datetime.now().isoformat()})
+                    try:
+                        RUN_PID_FILE.unlink()
+                    except OSError:
+                        pass
             run_state["log_queue"].put("__DONE__")
-    threading.Thread(target=_run, daemon=True).start()
+
+    threading.Thread(target=_pump, daemon=True).start()
     return jsonify({"ok": True, "cmd": " ".join(cmd)})
 
 @app.route("/api/run/stop", methods=["POST"])
 def stop_run():
     mfa_manager.cancel()
-    if run_state.get("process"):
-        run_state["process"].terminate()
-        run_state["running"] = False
-        return jsonify({"ok": True})
-    return jsonify({"ok": False, "error": "Çalışan süreç yok"})
+    with _run_lock:
+        proc = run_state.get("process")
+        run_id = run_state.get("run_id")
+        if not run_state["running"] or proc is None:
+            return jsonify({"ok": False, "error": "Çalışan süreç yok"})
+        run_state["stopped"] = True
+    _kill_tree(proc)
+    with _run_lock:
+        # Süreç bitti; okuyucu thread'i beklemeden durumu güncelle ki arayüz
+        # hemen yeni koşu başlatabilsin. run_id kontrolü: araya yeni koşu
+        # girdiyse onun durumuna dokunma.
+        if run_state.get("run_id") == run_id:
+            run_state.update({"running": False, "process": None,
+                              "exit_code": getattr(proc, "returncode", None),
+                              "finished_at": datetime.now().isoformat()})
+    return jsonify({"ok": True})
 
 @app.route("/api/run/status", methods=["GET"])
 def run_status():
     return jsonify({"running": run_state["running"], "started_at": run_state["started_at"],
-                    "finished_at": run_state["finished_at"], "exit_code": run_state["exit_code"]})
+                    "finished_at": run_state["finished_at"], "exit_code": run_state["exit_code"],
+                    "stopped": run_state.get("stopped", False)})
 
 @app.route("/api/run/logs")
 def poll_logs():
     """Log polling endpoint — SSE yerine kullanılır (Vercel uyumlu)."""
-    offset = int(request.args.get("offset", 0))
+    try:
+        offset = max(0, int(request.args.get("offset", 0)))
+    except (TypeError, ValueError):
+        offset = 0
     log_file = run_state.get("log_file")
     lines = []
     next_offset = offset
 
     if log_file and Path(log_file).exists():
-        with open(log_file, "r", encoding="utf-8") as f:
+        with open(log_file, "r", encoding="utf-8", errors="replace") as f:
             all_lines = f.readlines()
         new_lines = all_lines[offset:]
         lines = [l.rstrip() for l in new_lines]
-        next_offset = len(all_lines)
+        next_offset = max(offset, len(all_lines))
 
     done = (not run_state["running"]) and (next_offset == offset or not run_state.get("log_file"))
     return jsonify({"lines": lines, "next_offset": next_offset, "done": done})
@@ -518,9 +902,11 @@ if __name__ == "__main__":
                 with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as s6:
                     s6.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                     s6.bind(("::", p))
-            except OSError:
-                # If IPv6 is unavailable or already bound, treat as not free.
-                return False
+            except OSError as e:
+                # Yalnızca "port kullanımda" meşgul sayılır; IPv6'sı olmayan
+                # makinede (EAFNOSUPPORT/EADDRNOTAVAIL) port yine de boştur.
+                if e.errno == errno.EADDRINUSE:
+                    return False
 
         return True
 
@@ -528,6 +914,16 @@ if __name__ == "__main__":
     if env_port is None:
         while port < desired_port + 20 and not _is_port_free(port):
             port += 1
+
+    _reap_orphan_run()
+    if not os.environ.get("UI_PASSWORD"):
+        if _env_flag("ALLOW_NO_AUTH"):
+            print("⚠️  UYARI: UI_PASSWORD yok ve ALLOW_NO_AUTH=1 — arayüz ağdaki herkese "
+                  "parolasız açık (kayıtlı şifreler dahil). Yalnızca güvenilir ağda kullanın.")
+        elif host not in ("127.0.0.1", "localhost", "::1"):
+            print("⚠️  UI_PASSWORD ayarlı değil: arayüz yalnızca bu makineden (localhost) "
+                  "kullanılabilir, ağdan gelen istekler 403 alır. İnternete/ağa açmak için "
+                  "UI_PASSWORD ortam değişkenini ayarlayın.")
 
     print(f"\n🚀 Mail Otomasyon Arayüzü: http://localhost:{port}\n")
     app.run(debug=debug, host=host, port=port, threaded=True)

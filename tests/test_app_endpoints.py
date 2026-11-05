@@ -297,6 +297,7 @@ class TestRunnerSubprocess:
     @pytest.fixture(autouse=True)
     def _isolated_logs(self, tmp_path, monkeypatch):
         monkeypatch.setattr(app_mod, "LOGS_DIR", tmp_path / "logs")
+        monkeypatch.setattr(app_mod, "RUN_PID_FILE", tmp_path / "logs" / "run.pid")
         (tmp_path / "logs").mkdir()
         yield
         app_mod.run_state.update({"running": False, "process": None})
@@ -329,13 +330,12 @@ class TestRunnerSubprocess:
             assert self._wait_idle()
         assert popen.call_args.kwargs["env"]["MFA_INTERACTIVE"] == "1"
 
-    def test_spawn_failure_logged_not_crashed(self, flask_client):
+    def test_spawn_failure_reported_not_crashed(self, flask_client):
         with patch.object(app_mod.subprocess, "Popen", side_effect=OSError("çalıştırılamadı")):
             r = flask_client.post("/api/run/start", json={})
-            assert r.get_json()["ok"] is True    # başlatma isteği kabul edilir
-            assert self._wait_idle()
-        log = Path(app_mod.run_state["log_file"]).read_text(encoding="utf-8")
-        assert "[HATA]" in log and "çalıştırılamadı" in log
+        # Süreç istek içinde başlatılır: hata anında kullanıcıya döner
+        assert r.status_code == 500
+        assert "çalıştırılamadı" in r.get_json()["error"]
         assert app_mod.run_state["running"] is False   # takılı kalmamalı
 
     def test_stale_mfa_bridge_cleared_on_start(self, flask_client):
@@ -446,14 +446,40 @@ class TestConnectionMfaVariants:
     def test_unsaved_form_values_can_be_tested(self, flask_client, saved_cfg):
         saved_cfg(self._base(password="kayitli-sifre"))
         smtp = MagicMock()
+        with patch("smtplib.SMTP", return_value=smtp) as cls:
+            r = flask_client.post("/api/config/test-connection", json={
+                "server": "ems",
+                "server_config": {**self._base(smtp_port=2525), "password": ""},
+            })
+        assert r.get_json()["ok"] is True
+        # Kaydedilmemiş form değeri (port) kullanılır; secret boş → aynı
+        # host+kullanıcı olduğu için dosyadaki kayıtlı şifre kullanılır
+        assert cls.call_args[0][1] == 2525
+        smtp.login.assert_called_once_with("u@t.local", "kayitli-sifre")
+
+    def test_saved_password_never_sent_to_other_host(self, flask_client, saved_cfg):
+        """Güvenlik: host değiştirilip şifre boş bırakılırsa kayıtlı şifre
+        saldırganın sunucusuna gönderilmemeli."""
+        saved_cfg(self._base(password="kayitli-sifre"))
+        smtp = MagicMock()
         with patch("smtplib.SMTP", return_value=smtp):
             r = flask_client.post("/api/config/test-connection", json={
                 "server": "ems",
-                "server_config": {**self._base(smtp_host="yeni.host"), "password": ""},
+                "server_config": {**self._base(smtp_host="evil.example"), "password": ""},
             })
-        assert r.get_json()["ok"] is True
-        # Form'da secret boş → dosyadaki kayıtlı şifre kullanılır
-        smtp.login.assert_called_once_with("u@t.local", "kayitli-sifre")
+        assert r.get_json()["ok"] is False
+        for call in smtp.login.call_args_list:
+            assert "kayitli-sifre" not in call[0][1]
+
+    def test_saved_password_not_sent_for_other_username(self, flask_client, saved_cfg):
+        saved_cfg(self._base(password="kayitli-sifre"))
+        smtp = MagicMock()
+        with patch("smtplib.SMTP", return_value=smtp):
+            flask_client.post("/api/config/test-connection", json={
+                "server": "ems",
+                "server_config": {**self._base(username="baska@t.local"), "password": ""},
+            })
+        smtp.login.assert_not_called()
 
     def test_masked_secret_in_form_uses_saved_value(self, flask_client, saved_cfg):
         saved_cfg(self._base(password="kayitli-sifre"))

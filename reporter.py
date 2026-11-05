@@ -57,13 +57,18 @@ def generate_html_report(results: List[dict], output_path: str):
             sc_class = {"PASS": "pass", "FAIL": "fail", "SKIP": "skip"}[status]
             badge_label = {"PASS": "✅ PASS", "FAIL": "❌ FAIL", "SKIP": "⏭ ATLANDI"}[status]
             checks_html = ""
-            for ch in analysis.get("checks", []):
+            checks = analysis.get("checks", [])
+            for ch in checks if isinstance(checks, list) else []:
+                if not isinstance(ch, dict):
+                    ch = {"name": str(ch), "passed": False, "detail": ""}
                 ch_icon = "✅" if ch.get("passed") else "❌"
                 checks_html += (
                     f'<li>{ch_icon} <b>{_esc(ch.get("name", ""))}</b>: '
                     f'{_esc(ch.get("detail", ""))}</li>'
                 )
             issues = analysis.get("issues", [])
+            if not isinstance(issues, list):
+                issues = [issues] if issues else []
             issues_html = "".join(f"<li>⚠️ {_esc(i)}</li>" for i in issues) if issues else ""
 
             scenario_rows += f"""
