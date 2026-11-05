@@ -310,6 +310,10 @@ JSON şemasıyla (yapılandırılmış çıktı) alınır ve doğrulanır; geçe
 karar asla PASS sayılmaz. Daha ekonomik koşu için arayüzden Sonnet 5.5 ya da
 Haiku 5.5 seçilebilir veya `effort: low` kullanılabilir.
 
+API'ye art arda 3 kez ulaşılamazsa (ağ, zaman aşımı, 5xx) ya da API key/model
+geçersizse kalan senaryolar LLM'e gönderilmez ve "analiz yapılmadı" FAIL'i
+olarak raporlanır — ölü bir uç nokta koşuyu saatlerce kilitlemez.
+
 ---
 
 ## 📋 Raporlar

@@ -175,7 +175,9 @@ def _parse_combination_header(text: str) -> dict:
     formatından sunucu/istemci bilgisini çıkarır.
     """
     # Alan → X / Y  Gönderen → A / B
-    pattern = r"Alan\s*[→>]\s*(\w+)\s*/\s*(\w+).*?Gönderen\s*[→>]\s*(\w+)\s*/\s*(\w+)"
+    # cp1254 (Excel-TR) '→' karakterini taşıyamaz ve '?' yazar; '->' de kabul.
+    pattern = (r"Alan\s*(?:→|->|>|\?|:)\s*(\w+)\s*/\s*(\w+).*?"
+               r"Gönderen\s*(?:→|->|>|\?|:)\s*(\w+)\s*/\s*(\w+)")
     match = re.search(pattern, text, re.IGNORECASE)
     if match:
         recv_server, recv_client, send_server, send_client = match.groups()

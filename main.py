@@ -680,9 +680,9 @@ def run_scenario(
             sc = getattr(sender, "config", None)
             if isinstance(sc, dict) and sc.get("smtp_host"):
                 target = f" ({sc.get('smtp_host')}:{sc.get('smtp_port')})"
-            summary = (f"Sunucu giden SMTP portuna{target} ulaşamıyor — bağlantı reddediliyor, "
-                       "engelleniyor veya zaman aşımına uğruyor."
-                       + (f" {hint}" if hint else ""))
+            summary = (f"SMTP bağlantısı kurulamadı{target}. "
+                       + (f"{hint} " if hint else "")
+                       + "Diğer olasılık: giden SMTP portuna erişim ağ/platform tarafından engelli.")
             recommendations = [
                 "Önce host/port ve TLS modunu (587 STARTTLS, 465 SSL) doğrulayın; "
                 "sunucunun açık olduğundan emin olun.",
@@ -1032,8 +1032,10 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
 
     html_path = test_config.get("report_output", "reports/test_report.html")
     csv_path_out = test_config.get("results_csv", "reports/test_results.csv")
+    note = ("Koşu kullanıcı tarafından DURDURULDU — bu rapor kısmi sonuçları içerir; "
+            "çalıştırılmayan senaryolar listede yoktur.") if interrupted else ""
     try:
-        generate_html_report(all_results, html_path)
+        generate_html_report(all_results, html_path, note=note)
     except Exception as e:  # noqa: BLE001 — biri bozulsa diğeri yine yazılsın
         logger.error(f"HTML rapor yazılamadı: {e}", exc_info=True)
     try:

@@ -726,3 +726,100 @@ class TestRound2:
             clear.assert_called()
         finally:
             app_mod.run_state.update({"running": False, "process": None})
+
+
+class TestRound2MailPipeline:
+
+    def _conn_err(self):
+        return anthropic.APIConnectionError(request=httpx.Request("POST", "https://x"))
+
+    def test_circuit_breaker_stops_calling_dead_llm(self, received_msg, combination_meta):
+        # Eski: ölü uç noktada senaryo başına ~6 dk → tam matris ~20 saat
+        client = MagicMock()
+        client.beta.messages.create.side_effect = self._conn_err()
+        a = _analyzer_with(client)
+        results = [a.analyze("plain_text", {}, received_msg, combination_meta) for _ in range(6)]
+        assert client.beta.messages.create.call_count == 3
+        assert all(r["passed"] is False for r in results)
+        assert "art arda 3" in results[-1]["summary"]
+
+    def test_success_resets_breaker(self, received_msg, combination_meta):
+        client = MagicMock()
+        ok = _resp('{"passed": true}')
+        client.beta.messages.create.side_effect = [self._conn_err(), self._conn_err(), ok,
+                                                   self._conn_err(), self._conn_err(), ok]
+        a = _analyzer_with(client)
+        for _ in range(6):
+            a.analyze("plain_text", {}, received_msg, combination_meta)
+        assert client.beta.messages.create.call_count == 6
+
+    def test_invalid_api_key_opens_breaker_immediately(self, received_msg, combination_meta):
+        client = MagicMock()
+        client.beta.messages.create.side_effect = anthropic.AuthenticationError(
+            "bad key", response=httpx.Response(401, request=httpx.Request("POST", "https://x")), body=None)
+        a = _analyzer_with(client)
+        for _ in range(4):
+            v = a.analyze("plain_text", {}, received_msg, combination_meta)
+        assert client.beta.messages.create.call_count == 1
+        assert "API key" in v["summary"]
+
+    def test_one_off_400_does_not_disable_structured_output(self, received_msg, combination_meta):
+        # Eski: herhangi bir 400 (ör. aşırı uzun prompt) koşunun geri kalanında
+        # yapılandırılmış çıktıyı kapatıyordu.
+        err = anthropic.BadRequestError(
+            "prompt is too long", response=httpx.Response(400, request=httpx.Request("POST", "https://x")),
+            body=None)
+        client = MagicMock()
+        client.beta.messages.create.side_effect = [err, _resp('{"passed": true}')]
+        client.messages.create.side_effect = err
+        a = _analyzer_with(client)
+        assert a.analyze("plain_text", {}, received_msg, combination_meta)["passed"] is False
+        assert a.analyze("plain_text", {}, received_msg, combination_meta)["passed"] is True
+        assert client.beta.messages.create.call_count == 2
+
+    @pytest.mark.parametrize("text", ['[{"passed": true}]', "true", '"metin"', "[1, 2]"])
+    def test_non_object_json_is_parse_failure_not_crash(self, text):
+        v = MailAnalyzer("k")._parse_response(text, "plain_text")
+        assert v["passed"] is False and v["confidence"] == "LOW"
+
+    def test_excel_tr_question_mark_arrows(self):
+        # cp1254 '→' taşıyamaz → 'Alan ? EMS'; eskiden tüm sunucular "Bilinmeyen sunucu: ?"
+        from csv_parser import _parse_combination_header
+        info = _parse_combination_header("🔀 Kombinasyon: Alan ? EMS / iOS  Gönderen ? Gmail / Android")
+        assert info["receiver_server"] == "EMS" and info["sender_server"] == "Gmail"
+        info = _parse_combination_header("Kombinasyon: Alan -> EMS / iOS  Gönderen -> Outlook / Outlook")
+        assert info["sender_server"] == "Outlook"
+
+    def test_partial_report_is_marked(self, tmp_path):
+        from reporter import generate_html_report
+        out = tmp_path / "r.html"
+        results = [{"combination": "A", "scenario_type": "plain_text",
+                    "analysis": {"passed": True, "checks": [], "summary": "ok"}}]
+        generate_html_report(results, str(out), note="Koşu DURDURULDU — kısmi")
+        assert "DURDURULDU" in out.read_text(encoding="utf-8")
+        generate_html_report(results, str(out))
+        assert "DURDURULDU" not in out.read_text(encoding="utf-8")
+
+    def test_auth_hints_are_specific(self, monkeypatch):
+        monkeypatch.delenv("MFA_INTERACTIVE", raising=False)
+        hint = explain_connection_error(smtplib.SMTPAuthenticationError(535, b"x"),
+                                        {"auth_method": "totp_password", "totp_secret": ""})
+        assert "totp_secret boş" in hint
+        hint = explain_connection_error(
+            smtplib.SMTPNotSupportedError("SMTP AUTH extension not supported by server."), {})
+        assert "smtp_use_tls" in hint
+
+    def test_timeout_summary_leads_with_specific_hint(self):
+        import main as main_mod
+        from csv_parser import TestCombination
+        combo = TestCombination(label="X", receiver_server="EMS", receiver_client="iOS",
+                                sender_server="Gmail", sender_client="Android")
+        sender = MagicMock()
+        sender.config = {"smtp_host": "h", "smtp_port": 2465}
+        sender.send_plain_text.side_effect = TimeoutError("timed out")
+        receiver = MagicMock()
+        receiver.config = {"test_address": "a@b"}
+        res = main_mod.run_scenario("plain_text", combo, 0, sender, receiver, MagicMock(),
+                                    {"wait_seconds": 0, "max_retries": 1, "retry_interval": 0})
+        summary = res["analysis"]["summary"]
+        assert summary.index("smtp_use_ssl") < summary.index("giden SMTP portuna")

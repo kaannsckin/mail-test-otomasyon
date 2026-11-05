@@ -31,6 +31,11 @@ CLAUDE_MAX_TOKENS = 16000
 # çalıştırır ("default" = Anthropic'in kategoriye göre önerdiği model).
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
+# LLM'e art arda bu kadar kez ulaşılamazsa (ağ/zaman aşımı/5xx) kalan
+# senaryolar için API çağrılmaz; ölü bir uç nokta tam koşuyu saatlerce
+# kilitlemesin (eskiden senaryo başına ~6 dk → tam matris ~20 saat).
+CIRCUIT_BREAKER_THRESHOLD = 3
+
 # Analiz kararının şeması: yapılandırılmış çıktı (output_config.format) ile
 # model geçerli JSON döndürmeye zorlanır; yanıt yine de doğrulanır.
 VERDICT_SCHEMA = {
@@ -96,14 +101,16 @@ class MailAnalyzer:
         # Yapılandırılmış çıktı / fallback / effort'u desteklemeyen eski bir
         # model seçilmişse ilk 400'den sonra sade isteğe geçilir (yapışkan).
         self._enhanced = True
+        self._consecutive_unavailable = 0
+        self._circuit_reason: Optional[str] = None
         if self.provider == "gemini":
             self.model = model or DEFAULT_GEMINI_MODEL
             self.client = None
         else:
             self.model = model or DEFAULT_MODEL
             # SDK 408/409/429/5xx ve bağlantı hatalarında exponential backoff ile
-            # yeniden dener. Düşünen modeller için 120 sn; en kötü durum ~6 dk.
-            self.client = anthropic.Anthropic(api_key=self.api_key, max_retries=2, timeout=120.0)
+            # bir kez yeniden dener; senaryo başına en kötü durum ~3 dk.
+            self.client = anthropic.Anthropic(api_key=self.api_key, max_retries=1, timeout=90.0)
 
     def analyze(self, scenario_type: str, send_meta: dict,
                 received_msg: Optional[dict], combination: dict) -> dict:
@@ -119,6 +126,11 @@ class MailAnalyzer:
                 "summary": "Mesaj teslim edilemedi — timeout.",
                 "confidence": "HIGH",
             }
+
+        if self._circuit_reason:
+            return _failure(
+                f"LLM analizi yapılmadı: {self._circuit_reason}",
+                self._circuit_reason, check_name="LLM Analizi")
 
         prompt = self._build_prompt(scenario_type, send_meta, received_msg, combination)
         if self.provider == "gemini":
@@ -317,6 +329,17 @@ Sadece JSON döndür, markdown veya açıklama ekleme."""
     # ------------------------------------------------------------------ #
     #  Claude API çağrısı
     # ------------------------------------------------------------------ #
+    def _open_circuit(self, reason: str) -> None:
+        if not self._circuit_reason:
+            self._circuit_reason = reason
+            logger.error(f"LLM devre dışı — kalan senaryolar analiz edilmeyecek: {reason}")
+
+    def _note_unavailable(self, reason: str) -> None:
+        self._consecutive_unavailable += 1
+        if self._consecutive_unavailable >= CIRCUIT_BREAKER_THRESHOLD:
+            self._open_circuit(f"API'ye art arda {self._consecutive_unavailable} kez "
+                               f"ulaşılamadı ({reason})")
+
     def _claude_request(self, prompt: str):
         kwargs = {
             "model": self.model,
@@ -344,12 +367,20 @@ Sadece JSON döndür, markdown veya açıklama ekleme."""
                     raise
                 # Seçilen model yapılandırılmış çıktı/effort/fallback'i
                 # desteklemiyor olabilir (eski model) — sade istekle tekrar dene.
+                # Sade istek BAŞARILI olursa sorunun gelişmiş parametreler
+                # olduğu kanıtlanmış olur ve tercih kalıcılaşır; tek seferlik bir
+                # 400 (ör. aşırı uzun prompt) yapılandırılmış çıktıyı kapatmaz.
                 logger.warning(
                     f"Model ({self.model}) gelişmiş istek parametrelerini reddetti, "
-                    f"sade istekle devam ediliyor: {e}")
+                    f"sade istekle deneniyor: {e}")
                 self._enhanced = False
-                response = self._claude_request(prompt)
+                try:
+                    response = self._claude_request(prompt)
+                except Exception:
+                    self._enhanced = True
+                    raise
 
+            self._consecutive_unavailable = 0
             if response.stop_reason == "refusal":
                 return json.dumps(_failure(
                     "Claude analizi reddetti (refusal).", "stop_reason=refusal",
@@ -365,21 +396,28 @@ Sadece JSON döndür, markdown veya açıklama ekleme."""
         except anthropic.AuthenticationError as e:
             error_msg = "API key geçersiz — Konfigürasyon sayfasından güncelleyin."
             exc: Exception = e
+            self._open_circuit(error_msg)          # sonraki her çağrı da aynı sonucu verir
         except anthropic.PermissionDeniedError as e:
             error_msg = "API key'in bu modele/özelliğe erişim izni yok."
             exc = e
+            self._open_circuit(error_msg)
         except anthropic.NotFoundError as e:
             error_msg = f"Model bulunamadı: {self.model} — Konfigürasyondan güncel bir model seçin."
             exc = e
+            self._open_circuit(error_msg)
         except anthropic.RateLimitError as e:
             error_msg = "Claude API rate limit aşıldı — daha sonra tekrar deneyin."
             exc = e
+            self._note_unavailable(error_msg)
         except anthropic.APIStatusError as e:
             error_msg = f"Claude API hatası (HTTP {e.status_code})."
             exc = e
+            if e.status_code >= 500:
+                self._note_unavailable(error_msg)
         except anthropic.APIConnectionError as e:
-            error_msg = "Claude API'ye bağlanılamadı — ağ bağlantısını kontrol edin."
+            error_msg = "Claude API'ye bağlanılamadı ya da zaman aşımı — ağ bağlantısını kontrol edin."
             exc = e
+            self._note_unavailable(error_msg)
         except Exception as e:  # noqa: BLE001 — bozuk yanıt gövdesi vb. koşuyu düşürmesin
             error_msg = f"Beklenmeyen API yanıtı ({type(e).__name__})."
             exc = e
@@ -432,9 +470,15 @@ Sadece JSON döndür, markdown veya açıklama ekleme."""
         """
         text = (text or "").strip()
         try:
-            return json.loads(text)
+            whole = json.loads(text)
         except json.JSONDecodeError:
             pass
+        else:
+            # Yanıtın tamamı geçerli JSON ama nesne değilse (liste, true, metin)
+            # içinden parça cımbızlanmaz — biçim bozuk karar asla PASS olmasın.
+            if isinstance(whole, dict):
+                return whole
+            raise ValueError("JSON kökü nesne değil")
         decoder = json.JSONDecoder()
         for match in re.finditer(r"\{", text):
             try:

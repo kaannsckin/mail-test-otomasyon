@@ -182,7 +182,16 @@ def explain_connection_error(exc: BaseException, server_config: Optional[dict] =
         auth_failed = isinstance(e, smtplib.SMTPAuthenticationError) or (
             isinstance(e, imaplib.IMAP4.error)
             and any(w in str(e).lower() for w in ("auth", "login", "credential")))
+        if isinstance(e, smtplib.SMTPNotSupportedError) and "auth" in str(e).lower():
+            return ("Sunucu şifresiz bağlantıda kimlik doğrulamaya izin vermiyor — "
+                    "smtp_use_tls: true (587 STARTTLS) ya da smtp_use_ssl: true (465) kullanın.")
         if auth_failed:
+            if (sc.get("auth_method") in ("totp_password", "otp_only")
+                    and not sc.get("totp_secret")
+                    and os.environ.get("MFA_INTERACTIVE", "") != "1"):
+                return ("2FA kodu alınamadı: totp_secret boş ve komut satırından (CLI) "
+                        "çalıştırmada kod sorulamaz. totp_secret girin ya da testi web "
+                        "arayüzünden başlatın (kod ekranda sorulur).")
             hint = "Kullanıcı adı/şifre reddedildi."
             if "gmail" in str(sc.get("smtp_host", "")) + str(sc.get("imap_host", "")):
                 hint += " Gmail için 2FA açık hesapta Uygulama Şifresi (App Password) gerekir."
@@ -192,9 +201,10 @@ def explain_connection_error(exc: BaseException, server_config: Optional[dict] =
         if isinstance(e, smtplib.SMTPServerDisconnected) and int(sc.get("smtp_port") or 0) == 465:
             return "Port 465 doğrudan SSL ister — smtp_use_ssl: true olmalı."
         if isinstance(e, (socket.timeout, TimeoutError)):
-            return ("Bağlantı zaman aşımına uğradı. Port bir güvenlik duvarınca sessizce "
-                    "engelleniyor olabilir (kurum ağı ya da giden SMTP'yi kapatan bulut "
-                    "sağlayıcısı) veya port/TLS modu yanlış.")
+            return ("Bağlantı zaman aşımına uğradı. Port doğrudan SSL bekliyor olabilir "
+                    "(465 → smtp_use_ssl: true, 993 → imap_use_ssl: true) ya da bir güvenlik "
+                    "duvarınca sessizce engelleniyor (kurum ağı ya da giden SMTP'yi kapatan "
+                    "bulut sağlayıcısı).")
         if isinstance(e, ConnectionRefusedError):
             return "Bağlantı reddedildi — port kapalı ya da sunucu bu portu dinlemiyor."
     if "network is unreachable" in text or "no route to host" in text:

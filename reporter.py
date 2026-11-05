@@ -24,8 +24,15 @@ def _status_of(result: dict) -> str:
     return "PASS" if passed else "FAIL"
 
 
-def generate_html_report(results: List[dict], output_path: str):
-    """Test sonuçlarından profesyonel HTML rapor üretir."""
+def generate_html_report(results: List[dict], output_path: str, note: str = ""):
+    """Test sonuçlarından profesyonel HTML rapor üretir.
+
+    ``note`` doluysa (ör. koşu durduruldu) raporun başında uyarı olarak gösterilir.
+    """
+    note_html = (
+        '<div style="margin:16px 0;padding:12px 16px;border-radius:8px;background:#fff4e5;'
+        'border:1px solid #f0a500;color:#7a4b00;font-weight:600">⚠️ ' + _esc(note) + '</div>'
+    ) if note else ""
     total = len(results)
     passed = sum(1 for r in results if _status_of(r) == "PASS")
     skipped = sum(1 for r in results if _status_of(r) == "SKIP")
@@ -176,6 +183,7 @@ def generate_html_report(results: List[dict], output_path: str):
   <div class="meta">Oluşturulma: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')} &nbsp;|&nbsp;
   Claude API Destekli Analiz</div>
 </div>
+{note_html}
 
 <div class="summary-bar">
   <div class="stat-card total"><div class="val">{total}</div><div class="lbl">Toplam Senaryo</div></div>

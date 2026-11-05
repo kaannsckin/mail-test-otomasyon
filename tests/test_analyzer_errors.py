@@ -86,8 +86,8 @@ class TestClaudeApiErrors:
     def test_sdk_configured_with_retries(self):
         with patch("analyzer.anthropic.Anthropic") as cls:
             MailAnalyzer("sk-ant-test")
-        assert cls.call_args.kwargs["max_retries"] == 2
-        assert cls.call_args.kwargs["timeout"] == 120.0
+        assert cls.call_args.kwargs["max_retries"] == 1
+        assert cls.call_args.kwargs["timeout"] == 90.0
 
 
 class TestGeminiApiErrors:
