@@ -51,9 +51,18 @@ MANUAL_CHECKS = {
 
 
 def load_server_config(config_path: str, server_key: str) -> dict:
-    with open(config_path, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
-    if server_key not in config:
+    # Eskiden config yoksa/bozuksa ham traceback (FileNotFoundError) çıkıyordu.
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+    except FileNotFoundError:
+        raise SystemExit(f"HATA: {config_path} bulunamadı — config.yaml.example'ı kopyalayıp "
+                         "doldurun ya da --config ile yol verin.")
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as e:
+        raise SystemExit(f"HATA: {config_path} okunamadı: {e}")
+    if not isinstance(config, dict):
+        raise SystemExit(f"HATA: {config_path} 'anahtar: değer' yapısında değil.")
+    if not isinstance(config.get(server_key), dict):
         raise SystemExit(f"HATA: '{server_key}' config.yaml'da tanımlı değil.")
     sc = config[server_key]
     missing = [k for k in ("smtp_host", "smtp_port", "username", "password", "test_address")

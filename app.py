@@ -3,7 +3,7 @@ app.py — Mail Otomasyon Web Arayüzü (Flask)
 Çalıştır: python app.py  →  http://localhost:5000 (boşsa) / otomatik alternatif port
 """
 
-import csv, errno, hmac, ipaddress, json, logging, os, queue, signal, socket, subprocess, sys, threading, time, uuid
+import csv, errno, hmac, ipaddress, json, logging, os, signal, socket, subprocess, sys, threading, time, uuid
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -80,7 +80,7 @@ run_state = {
     "process": None,
     "run_id": None,
     "stopped": False,
-    "log_queue": queue.Queue(),
+    "pump_done": True,      # log okuyucu bu koşunun son satırını dosyaya yazdı mı
     "started_at": None,
     "finished_at": None,
     "exit_code": None,
@@ -186,6 +186,57 @@ def _cross_site_request() -> bool:
     return origin_host not in allowed
 
 
+# ── Basic Auth deneme sınırı ────────────────────────────────────
+# Eskiden parola sınırsız denenebiliyordu (200 yanlış deneme, hiç yavaşlama yok).
+AUTH_MAX_FAILURES = 10            # pencere içinde izin verilen yanlış deneme
+AUTH_WINDOW_SECONDS = 300
+_auth_failures: dict = {}         # istemci → [zaman damgaları]
+_auth_lock = threading.Lock()
+
+
+def _client_key() -> str:
+    """Deneme sayacının anahtarı. PaaS'ta istemci adresi, proxy'nin EKLEDİĞİ
+    (en sağdaki) X-Forwarded-For girdisidir — soldakiler istemcinin yazabildiği
+    değerlerdir ve sayacı atlatmak için kullanılabilirdi."""
+    if any(os.environ.get(m) for m in _PAAS_MARKERS):
+        fwd = [h.strip() for h in request.headers.get("X-Forwarded-For", "").split(",") if h.strip()]
+        if fwd:
+            return fwd[-1]
+    return request.remote_addr or "?"
+
+
+def _auth_blocked(key: str, now: float) -> float:
+    """Kilitliyse kalan saniye, değilse 0."""
+    with _auth_lock:
+        recent = [t for t in _auth_failures.get(key, []) if now - t < AUTH_WINDOW_SECONDS]
+        if recent:
+            _auth_failures[key] = recent
+        else:
+            _auth_failures.pop(key, None)
+        if len(recent) >= AUTH_MAX_FAILURES:
+            return AUTH_WINDOW_SECONDS - (now - recent[0])
+        return 0.0
+
+
+def _note_auth_failure(key: str, now: float) -> None:
+    with _auth_lock:
+        if len(_auth_failures) > 10000:            # bellek sınırı: en eskileri at
+            _auth_failures.clear()
+        _auth_failures.setdefault(key, []).append(now)
+
+
+@app.after_request
+def _security_headers(resp):
+    # Clickjacking: arayüz başka bir sitede çerçevelenemez (CSRF kapısı Origin'e
+    # dayandığı için çerçeveleme onu atlatabiliyordu). Rapor önizlemesi aynı
+    # kaynaktan iframe ile açıldığından 'self' izinli.
+    resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    resp.headers.setdefault("Content-Security-Policy", "frame-ancestors 'self'")
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("Referrer-Policy", "same-origin")
+    return resp
+
+
 @app.before_request
 def _security_gate():
     if request.path == "/api/health":
@@ -194,10 +245,18 @@ def _security_gate():
     password = os.environ.get("UI_PASSWORD", "")
     if password:
         username = os.environ.get("UI_USERNAME", "admin")
+        key, now = _client_key(), time.time()
+        wait = _auth_blocked(key, now)
+        if wait:
+            return Response(
+                "Çok fazla hatalı giriş denemesi — biraz sonra tekrar deneyin.", 429,
+                {"Retry-After": str(int(wait) + 1), "Content-Type": "text/plain; charset=utf-8"})
         auth = request.authorization
         if not (auth and auth.type == "basic"
                 and _secure_equals(auth.username, username)
                 and _secure_equals(auth.password, password)):
+            if auth is not None:   # tarayıcının ilk (kimliksiz) isteği deneme sayılmaz
+                _note_auth_failure(key, now)
             return Response(
                 "Kimlik doğrulama gerekli", 401,
                 {"WWW-Authenticate": 'Basic realm="Mail Otomasyon", charset="UTF-8"'},
@@ -227,6 +286,8 @@ def _too_large(_e):
 
 # ── CONFIG ──────────────────────────────────────────────────────
 SECRET_MASK = "••••••••"
+TEST_CONNECTION_DEADLINE = 45.0
+LOG_POLL_MAX_LINES = 2000         # /api/run/logs yanıtı başına en fazla satır   # sn — bağlantı testinin toplam süre sınırı
 SERVER_KEYS = ("ems", "gmail", "outlook")
 
 
@@ -514,7 +575,7 @@ def _login_with_code(do_login, auth_method: str, username: str, password: str, c
 @app.route("/api/config/test-connection", methods=["POST"])
 def test_connection():
     import imaplib, smtplib
-    from mail_transport import explain_connection_error, imap_connect, smtp_connect
+    from mail_transport import Deadline, explain_connection_error, imap_connect, smtp_connect
 
     body       = _json_body()
     server_key = str(body.get("server") or "")
@@ -562,8 +623,10 @@ def test_connection():
         return jsonify({"ok": False, "error": "Şifre boş — formda şifreyi girin"})
 
     stage = "SMTP"
+    # Toplam süre sınırı: satır damlatan bir sunucu isteği süresiz tutamasın.
+    deadline = Deadline(TEST_CONNECTION_DEADLINE)
     try:
-        smtp = smtp_connect(sc, timeout=15)
+        smtp = smtp_connect(sc, timeout=15, deadline=deadline)
         try:
             _login_with_code(smtp.login, auth_method, username, password, code,
                              (smtplib.SMTPException,))
@@ -579,7 +642,7 @@ def test_connection():
                 imap_note = " (IMAP, tek kullanımlık kod yeniden kullanılamayacağı için test edilmedi)"
             else:
                 stage = "IMAP"
-                imap = imap_connect(sc, timeout=15)
+                imap = imap_connect(sc, timeout=15, deadline=deadline)
                 try:
                     _login_with_code(imap.login, auth_method, username, password, code,
                                      (imaplib.IMAP4.error,))
@@ -592,11 +655,23 @@ def test_connection():
                     except Exception:
                         pass
                 imap_note = " (SMTP + IMAP)"
-        return jsonify({"ok": True, "message": f"✅ {label} bağlantısı başarılı{imap_note}"})
+        from mail_transport import _as_bool, smtp_mode
+        # Arayüzdeki güvenlik rozetleri gerçek bağlantı moduna göre çizilir;
+        # eskiden düz SMTP / tls_verify:false için de "Güvenli" gösteriliyordu.
+        security = {"smtp_mode": smtp_mode(sc),
+                    "tls_verify": _as_bool(sc.get("tls_verify"), True)}
+        return jsonify({"ok": True, "message": f"✅ {label} bağlantısı başarılı{imap_note}",
+                        "security": security})
     except Exception as e:  # noqa: BLE001 — her hata kullanıcıya açıklanır
+        if deadline.expired:
+            return jsonify({"ok": False, "stage": stage, "error": (
+                f"{stage}: sunucu {deadline.seconds:.0f} sn içinde yanıtlamayı tamamlamadı — "
+                "bağlantı kesildi. Host/port ve TLS modunu kontrol edin.")})
         hint = explain_connection_error(e, sc)
         msg = f"{stage}: {e}"
         return jsonify({"ok": False, "error": f"{msg} — {hint}" if hint else msg, "stage": stage})
+    finally:
+        deadline.close()
 
 # ── 2FA / MFA ───────────────────────────────────────────────────
 @app.route("/api/mfa/status", methods=["GET"])
@@ -633,53 +708,60 @@ def get_combinations():
     try:
         from csv_parser import parse_csv
         csv_path = _get_csv_path()
+        resolved, warning = _resolve_csv_path()
+        if resolved != csv_path:
+            warning = None
         if not os.path.exists(csv_path):
             return jsonify({"ok": False, "error": f"CSV bulunamadı: {csv_path}"})
         combos = parse_csv(csv_path)
+        if not combos:
+            warning = ((warning + " ") if warning else "") + \
+                f"{Path(csv_path).name} içinde test kombinasyonu bulunamadı."
         result = [{"index":i,"label":c.label,
                    "receiver_server":c.receiver_server,"receiver_client":c.receiver_client,
                    "sender_server":c.sender_server,"sender_client":c.sender_client,
                    "scenarios":list(c.scenarios.keys()),
                    "step_count":sum(len(s.steps) for s in c.scenarios.values())}
                   for i,c in enumerate(combos)]
-        return jsonify({"ok": True, "combinations": result})
+        return jsonify({"ok": True, "combinations": result, "csv": Path(csv_path).name,
+                        **({"warning": warning} if warning else {})})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
 
-def _get_csv_path():
-    try:
-        raw = _read_config().get("test", {}).get("csv_input") or "mail_test_checklist.csv"
-    except ConfigError:
-        raw = "mail_test_checklist.csv"
-    raw = str(raw)
+def _get_csv_path() -> str:
+    return _resolve_csv_path()[0]
 
-    # Resolve relative paths against repo root and fall back to a likely CSV
+
+def _resolve_csv_path() -> tuple:
+    """(kullanılacak CSV yolu, uyarı). Yapılandırılan dosya bulunamazsa varsayılana
+    düşülür ama bu artık uyarıyla bildirilir (eskiden sessizdi)."""
+    configured = None
+    try:
+        configured = (_read_config().get("test") or {}).get("csv_input")
+    except ConfigError:
+        pass
+    raw = str(configured or "mail_test_checklist.csv")
+
     repo_root = Path(__file__).parent
     p = Path(raw)
-    candidates = [p]
-    if not p.is_absolute():
-        candidates += [repo_root / p, repo_root / p.name]
-    candidates.append(repo_root / "mail_test_checklist.csv")
-    for c in candidates:
+    exact = [p] if p.is_absolute() else [p, repo_root / p, repo_root / p.name]
+    for c in exact:
         try:
             if c.exists() and c.is_file():
-                return str(c)
+                return str(c), None
         except OSError:
             continue
 
-    csvs = [x for x in repo_root.glob("*.csv") if x.is_file()]
-    if csvs:
-        preferred = sorted(
-            csvs,
-            key=lambda x: (
-                0 if "checklist" in x.name.lower() else 1,
-                0 if "mail" in x.name.lower() else 1,
-                len(x.name),
-            ),
-        )[0]
-        return str(preferred)
-
-    return raw
+    fallbacks = [repo_root / "mail_test_checklist.csv"] + sorted(
+        (x for x in repo_root.glob("*.csv") if x.is_file()),
+        key=lambda x: (0 if "checklist" in x.name.lower() else 1,
+                       0 if "mail" in x.name.lower() else 1, len(x.name)))
+    for c in fallbacks:
+        if c.exists() and c.is_file():
+            warning = (f"Yapılandırılan test CSV'si bulunamadı ({raw}); "
+                       f"bunun yerine {c.name} gösteriliyor.") if configured else None
+            return str(c), warning
+    return raw, None
 
 # ── HEALTH ──────────────────────────────────────────────────────
 @app.route("/api/health")
@@ -849,7 +931,9 @@ def start_run():
         if run_state["running"]:
             return jsonify({"ok": False, "error": "Zaten bir test çalışıyor"}), 400
         mfa_manager.clear_bridge()  # önceki çalışmadan kalan challenge dosyaları
-        log_file = LOGS_DIR / f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        run_id = uuid.uuid4().hex
+        # run_id eki: aynı saniyede başlayan iki koşu ("w" kipinde) aynı dosyayı paylaşıyordu
+        log_file = LOGS_DIR / f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{run_id[:8]}.log"
         # MFA_INTERACTIVE=1: subprocess'teki sender/receiver, TOTP secret yoksa
         # kodu köprü üzerinden arayüz modal'ından ister. UTF-8 zorlanır ki Türkçe
         # Windows'ta (cp1254) emoji/ğüş içeren loglar okuyucu thread'i öldürmesin.
@@ -865,8 +949,7 @@ def start_run():
             )
         except OSError as e:
             return jsonify({"ok": False, "error": f"Test süreci başlatılamadı: {e}"}), 500
-        run_id = uuid.uuid4().hex
-        run_state.update({"log_queue": queue.Queue(), "running": True, "process": proc,
+        run_state.update({"pump_done": False, "running": True, "process": proc,
                           "run_id": run_id, "stopped": False, "log_file": str(log_file),
                           "started_at": datetime.now().isoformat(),
                           "finished_at": None, "exit_code": None})
@@ -876,16 +959,15 @@ def start_run():
             pass
 
     def _pump():
+        # Satırlar yalnızca dosyaya yazılır; eskiden ayrıca hiç okunmayan bir
+        # kuyruğa da konuyor, koşunun tüm çıktısı bellekte birikiyordu.
         try:
             with open(log_file, "w", encoding="utf-8") as lf:
                 for line in proc.stdout:
-                    line = line.rstrip()
-                    run_state["log_queue"].put(line)
-                    lf.write(line + "\n")
+                    lf.write(line.rstrip() + "\n")
                     lf.flush()
         except Exception as e:  # noqa: BLE001 — log okuyucu asla sessizce ölmesin
             err = f"[HATA] Log okunamadı: {e}"
-            run_state["log_queue"].put(err)
             try:
                 with open(log_file, "a", encoding="utf-8") as lf:
                     lf.write(err + "\n")
@@ -905,7 +987,8 @@ def start_run():
                         RUN_PID_FILE.unlink()
                     except OSError:
                         pass
-            run_state["log_queue"].put("__DONE__")
+                if run_state.get("run_id") == run_id:
+                    run_state["pump_done"] = True
 
     threading.Thread(target=_pump, daemon=True).start()
     return jsonify({"ok": True, "cmd": " ".join(cmd)})
@@ -939,52 +1022,113 @@ def run_status():
 
 @app.route("/api/run/logs")
 def poll_logs():
-    """Log polling endpoint — SSE yerine kullanılır (Vercel uyumlu)."""
+    """Log polling endpoint — SSE yerine kullanılır (Vercel uyumlu).
+
+    Yanıt en fazla LOG_POLL_MAX_LINES satır içerir (istemci next_offset ile
+    devam eder); eskiden tüm log tek yanıtta dönüyordu. İstemcinin offset'i
+    dosyadan büyükse (yeni koşu başladı, eski sekme) baştan gönderilir ve
+    ``reset: true`` döner; eskiden yeni koşu boyunca hiç satır gelmiyordu.
+    """
     try:
         offset = max(0, int(request.args.get("offset", 0)))
     except (TypeError, ValueError):
         offset = 0
     log_file = run_state.get("log_file")
-    lines = []
-    next_offset = offset
+    lines, total, reset = [], 0, False
 
     if log_file and Path(log_file).exists():
-        with open(log_file, "r", encoding="utf-8", errors="replace") as f:
-            all_lines = f.readlines()
-        new_lines = all_lines[offset:]
-        lines = [l.rstrip() for l in new_lines]
-        next_offset = max(offset, len(all_lines))
+        for _ in range(2):
+            lines, total = [], 0
+            with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+                for total, line in enumerate(f, 1):
+                    if offset < total <= offset + LOG_POLL_MAX_LINES:
+                        lines.append(line.rstrip())
+            if offset <= total:
+                break
+            offset, reset = 0, True
+    next_offset = offset + len(lines)
 
-    done = (not run_state["running"]) and (next_offset == offset or not run_state.get("log_file"))
-    return jsonify({"lines": lines, "next_offset": next_offset, "done": done})
+    # Okuyucu thread'i son satırları yazmadan (ör. Durdur sonrası) "bitti" denmesin.
+    finished = not run_state["running"] and run_state.get("pump_done", True)
+    # Satır dönen poll'da done=False: istemci kalanları boşaltmadan durmasın.
+    done = finished and not lines and next_offset >= total
+    return jsonify({"lines": lines, "next_offset": next_offset, "done": done,
+                    "reset": reset, "run_id": run_state.get("run_id")})
 
 # ── REPORTS ─────────────────────────────────────────────────────
+def _inside_reports(path: Path) -> bool:
+    """Dosya (sembolik bağ çözüldükten sonra) raporlar dizininde mi?"""
+    try:
+        return path.resolve(strict=True).is_relative_to(REPORTS_DIR.resolve())
+    except (OSError, RuntimeError):
+        return False
+
+
+def _report_files(pattern: str) -> list:
+    """(yol, stat) listesi, yeniden eskiye. Kırık sembolik bağ, dizin dışına
+    işaret eden bağ ve listeleme sırasında silinen dosya atlanır (eskiden 500)."""
+    out = []
+    for f in REPORTS_DIR.glob(pattern):
+        if not _inside_reports(f):
+            continue
+        try:
+            st = f.stat()
+        except OSError:
+            continue
+        if f.is_file():
+            out.append((f, st))
+    out.sort(key=lambda x: x[1].st_mtime, reverse=True)
+    return out
+
+
 @app.route("/api/reports")
 def list_reports():
     files = []
-    for ext in ("*.html","*.csv"):
-        for f in sorted(REPORTS_DIR.glob(ext), key=os.path.getmtime, reverse=True):
-            st = f.stat()
-            files.append({"name":f.name,"size":st.st_size,"type":f.suffix[1:],
-                          "mtime":datetime.fromtimestamp(st.st_mtime).strftime("%d.%m.%Y %H:%M")})
+    for ext in ("*.html", "*.csv"):
+        for f, st in _report_files(ext):
+            files.append({"name": f.name, "size": st.st_size, "type": f.suffix[1:],
+                          "mtime": datetime.fromtimestamp(st.st_mtime).strftime("%d.%m.%Y %H:%M")})
     return jsonify({"ok": True, "reports": files})
 
 @app.route("/api/reports/<path:filename>")
 def get_report(filename):
-    # send_from_directory path traversal'ı engeller (../ ile dizin dışına çıkılamaz)
+    # send_from_directory path traversal'ı engeller (../ ile dizin dışına çıkılamaz);
+    # sembolik bağ ile dizin dışına çıkış da reddedilir.
+    if not _inside_reports(REPORTS_DIR / filename):
+        return jsonify({"ok": False}), 404
     try:
         return send_from_directory(REPORTS_DIR, filename)
     except Exception:
         return jsonify({"ok": False}), 404
 
+def _results_csv_name() -> str:
+    try:
+        raw = (_read_config().get("test") or {}).get("results_csv")
+    except ConfigError:
+        raw = None
+    return Path(str(raw or "test_results.csv")).name
+
 @app.route("/api/results/latest")
 def latest_results():
-    files = sorted(REPORTS_DIR.glob("*.csv"), key=os.path.getmtime, reverse=True)
-    if not files: return jsonify({"ok":False,"error":"Henüz sonuç yok"})
+    # Önce yapılandırılmış sonuç dosyası; yoksa en yeni CSV (eskiden raporlar
+    # dizinindeki HERHANGİ bir en yeni CSV seçiliyordu).
+    preferred = REPORTS_DIR / _results_csv_name()
+    files = [f for f, _ in _report_files("*.csv")]
+    if preferred in files:
+        files.remove(preferred)
+        files.insert(0, preferred)
+    if not files:
+        return jsonify({"ok": False, "error": "Henüz sonuç yok"})
     rows = []
-    with open(files[0],"r",encoding="utf-8-sig") as f:
-        for row in csv.DictReader(f): rows.append(dict(row))
-    return jsonify({"ok":True,"results":rows,"file":files[0].name})
+    try:
+        with open(files[0], "r", encoding="utf-8-sig", errors="replace", newline="") as f:
+            reader = csv.DictReader(f, restkey="_fazla", restval="")
+            for row in reader:
+                row.pop("_fazla", None)          # fazla sütunlu satır 500'e yol açıyordu
+                rows.append({str(k): v for k, v in row.items() if k is not None})
+    except (OSError, csv.Error) as e:
+        return jsonify({"ok": False, "error": f"Sonuç dosyası okunamadı ({files[0].name}): {e}"})
+    return jsonify({"ok": True, "results": rows, "file": files[0].name})
 
 @app.route("/")
 def index():

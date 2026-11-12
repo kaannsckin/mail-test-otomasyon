@@ -14,3 +14,7 @@ tests/
 .pytest_cache
 .claude
 .env
+*.pem
+*.key
+*.p12
+*.pfx

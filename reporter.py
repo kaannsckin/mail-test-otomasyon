@@ -16,9 +16,67 @@ def _esc(value) -> str:
     return html.escape(str(value)) if value is not None else ""
 
 
+def _text(value) -> str:
+    """Yazılabilir metin: None → "", tek başına surrogate (ör. LLM JSON'undaki
+    "\\ud800") → U+FFFD. Eskiden UnicodeEncodeError tüm raporu düşürüyordu."""
+    if value is None:
+        return ""
+    return str(value).encode("utf-8", "replace").decode("utf-8")
+
+
+def _normalize(result) -> dict:
+    """Rapor girişini güvenli biçime getirir — tek bozuk satır (analysis=None,
+    checks=None, eksik anahtar, metin olmayan issue) eskiden raporun tamamını
+    düşürüyordu."""
+    r = result if isinstance(result, dict) else {}
+    a = r.get("analysis") if isinstance(r.get("analysis"), dict) else {}
+
+    def str_list(v):
+        if v is None:
+            return []
+        if not isinstance(v, (list, tuple)):
+            v = [v]
+        return [_text(x) for x in v if x not in (None, "")]
+
+    checks = []
+    raw_checks = a.get("checks")
+    for ch in (raw_checks if isinstance(raw_checks, (list, tuple)) else []):
+        if isinstance(ch, dict):
+            checks.append({"name": _text(ch.get("name")), "passed": bool(ch.get("passed")),
+                           "detail": _text(ch.get("detail"))})
+        elif ch not in (None, ""):
+            checks.append({"name": _text(ch), "passed": False, "detail": ""})
+    passed = a.get("passed")
+    return {
+        **r,
+        "combination": _text(r.get("combination")) or "?",
+        "scenario_type": _text(r.get("scenario_type") or r.get("scenario_key")) or "?",
+        "test_time": _text(r.get("test_time")),
+        "analysis": {
+            "passed": passed if passed is None or isinstance(passed, bool) else bool(passed),
+            "confidence": _text(a.get("confidence")) or "LOW",
+            "summary": _text(a.get("summary")),
+            "checks": checks,
+            "issues": str_list(a.get("issues")),
+            "recommendations": str_list(a.get("recommendations")),
+        },
+    }
+
+
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_cell(value) -> str:
+    """CSV/formül enjeksiyonu: = + - @ ile başlayan hücre Excel/Sheets'te formül
+    olarak çalışır (konu/özet mail içeriğinden ve LLM'den gelir). Başına ' eklenir."""
+    text = _text(value)
+    return "'" + text if text.startswith(_FORMULA_PREFIXES) else text
+
+
 def _status_of(result: dict) -> str:
     """PASS / FAIL / SKIP — analysis.passed None ise senaryo atlanmıştır."""
-    passed = result.get("analysis", {}).get("passed")
+    analysis = result.get("analysis") if isinstance(result, dict) else None
+    passed = analysis.get("passed") if isinstance(analysis, dict) else False
     if passed is None:
         return "SKIP"
     return "PASS" if passed else "FAIL"
@@ -33,6 +91,7 @@ def generate_html_report(results: List[dict], output_path: str, note: str = ""):
         '<div style="margin:16px 0;padding:12px 16px;border-radius:8px;background:#fff4e5;'
         'border:1px solid #f0a500;color:#7a4b00;font-weight:600">⚠️ ' + _esc(note) + '</div>'
     ) if note else ""
+    results = [_normalize(r) for r in results or []]
     total = len(results)
     passed = sum(1 for r in results if _status_of(r) == "PASS")
     skipped = sum(1 for r in results if _status_of(r) == "SKIP")
@@ -200,7 +259,7 @@ def generate_html_report(results: List[dict], output_path: str, note: str = ""):
 </body>
 </html>"""
 
-    with open(output_path, "w", encoding="utf-8") as f:
+    with open(output_path, "w", encoding="utf-8", errors="replace") as f:
         f.write(html_doc)
     logger.info(f"HTML rapor oluşturuldu: {output_path}")
 
@@ -213,16 +272,16 @@ def generate_csv_results(results: List[dict], output_path: str):
             "Kombinasyon", "Senaryo Tipi", "Sonuç", "Güven Seviyesi",
             "Özet", "Sorunlar", "Öneriler", "Test Zamanı"
         ])
-        for r in results:
-            analysis = r.get("analysis", {})
-            writer.writerow([
-                r.get("combination", ""),
-                r.get("scenario_type", ""),
+        for r in (_normalize(x) for x in results or []):
+            analysis = r["analysis"]
+            writer.writerow([_csv_cell(v) for v in (
+                r["combination"],
+                r["scenario_type"],
                 _status_of(r),
-                analysis.get("confidence", ""),
-                analysis.get("summary", ""),
-                " | ".join(analysis.get("issues", [])),
-                " | ".join(analysis.get("recommendations", [])),
-                r.get("test_time", ""),
-            ])
+                analysis["confidence"],
+                analysis["summary"],
+                " | ".join(analysis["issues"]),
+                " | ".join(analysis["recommendations"]),
+                r["test_time"],
+            )])
     logger.info(f"CSV sonuçları oluşturuldu: {output_path}")

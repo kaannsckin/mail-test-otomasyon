@@ -127,11 +127,30 @@ def get_server_config(config: dict, server_name: str) -> dict:
     return config[key]
 
 
+class _NoAliasLoader(yaml.SafeLoader):
+    """Web arayüzüyle (app.py) aynı kural: YAML alias reddedilir. Eskiden CLI
+    alias'lı dosyayı çalıştırırken arayüz aynı dosyayı okuyamıyordu."""
+
+    def compose_node(self, parent, index):
+        if self.check_event(yaml.events.AliasEvent):
+            event = self.peek_event()
+            raise yaml.composer.ComposerError(
+                None, None, "YAML alias (*) desteklenmiyor", event.start_mark)
+        return super().compose_node(parent, index)
+
+
 def load_config(path: str) -> dict:
     """config.yaml'ı okur; boş bölümleri {} yapar (``test:`` altı boş kalsa da
     çökmesin). Kök sözlük değilse ValueError."""
     with open(path, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f) or {}
+        try:
+            config = yaml.load(f, Loader=_NoAliasLoader) or {}  # noqa: S506 — SafeLoader türevi
+        except yaml.composer.ComposerError as e:
+            if "alias" in str(e):
+                raise ValueError(
+                    "config.yaml YAML anchor/alias (&ad / *ad) içeriyor — web arayüzü bunları "
+                    "güvenlik nedeniyle kabul etmiyor; değerleri açıkça yazın.") from e
+            raise
     if not isinstance(config, dict):
         raise ValueError("config.yaml kökü 'anahtar: değer' yapısında olmalı")
     return {k: (v if v is not None else {}) for k, v in config.items()}
@@ -183,6 +202,15 @@ def _is_network_unreachable(exc: Exception) -> bool:
     paketi DROP eden güvenlik duvarları errno üretmez, sadece bekletir — bu
     durumda kullanıcı teşhis mesajı yerine anlamsız bir 'timed out' görüyordu.
     """
+    # Sunucu yanıt verdiyse/bağlantı kurulduysa port engelli değildir: yavaş DATA
+    # sonrası "Connection unexpectedly closed: timed out" eskiden "giden SMTP
+    # portu engelli" diye raporlanıyordu.
+    err = exc
+    while err is not None:
+        if isinstance(err, (smtplib.SMTPServerDisconnected, smtplib.SMTPResponseException)):
+            return False
+        err = err.__cause__ or err.__context__
+
     err = exc
     while err is not None:
         if isinstance(err, OSError):
@@ -351,6 +379,28 @@ def _attachment_tag(paths: list[str]) -> str:
     return f"{count} Ek: {types_str}, {size_str}"
 
 
+def _missing_configured_attachments(test_config: dict, scenario_key: str) -> list[str]:
+    """Config'de AÇIKÇA belirtilmiş ama bulunamayan ek dosyaları.
+
+    Eskiden bulunamayan ek sessizce varsayılan test_document.pdf ile
+    değiştiriliyor, test yapılandırılandan başka bir dosyayla PASS oluyordu.
+    """
+    repo_root = Path(__file__).parent
+    raw: list = []
+    if scenario_key == "multi_attachment" and isinstance(
+            test_config.get("test_multi_attachment_paths"), list) \
+            and test_config.get("test_multi_attachment_paths"):
+        raw = test_config["test_multi_attachment_paths"]
+    elif scenario_key in ("attachment", "multi_attachment"):
+        listed = test_config.get("test_attachment_paths")
+        if isinstance(listed, list) and listed:
+            raw = listed
+        elif test_config.get("test_attachment_path"):
+            raw = [test_config["test_attachment_path"]]
+    return [str(r) for r in raw
+            if not (Path(str(r)).exists() or (repo_root / str(r)).exists())]
+
+
 def _resolve_multi_attachment_paths(test_config: dict) -> list[str]:
     """Çoklu ek senaryosu için dosya listesi.
 
@@ -493,9 +543,9 @@ def run_scenario(
     ``combo_index`` mesaj şablonu rotasyonu (kısa/orta/uzun) için kullanılır.
     """
     subject_prefix = str(test_config.get("subject_prefix") or "[AUTO-TEST]")
-    wait = _num(test_config.get("wait_seconds"), 15)
+    wait = max(0, _num(test_config.get("wait_seconds"), 15))   # negatif → ValueError (sleep)
     retries = max(1, _num(test_config.get("max_retries"), 3))
-    retry_int = _num(test_config.get("retry_interval"), 5)
+    retry_int = max(0, _num(test_config.get("retry_interval"), 5))
     image_path = test_config.get("test_image_path", "test_files/test_image.png")
 
     attachment_paths = _resolve_attachment_paths(test_config)
@@ -551,6 +601,16 @@ def run_scenario(
 
     send_meta = None
     test_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    missing = _missing_configured_attachments(test_config, scenario_key)
+    if missing:
+        return _error_result(
+            combo, scenario_key, test_time,
+            f"Yapılandırılan ek dosyası bulunamadı: {', '.join(missing)}",
+            f"Bulunamayan ek: {', '.join(missing)}",
+            ["config.yaml → test.test_attachment_path(s) yolunu düzeltin "
+             "(göreli yollar veri dizinine/proje köküne göre çözülür)."],
+            check_name="Konfigürasyon")
 
     logger.info(
         f"▶ Senaryo: {scenario_key} ({tmpl.length}) | "
@@ -1086,6 +1146,12 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
 
     if interrupted:
         sys.exit(EXIT_INTERRUPTED)
+    if total and not effective:
+        # Her şey SKIP: hiçbir şey test edilmedi — "başarılı" (0) sayılmamalı.
+        # (ör. CSV'de yazım hatalı senaryo adı, S/MIME-only koşu ve openssl yok)
+        logger.error("Hiçbir senaryo çalıştırılmadı — tümü atlandı. Atlanma nedenleri "
+                     "raporda; CSV senaryo adlarını ve önkoşulları kontrol edin.")
+        sys.exit(EXIT_ERROR)
     if report_errors:
         logger.error(f"{' ve '.join(report_errors)} yazılamadı — sonuçlar kaydedilmedi.")
         sys.exit(EXIT_ERROR)

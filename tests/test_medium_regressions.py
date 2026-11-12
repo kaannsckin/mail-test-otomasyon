@@ -391,7 +391,7 @@ class TestSendErrorDict:
         monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
         sender = MailSender({"smtp_host": "h", "smtp_port": 587, "username": "u",
                              "password": "p", "test_address": "a@b.c"})
-        monkeypatch.setitem(sys.modules, "OpenSSL", MagicMock())
+        monkeypatch.setattr("sender.shutil.which", lambda name: "/usr/bin/openssl")
         with patch("subprocess.run", side_effect=FileNotFoundError("openssl")):
             meta = sender.send_smime_signed("d@e.f", "s", "body", "c.pem", "k.pem")
         assert "openssl" in meta["error"]

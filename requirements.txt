@@ -4,4 +4,4 @@ anthropic>=0.40.0
 # anthropic 2.x artık httpx'i çekmediği için açıkça listelenmeli.
 httpx>=0.27
 flask>=3.0.0
-# pyOpenSSL>=23.0.0  # S/MIME testleri için (opsiyonel, lokal kurulumda ekle)
+# S/MIME imzalama sistemdeki `openssl` komutuyla yapılır; pyOpenSSL gerekmez.

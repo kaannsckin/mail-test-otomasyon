@@ -100,6 +100,7 @@ def parse_csv(csv_path: str) -> List[TestCombination]:
     """CSV dosyasını okuyarak TestCombination listesi döndürür."""
     combinations = []
     current_combo = None
+    _warned_unknown: set = set()
 
     for row in _read_rows(csv_path):
         if not any(row):
@@ -133,10 +134,18 @@ def parse_csv(csv_path: str) -> List[TestCombination]:
             continue
 
         if current_combo is None or len(row) < 7:
+            # Eskiden sessizce atlanıyordu; kayıp adım fark edilmiyordu.
+            logger.warning(f"CSV satırı atlandı (#{row_id}): "
+                           + ("kombinasyon başlığından önce" if current_combo is None
+                              else f"{len(row)} sütun var, en az 7 gerekli"))
             continue
 
         scenario_type_tr = row[1].strip()
         scenario_key = SCENARIO_TYPE_MAP.get(scenario_type_tr, scenario_type_tr)
+        if scenario_key not in SUPPORTED_SCENARIOS and scenario_key not in _warned_unknown:
+            _warned_unknown.add(scenario_key)
+            logger.warning(f"CSV'de tanınmayan senaryo tipi: {scenario_type_tr!r} — "
+                           "bu senaryo SKIP olarak raporlanır (yazım hatası olabilir).")
 
         step = TestStep(
             row_id=row_id,

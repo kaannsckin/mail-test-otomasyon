@@ -387,12 +387,23 @@ def self_signed_cert(tmp_path):
 
 class TestSmimeSigning:
 
-    def test_skipped_when_pyopenssl_missing(self, server_cfg, monkeypatch):
-        monkeypatch.setitem(sys.modules, "OpenSSL", None)
+    def test_skipped_when_openssl_cli_missing(self, server_cfg, monkeypatch):
+        monkeypatch.setattr("sender.shutil.which", lambda name: None)
         result = MailSender(server_cfg).send_smime_signed(
             "to@t.com", "Konu", "Gövde", "/yok/c.pem", "/yok/k.pem")
         assert result["skipped"] is True
-        assert "pyOpenSSL" in result["skip_reason"]
+        assert "openssl" in result["skip_reason"]
+
+    def test_pyopenssl_not_required(self, server_cfg, monkeypatch):
+        # Eskiden pyOpenSSL yalnızca kapı olarak import ediliyordu (imzalama
+        # openssl CLI ile); kurulu değilse geçerli sertifikayla bile atlanıyordu.
+        monkeypatch.setitem(sys.modules, "OpenSSL", None)
+        monkeypatch.setattr("sender.shutil.which", lambda name: "/usr/bin/openssl")
+        with patch("subprocess.run", return_value=MagicMock(returncode=1, stderr="bad key")):
+            result = MailSender(server_cfg).send_smime_signed(
+                "to@t.com", "Konu", "Gövde", "/yok/c.pem", "/yok/k.pem")
+        assert not result.get("skipped")
+        assert result["error"] == "bad key"
 
     @pytest.mark.skipif(not _openssl_available(), reason="openssl CLI yok")
     def test_bad_cert_returns_error_not_raises(self, server_cfg, tmp_path, fake_pyopenssl):

@@ -10,6 +10,7 @@ Provider seçimi config.yaml'daki ``analysis.provider`` alanı ile yapılır:
 
 import json
 import logging
+import os
 import re
 from typing import Optional
 
@@ -110,11 +111,20 @@ class MailAnalyzer:
         if self.provider == "gemini":
             self.model = model or DEFAULT_GEMINI_MODEL
             self.client = None
+            if not self.api_key.strip():
+                self._open_circuit("Gemini API key tanımlı değil — Konfigürasyon → gemini.api_key.")
         else:
             self.model = model or DEFAULT_MODEL
+            # Boş key: ortam değişkeni varsa SDK onu kullanır (None); yoksa her
+            # senaryo "bağlanılamadı" hatasıyla 3 boş çağrı yapıyordu — baştan kapat.
+            key = self.api_key.strip() or None
+            if key is None and not os.environ.get("ANTHROPIC_API_KEY"):
+                self._open_circuit("Claude API key tanımlı değil — Konfigürasyon → anthropic.api_key.")
             # SDK 408/409/429/5xx ve bağlantı hatalarında exponential backoff ile
             # bir kez yeniden dener; senaryo başına en kötü durum ~3 dk.
-            self.client = anthropic.Anthropic(api_key=self.api_key, max_retries=1, timeout=90.0)
+            # Key hiç yoksa SDK kurucu hata atar; devre zaten açık, istemci kullanılmaz.
+            client_key = key if (key or os.environ.get("ANTHROPIC_API_KEY")) else "tanımsız"
+            self.client = anthropic.Anthropic(api_key=client_key, max_retries=1, timeout=90.0)
 
     def analyze(self, scenario_type: str, send_meta: dict,
                 received_msg: Optional[dict], combination: dict) -> dict:

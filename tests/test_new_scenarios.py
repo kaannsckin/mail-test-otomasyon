@@ -677,12 +677,15 @@ class TestOrchestratorDispatch:
         s, res = _run("multi_attachment", run_cfg)
         assert res["send_meta"]["scenario"] == "multi_attachment"
 
-    def test_multi_attachment_skips_when_no_files(self, run_cfg):
+    def test_multi_attachment_missing_configured_files_is_config_fail(self, run_cfg):
+        # Yapılandırılan dosyalar yoksa bu bir config hatasıdır: eskiden SKIP
+        # sayılıp başarı oranından düşülüyordu (bkz. tek ek senaryosu).
         cfg = {**run_cfg, "test_multi_attachment_paths": ["/yok/a.pdf", "/yok/b.csv"]}
         s, res = _run("multi_attachment", cfg)
         s.send_with_attachment.assert_not_called()
-        assert res["skipped"] is True
-        assert res["analysis"]["passed"] is None
+        assert res["analysis"]["passed"] is False
+        assert res["analysis"]["checks"][0]["name"] == "Konfigürasyon"
+        assert "/yok/a.pdf" in res["analysis"]["summary"]
 
     def test_multi_attachment_falls_back_to_generated_files(self, run_cfg, monkeypatch,
                                                             tmp_path):
