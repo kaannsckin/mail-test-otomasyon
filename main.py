@@ -25,7 +25,7 @@ from pathlib import Path
 
 # Proje modülleri
 from csv_parser import parse_csv, TestCombination, SUPPORTED_SCENARIOS
-from mail_transport import explain_connection_error, resolve_path
+from mail_transport import SMTPLoginDisconnected, explain_connection_error, resolve_path
 from sender import MailSender
 from receiver import MailReceiver
 from analyzer import MailAnalyzer
@@ -171,6 +171,10 @@ def _is_auth_failure(exc: BaseException) -> bool:
     kalan senaryoları denemeden FAIL sayıyordu."""
     err = exc
     while err is not None:
+        if isinstance(err, SMTPLoginDisconnected):
+            # Girişte kopan bağlantı (sender bir kez yeniden denedi): sunucu ret
+            # kodu vermese de her senaryoda yeniden denemek hesabı kilitletebilir.
+            return True
         if isinstance(err, smtplib.SMTPAuthenticationError):
             code = getattr(err, "smtp_code", None)
             return not (isinstance(code, int) and 400 <= code < 500)
@@ -731,8 +735,12 @@ def run_scenario(
     except Exception as e:
         logger.error(f"Gönderim hatası ({scenario_key}): {e}", exc_info=True)
         hint = explain_connection_error(e, getattr(sender, "config", None))
+        if hint:
+            logger.error(f"💡 {hint}")
         if _is_auth_failure(e):
-            summary = f"SMTP kimlik doğrulaması reddedildi: {e}"
+            summary = (f"SMTP girişinde sunucu bağlantıyı kesti: {e}"
+                       if isinstance(e, SMTPLoginDisconnected)
+                       else f"SMTP kimlik doğrulaması reddedildi: {e}")
             recommendations = [hint or "Kullanıcı adı/şifreyi kontrol edin",
                                "Hesap kilitlenmesin diye bu sunucunun kalan senaryoları denenmeyecek."]
             result = _error_result(combo, scenario_key, test_time, summary, str(e),

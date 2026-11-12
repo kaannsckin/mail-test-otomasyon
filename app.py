@@ -578,7 +578,8 @@ def _login_with_code(do_login, auth_method: str, username: str, password: str, c
 @app.route("/api/config/test-connection", methods=["POST"])
 def test_connection():
     import imaplib, smtplib
-    from mail_transport import Deadline, explain_connection_error, imap_connect, smtp_connect
+    from mail_transport import (Deadline, explain_connection_error, imap_connect, smtp_connect,
+                                smtp_login)
 
     body       = _json_body()
     server_key = str(body.get("server") or "")
@@ -631,8 +632,9 @@ def test_connection():
     try:
         smtp = smtp_connect(sc, timeout=15, deadline=deadline)
         try:
-            _login_with_code(smtp.login, auth_method, username, password, code,
-                             (smtplib.SMTPException,))
+            # smtp_login: girişte kopan bağlantı açıklamalı hataya dönüşür
+            _login_with_code(lambda u, p: smtp_login(smtp, u, p, sc), auth_method,
+                             username, password, code, (smtplib.SMTPAuthenticationError,))
         finally:
             try:
                 smtp.quit()
