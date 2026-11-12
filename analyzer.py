@@ -21,7 +21,26 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-opus-5-5"
 DEFAULT_EFFORT = "medium"
-DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
+# Takma ad her zaman en güncel Flash sürümüne işaret eder (Google, arkasındaki
+# sürümü değiştirmeden 2 hafta önce e-postayla bildirir); ücretsiz katmanda var.
+DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
+# Google'ın kapattığı model aileleri: config'te kalmışsa her analiz 404 verirdi.
+_RETIRED_GEMINI_PREFIXES = ("gemini-1.0-", "gemini-1.5-", "gemini-2.0-")
+_RETIRED_GEMINI_EXACT = ("gemini-pro", "gemini-pro-vision")
+
+
+def resolve_gemini_model(model: Optional[str]) -> str:
+    """Boş → varsayılan; kapatılmış model → uyarıyla varsayılan; 'models/' öneki atılır."""
+    name = str(model or "").strip()
+    if name.startswith("models/"):
+        name = name[len("models/"):]
+    if not name:
+        return DEFAULT_GEMINI_MODEL
+    if name in _RETIRED_GEMINI_EXACT or name.startswith(_RETIRED_GEMINI_PREFIXES):
+        logger.warning(f"Gemini modeli '{name}' Google tarafından kapatıldı — "
+                       f"'{DEFAULT_GEMINI_MODEL}' kullanılıyor (Konfigürasyon → Gemini Modeli).")
+        return DEFAULT_GEMINI_MODEL
+    return name
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
 # Güncel Claude modellerinde düşünme (thinking) her zaman açıktır ve max_tokens
@@ -109,7 +128,7 @@ class MailAnalyzer:
         self._consecutive_unavailable = 0
         self._circuit_reason: Optional[str] = None
         if self.provider == "gemini":
-            self.model = model or DEFAULT_GEMINI_MODEL
+            self.model = resolve_gemini_model(model)
             self.client = None
             if not self.api_key.strip():
                 self._open_circuit("Gemini API key tanımlı değil — Konfigürasyon → gemini.api_key.")

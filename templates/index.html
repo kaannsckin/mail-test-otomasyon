@@ -346,6 +346,37 @@ input.has-value{border-color:rgba(0,255,148,.4)}
       </div>
 
       <div class="card">
+        <div class="card-header"><span class="card-title">🧠 Analiz Sağlayıcısı</span></div>
+        <div class="card-body">
+          <div class="form-grid">
+            <div class="form-group"><label>Sağlayıcı</label>
+              <select id="analysis_provider" onchange="updateProviderUI()">
+                <option value="claude">Claude (Anthropic)</option>
+                <option value="gemini">Gemini (Google — ücretsiz katman var)</option>
+              </select>
+            </div>
+            <div class="form-group gemini-only"><label>Gemini Modeli</label>
+              <input id="gemini_model" list="gemini_model_list" value="gemini-flash-latest" placeholder="gemini-flash-latest">
+              <datalist id="gemini_model_list">
+                <option value="gemini-flash-latest">Her zaman en güncel Flash (önerilen)</option>
+                <option value="gemini-3.5-flash">Gemini 3.5 Flash (sabit sürüm)</option>
+                <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite (hızlı / ekonomik)</option>
+              </datalist>
+            </div>
+            <div class="form-group full gemini-only"><label>Gemini API Key</label>
+              <input id="gemini_api_key" type="password" placeholder="aistudio.google.com/apikey adresinden alın"></div>
+          </div>
+          <p class="gemini-only" style="font-size:12px;color:var(--muted);margin-top:8px;line-height:1.5">
+            Ücretsiz anahtar: <code>aistudio.google.com/apikey</code> → Google hesabıyla giriş → <b>Create API key</b>
+            (faturalandırma gerekmez). Ücretsiz katmanın dakika/gün sınırları AI Studio'da görünür. Tam koşu
+            (198 analiz) günlük sınırı aşabilir: sınır aşılırsa o analizler FAIL görünür ve art arda 3 retten sonra
+            koşunun kalanında analiz yapılmaz — büyük koşuları kombinasyon seçerek bölün.
+            Ücretsiz katmanda gönderilen içerik Google ürünlerini geliştirmek için kullanılabilir.
+          </p>
+        </div>
+      </div>
+
+      <div class="card" id="claude_card">
         <div class="card-header"><span class="card-title">🤖 Claude API</span></div>
         <div class="card-body">
           <div class="form-grid">
@@ -1077,8 +1108,8 @@ python main.py --csv /yol/baska.csv    # Farklı CSV dosyası kullan</div>
             <h4>Bu sistem ne işe yarar?</h4>
             <p>EMS'ten Safir Posta'ya geçiş sürecinde, farklı mail sunucuları ve istemciler arasındaki mesaj iletim kalitesini <strong>otomatik</strong> olarak test eder. Manuel test yerine her kombinasyonu saniyeler içinde doğrular.</p>
 
-            <h4>Claude API zorunlu mu?</h4>
-            <p>Evet, analiz motoru Claude API kullanır. API key olmadan testler çalışır ama analiz/değerlendirme (PASS/FAIL kararı) yapılamaz. Key almak ücretsiz deneme ile başlar: <code>console.anthropic.com</code></p>
+            <h4>Claude API zorunlu mu? Ücretsiz seçenek var mı?</h4>
+            <p>Analiz için bir LLM anahtarı gerekir: <b>Claude</b> (<code>console.anthropic.com</code>) ya da ücretsiz katmanı olan <b>Gemini</b> (<code>aistudio.google.com/apikey</code>). Seçim: Konfigürasyon → 🧠 Analiz Sağlayıcısı. Anahtar olmadan mailler yine gönderilip alınır ama PASS/FAIL kararı verilemez.</p>
 
             <h4>Gerçek mail mi gönderiliyor?</h4>
             <p><strong>Normal modda evet</strong> — gerçek SMTP üzerinden gerçek mesajlar gönderilir. <strong>Dry Run modunda hayır</strong> — sadece bağlantı testi yapılır, mail gönderilmez.</p>
@@ -1190,6 +1221,7 @@ function lsSave(cfg) {
     delete out[s].totp_secret;
   }
   if (out.anthropic) delete out.anthropic.api_key;
+  if (out.gemini) delete out.gemini.api_key;
   try { localStorage.setItem(LS_KEY, JSON.stringify(out)); } catch(e) {}
 }
 // Form değerlerini döndürür — secret'lar boş/maskeliyse backend dosyadaki
@@ -1250,7 +1282,8 @@ document.querySelectorAll('.nav-item').forEach(el => {
 // ── KAYITLI SECRET'I SİLME ─────────────────────────────────────────
 // Maskeli alan boş bırakılınca kayıtlı değer korunur; silmek için "Sil".
 const SECRET_FIELDS = ['ems_password', 'gmail_password', 'outlook_password',
-  'ems_totp_secret', 'gmail_totp_secret', 'outlook_totp_secret', 'anthropic_api_key'];
+  'ems_totp_secret', 'gmail_totp_secret', 'outlook_totp_secret', 'anthropic_api_key',
+  'gemini_api_key'];
 function initSecretClearButtons() {
   for (const id of SECRET_FIELDS) {
     const input = document.getElementById(id);
@@ -1270,6 +1303,15 @@ function initSecretClearButtons() {
 }
 
 // ── CONFIG ─────────────────────────────────────────────────────────
+// Sağlayıcıya göre ilgili alanları göster (Claude kartı Gemini seçiliyken soluk)
+function updateProviderUI() {
+  const el = document.getElementById('analysis_provider');
+  const gemini = el && el.value === 'gemini';
+  document.querySelectorAll('.gemini-only').forEach(n => { n.style.display = gemini ? '' : 'none'; });
+  const cc = document.getElementById('claude_card');
+  if (cc) cc.style.opacity = gemini ? '0.55' : '';
+}
+
 function fillForm(c) {
   SECRET_FIELDS.forEach(id => { const el = document.getElementById(id); if (el) delete el.dataset.clear; });
   const set = (id, v) => { const el = document.getElementById(id); if (!el) return; el.type === 'checkbox' ? el.checked = !!v : el.value = v ?? ''; };
@@ -1305,6 +1347,12 @@ function fillForm(c) {
     }
     set('anthropic_model', a.model);
   }
+  const an = c.analysis || {};
+  set('analysis_provider', String(an.provider || 'claude').toLowerCase() === 'gemini' ? 'gemini' : 'claude');
+  const gm = c.gemini || {};
+  set('gemini_api_key', gm.api_key ? '••••••••••••' : '');
+  set('gemini_model', gm.model || 'gemini-flash-latest');
+  updateProviderUI();
   const t = c.test || {};
   set('test_wait_seconds', t.wait_seconds); set('test_max_retries', t.max_retries);
   set('test_retry_interval', t.retry_interval); set('test_subject_prefix', t.subject_prefix);
@@ -1357,6 +1405,11 @@ function buildConfig() {
   cfg.anthropic = {
     api_key: sec('anthropic_api_key'),
     model: g('anthropic_model'),
+  };
+  cfg.analysis = { provider: g('analysis_provider') || 'claude' };
+  cfg.gemini = {
+    api_key: sec('gemini_api_key'),
+    model: g('gemini_model').trim() || 'gemini-flash-latest',
   };
   cfg.test = {
     wait_seconds: +g('test_wait_seconds'), max_retries: +g('test_max_retries'),
@@ -1859,6 +1912,7 @@ function refreshAll() { loadConfig(); loadDashboard(); toast('↻ Yenilendi','in
 
 // ── INIT ───────────────────────────────────────────────────────────
 initSecretClearButtons();
+updateProviderUI();
 loadConfig();
 loadDashboard();
 // Sayfa koşu sürerken yenilendiyse arayüz "Beklemede" görünüp Başlat 400

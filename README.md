@@ -274,8 +274,8 @@ analysis:
   provider: "claude"              # claude | gemini — analiz için kullanılacak LLM
 
 gemini:                           # yalnızca provider: gemini iken gerekli
-  api_key: ""                     # https://aistudio.google.com/apikey
-  model: "gemini-2.0-flash"
+  api_key: ""                     # ücretsiz: https://aistudio.google.com/apikey
+  model: "gemini-flash-latest"    # arayüzde: Konfigürasyon → Analiz Sağlayıcısı
 
 test:
   wait_seconds: 15                # Mesajın IMAP'te görünmesini bekleme süresi

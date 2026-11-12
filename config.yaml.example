@@ -93,7 +93,9 @@ logging:
 analysis:
   provider: "claude"
 
-# Yalnızca analysis.provider: gemini iken kullanılır
+# Yalnızca analysis.provider: gemini iken kullanılır. Ücretsiz anahtar (faturalandırma
+# gerekmez): https://aistudio.google.com/apikey — ücretsiz katmanın dakika/gün sınırları
+# AI Studio'da görünür; tam koşu (198 senaryo) günlük sınırı aşabilir.
 gemini:
-  api_key: ""                         # https://aistudio.google.com/apikey
-  model: "gemini-2.0-flash"
+  api_key: ""
+  model: "gemini-flash-latest"        # her zaman en güncel Flash; kapatılan 2.0/1.5 otomatik buna geçer
