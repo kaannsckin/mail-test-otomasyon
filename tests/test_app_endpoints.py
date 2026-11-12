@@ -566,7 +566,7 @@ class TestConfigSaveEdgeCases:
 
     def test_unwritable_config_returns_500(self, flask_client, tmp_path, monkeypatch):
         monkeypatch.setattr(app_mod, "CONFIG_PATH", tmp_path / "config.yaml")
-        with patch("builtins.open", side_effect=OSError("disk dolu")):
+        with patch.object(app_mod, "_write_private", side_effect=OSError("disk dolu")):
             r = flask_client.post("/api/config", json={"config": {"ems": {}}})
         assert r.status_code == 500
         assert "disk dolu" in r.get_json()["error"]

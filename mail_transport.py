@@ -162,6 +162,62 @@ class Deadline:
             for s in self._socks:
                 self._shutdown(s)
 
+    def remaining(self) -> float:
+        return self.expires - time.monotonic()
+
+    def _expired_error(self) -> TimeoutError:
+        return TimeoutError(f"bağlantı {self.seconds:.0f} sn toplam süre sınırını aştı")
+
+    def resolve(self, host, port):
+        """getaddrinfo'yu süre sınırı içinde çalıştırır (DNS askıda kalabilir)."""
+        box: dict = {}
+
+        def run():
+            try:
+                box["res"] = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)
+            except Exception as e:  # noqa: BLE001
+                box["err"] = e
+        t = threading.Thread(target=run, daemon=True)
+        t.start()
+        t.join(max(0.0, self.remaining()))
+        if t.is_alive():
+            self.expired = True
+            raise self._expired_error()
+        if "err" in box:
+            raise box["err"]
+        return box["res"]
+
+    def connect(self, address, timeout=None, source_address=None):
+        """socket.create_connection eşdeğeri; her adres denemesi kalan süreyle
+        sınırlıdır ve soket bağlanır bağlanmaz (TLS el sıkışmasından ÖNCE)
+        izlemeye alınır. Eskiden süre sınırı yalnızca bağlantı kurulduktan
+        sonra başlıyordu: 4+ ölü A kaydı ya da damlatan TLS el sıkışması 45 sn'yi
+        aşabiliyordu."""
+        host, port = address
+        err = None
+        for af, socktype, proto, _canon, sa in self.resolve(host, port):
+            left = self.remaining()
+            if left <= 0:
+                break
+            sock = socket.socket(af, socktype, proto)
+            try:
+                sock.settimeout(min(timeout, left) if timeout else left)
+                if source_address:
+                    sock.bind(source_address)
+                sock.connect(sa)
+                sock.settimeout(timeout)
+                self.arm(sock)
+                return sock
+            except OSError as e:
+                err = e
+                sock.close()
+        if self.remaining() <= 0:
+            self.expired = True
+            raise self._expired_error() from err
+        if err is not None:
+            raise err
+        raise OSError(f"{host}:{port} için adres bulunamadı")
+
     def close(self) -> None:
         self._timer.cancel()
         with self._lock:
@@ -173,37 +229,63 @@ class Deadline:
             self._socks.clear()
 
 
-_deadline_classes: dict = {}
+class _DeadlineSMTP(smtplib.SMTP):
+    def __init__(self, *args, deadline: Deadline, **kwargs):
+        self._deadline = deadline
+        super().__init__(*args, **kwargs)
+
+    def _get_socket(self, host, port, timeout):
+        return self._deadline.connect((host, port), timeout, self.source_address)
 
 
-def _deadline_class(base, hook_name: str):
-    """``base``in soket oluşturan metoduna (SMTP._get_socket / IMAP4._create_socket)
-    Deadline bağlayan alt sınıf. ``base`` sınıf değilse (sarmalayıcı/test çifti)
-    None döner ve çağıran normal yoldan bağlanır."""
-    if not isinstance(base, type):
-        return None
-    key = (base, hook_name)
-    if key not in _deadline_classes:
-        def __init__(self, *args, deadline=None, **kwargs):
-            self._deadline = deadline
-            base.__init__(self, *args, **kwargs)
+class _DeadlineSMTP_SSL(smtplib.SMTP_SSL):
+    def __init__(self, *args, deadline: Deadline, **kwargs):
+        self._deadline = deadline
+        super().__init__(*args, **kwargs)
 
-        def hook(self, *args, **kwargs):
-            sock = getattr(base, hook_name)(self, *args, **kwargs)
-            if self._deadline:
-                self._deadline.arm(sock)
-            return sock
+    def _get_socket(self, host, port, timeout):
+        # Ham soket izlemeye alındıktan sonra el sıkışma yapılır: damlatan TLS
+        # sunucusu da süre sınırına takılır.
+        sock = self._deadline.connect((host, port), timeout, self.source_address)
+        return self.context.wrap_socket(sock, server_hostname=host)
 
-        _deadline_classes[key] = type(f"Deadline{base.__name__}", (base,),
-                                      {"__init__": __init__, hook_name: hook})
-    return _deadline_classes[key]
+
+class _DeadlineIMAP4(imaplib.IMAP4):
+    def __init__(self, *args, deadline: Deadline, **kwargs):
+        self._deadline = deadline
+        super().__init__(*args, **kwargs)
+
+    def _create_socket(self, timeout):
+        return self._deadline.connect((self.host or None, self.port), timeout)
+
+
+class _DeadlineIMAP4_SSL(imaplib.IMAP4_SSL):
+    def __init__(self, *args, deadline: Deadline, **kwargs):
+        self._deadline = deadline
+        super().__init__(*args, **kwargs)
+
+    def _create_socket(self, timeout):
+        sock = self._deadline.connect((self.host or None, self.port), timeout)
+        return self.ssl_context.wrap_socket(sock, server_hostname=self.host)
+
+
+_DEADLINE_CLASSES = {
+    "SMTP": _DeadlineSMTP, "SMTP_SSL": _DeadlineSMTP_SSL,
+    "IMAP4": _DeadlineIMAP4, "IMAP4_SSL": _DeadlineIMAP4_SSL,
+}
+_REAL_BASES = {
+    "SMTP": smtplib.SMTP, "SMTP_SSL": smtplib.SMTP_SSL,
+    "IMAP4": imaplib.IMAP4, "IMAP4_SSL": imaplib.IMAP4_SSL,
+}
 
 
 def _open(base, hook_name: str, deadline, *args, **kwargs):
-    cls = _deadline_class(base, hook_name) if deadline else None
-    if cls is None:
+    """Deadline verilmişse süre sınırlı alt sınıfla bağlanır. ``base`` gerçek
+    stdlib sınıfı değilse (test çifti/sarmalayıcı) normal yoldan bağlanılır."""
+    name = getattr(base, "__name__", None)
+    if deadline is None or _REAL_BASES.get(name) is not base:
         return base(*args, **kwargs)
-    return cls(*args, deadline=deadline, **kwargs)
+    return _DEADLINE_CLASSES[name](*args, deadline=deadline, **kwargs)
 
 
 def smtp_connect(server_config: dict, timeout: float = DEFAULT_TIMEOUT,

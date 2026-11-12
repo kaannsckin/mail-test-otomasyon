@@ -89,6 +89,7 @@ Diğer ortam değişkenleri:
 | `FLASK_DEBUG` | kapalı | `FLASK_DEBUG=1` ile debug/reloader açılır (yalnızca geliştirme için — debugger uzaktan kod çalıştırmaya izin verir) |
 | `UI_PASSWORD` | boş | Ayarlanırsa tüm arayüz HTTP Basic Auth ister. **Boşsa arayüz yalnızca bu makineden (localhost) kullanılabilir**; ağdan gelen istekler 403 alır |
 | `UI_USERNAME` | `admin` | Basic Auth kullanıcı adı (`UI_PASSWORD` ile birlikte) |
+| `TRUST_PROXY` | boş | `1` ise istemci adresi `X-Forwarded-For`'dan okunur (nginx / docker önünde ters proxy). PaaS'larda ve Vercel'de otomatik açıktır. Hatalı giriş sınırı (5 dk'da 10 deneme) istemci başına uygulanır; başarılı girişten sonra verilen "güvenilir cihaz" çerezi taşıyan tarayıcı bu sınıra takılmaz |
 | `ALLOW_NO_AUTH` | kapalı | `1` ise parolasız arayüze ağdan erişime bilerek izin verir (önerilmez — kayıtlı şifreler açığa çıkar) |
 | `DATA_DIR` | repo kökü | `config.yaml`, `reports/`, `logs/` dizini (konteynerde kalıcı volume) |
 
@@ -331,10 +332,10 @@ rapor yazılır. `main.py` çıkış kodları (CI/zamanlanmış koşular için):
 
 | Kod | Anlamı |
 | --- | --- |
-| `0` | Tüm (atlanmayan) senaryolar PASS |
+| `0` | Tüm (atlanmayan) senaryolar PASS — en az bir senaryo çalışmış olmalı |
 | `2` | Koşu tamamlandı, en az bir senaryo FAIL (dry-run'da: bağlantı hatası) |
 | `130` | Koşu durduruldu — kısmi rapor yazıldı |
-| `1` | Araç/config/CSV hatası, hiç sonuç üretilemedi ya da rapor dosyası yazılamadı |
+| `1` | Araç/config/CSV hatası, hiç sonuç üretilemedi, tüm senaryolar atlandı (SKIP) ya da rapor dosyası yazılamadı |
 
 ---
 
@@ -497,3 +498,18 @@ python scripts/e2e_smoke.py --to alici@ornek.com --scenarios plain_text --dry-ru
 | 2FA modal açılmıyor | Tarayıcı popup engelleyicisini kapat |
 | TOTP kodu hatalı | `totp_secret` Base32 formatında olmalı, boşluk içermemeli |
 | Flask bulunamadı | `pip install -r requirements.txt` çalıştır |
+
+---
+
+## ✉️ Adres biçimleri
+
+- `test_address` tek adres ya da `,` / `;` ile ayrılmış liste olabilir; her
+  alıcı ayrı `RCPT TO` olarak gönderilir. Alıcılardan biri reddedilirse
+  senaryo FAIL olur.
+- Görünen ad Türkçe karakter içerebilir (`"Şule Çelik" <sule@kurum.gov.tr>`);
+  header'da yalnızca ad RFC 2047 ile kodlanır.
+- Alan adı Türkçe karakterli ise (`info@müller.de`) otomatik olarak IDNA
+  (`xn--`) biçimine çevrilir. Yerel kısım ASCII dışıysa (`ğüş@örnek.com`)
+  sunucunun **SMTPUTF8** desteklemesi gerekir; desteklemiyorsa açık bir hata
+  verilir.
+- `username` boş bırakılırsa SMTP girişi yapılmaz (kimlik doğrulamasız relay).

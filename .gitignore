@@ -43,3 +43,7 @@ mnt/
 
 # OS
 Thumbs.db
+# Bozuk config yedekleri ve yarım yazımlar şifre içerir
+config.yaml.bozuk-*.bak
+config.yaml.*.tmp
+*.bak

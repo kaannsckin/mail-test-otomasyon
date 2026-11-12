@@ -18,3 +18,7 @@ tests/
 *.key
 *.p12
 *.pfx
+# Bozuk config yedekleri ve yarım yazımlar şifre içerir
+config.yaml.bozuk-*.bak
+config.yaml.*.tmp
+*.bak

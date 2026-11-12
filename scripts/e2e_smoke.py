@@ -172,7 +172,10 @@ def main():
 
     server_cfg = load_server_config(args.config, args.server)
     with open(args.config, "r", encoding="utf-8") as f:
-        test_cfg = (yaml.safe_load(f) or {}).get("test", {})
+        test_cfg = (yaml.safe_load(f) or {}).get("test")
+    # "test:" boş bırakılırsa None gelir; eskiden her senaryo NoneType.get ile düşüyordu.
+    if not isinstance(test_cfg, dict):
+        test_cfg = {}
 
     prepare_test_files()
     sender = MailSender(server_cfg)

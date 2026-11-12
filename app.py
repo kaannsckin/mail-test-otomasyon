@@ -3,13 +3,13 @@ app.py — Mail Otomasyon Web Arayüzü (Flask)
 Çalıştır: python app.py  →  http://localhost:5000 (boşsa) / otomatik alternatif port
 """
 
-import csv, errno, hmac, ipaddress, json, logging, os, signal, socket, subprocess, sys, threading, time, uuid
+import copy, csv, errno, io, hmac, ipaddress, json, logging, os, signal, socket, subprocess, sys, threading, time, uuid
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import yaml
-from flask import Flask, Response, jsonify, render_template, request, send_file, send_from_directory
+from flask import Flask, Response, g, jsonify, render_template, request, send_file, send_from_directory
 
 # Türkçe Windows konsolu (cp1254) emoji içeren print'lerde çökmesin.
 for _stream in (sys.stdout, sys.stderr):
@@ -194,11 +194,24 @@ _auth_failures: dict = {}         # istemci → [zaman damgaları]
 _auth_lock = threading.Lock()
 
 
+AUTH_MAX_KEYS = 10000             # sayaç tablosu bellek sınırı
+TRUSTED_COOKIE = "mo_trusted"
+TRUSTED_COOKIE_DAYS = 30
+
+
+def _behind_proxy() -> bool:
+    """İstemci adresi X-Forwarded-For'dan mı okunmalı? PaaS'lar, Vercel ve
+    TRUST_PROXY=1 (nginx / docker önünde ters proxy) — eskiden bu ortamlarda
+    tüm istemciler proxy'nin adresini paylaşıyordu."""
+    return bool(any(os.environ.get(m) for m in _PAAS_MARKERS)
+                or os.environ.get("VERCEL") or _env_flag("TRUST_PROXY"))
+
+
 def _client_key() -> str:
-    """Deneme sayacının anahtarı. PaaS'ta istemci adresi, proxy'nin EKLEDİĞİ
-    (en sağdaki) X-Forwarded-For girdisidir — soldakiler istemcinin yazabildiği
-    değerlerdir ve sayacı atlatmak için kullanılabilirdi."""
-    if any(os.environ.get(m) for m in _PAAS_MARKERS):
+    """Deneme sayacının anahtarı. Proxy arkasında istemci adresi, proxy'nin
+    EKLEDİĞİ (en sağdaki) X-Forwarded-For girdisidir — soldakiler istemcinin
+    yazabildiği değerlerdir ve sayacı atlatmak için kullanılabilirdi."""
+    if _behind_proxy():
         fwd = [h.strip() for h in request.headers.get("X-Forwarded-For", "").split(",") if h.strip()]
         if fwd:
             return fwd[-1]
@@ -220,9 +233,30 @@ def _auth_blocked(key: str, now: float) -> float:
 
 def _note_auth_failure(key: str, now: float) -> None:
     with _auth_lock:
-        if len(_auth_failures) > 10000:            # bellek sınırı: en eskileri at
-            _auth_failures.clear()
+        if len(_auth_failures) >= AUTH_MAX_KEYS:
+            # Önce süresi dolanlar, gerekirse en ESKİ deneme yapanlar atılır.
+            # Eskiden tablo tamamen siliniyordu: çok adresli bir saldırgan
+            # kendi kilidini de açabiliyordu.
+            for k in [k for k, ts in _auth_failures.items()
+                      if not ts or now - ts[-1] >= AUTH_WINDOW_SECONDS]:
+                del _auth_failures[k]
+            if len(_auth_failures) >= AUTH_MAX_KEYS:
+                oldest = sorted(_auth_failures, key=lambda k: _auth_failures[k][-1])
+                for k in oldest[:len(_auth_failures) - AUTH_MAX_KEYS * 9 // 10]:
+                    del _auth_failures[k]
         _auth_failures.setdefault(key, []).append(now)
+
+
+def _trusted_token(username: str, password: str) -> str:
+    """Başarılı girişten sonra verilen "güvenilir cihaz" çerezi değeri.
+
+    Parola ile imzalanır: parolayı bilmeyen üretemez, parola değişince geçersiz
+    olur. Bu çerezi taşıyan istek deneme kilidine takılmaz — böylece aynı
+    adresi paylaşan (proxy arkası) biri yanlış parola deneyerek gerçek
+    kullanıcıyı kilitleyemez (OWASP "device cookie" yöntemi).
+    """
+    return hmac.new(password.encode("utf-8"), b"trusted-device:" + username.encode("utf-8"),
+                    "sha256").hexdigest()
 
 
 @app.after_request
@@ -234,6 +268,11 @@ def _security_headers(resp):
     resp.headers.setdefault("Content-Security-Policy", "frame-ancestors 'self'")
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("Referrer-Policy", "same-origin")
+    token = g.pop("set_trusted_cookie", None)
+    if token:
+        secure = request.is_secure or request.headers.get("X-Forwarded-Proto", "").lower() == "https"
+        resp.set_cookie(TRUSTED_COOKIE, token, max_age=TRUSTED_COOKIE_DAYS * 86400,
+                        httponly=True, samesite="Strict", secure=secure, path="/")
     return resp
 
 
@@ -246,7 +285,9 @@ def _security_gate():
     if password:
         username = os.environ.get("UI_USERNAME", "admin")
         key, now = _client_key(), time.time()
-        wait = _auth_blocked(key, now)
+        token = _trusted_token(username, password)
+        trusted = _secure_equals(request.cookies.get(TRUSTED_COOKIE, ""), token)
+        wait = 0.0 if trusted else _auth_blocked(key, now)
         if wait:
             return Response(
                 "Çok fazla hatalı giriş denemesi — biraz sonra tekrar deneyin.", 429,
@@ -255,12 +296,14 @@ def _security_gate():
         if not (auth and auth.type == "basic"
                 and _secure_equals(auth.username, username)
                 and _secure_equals(auth.password, password)):
-            if auth is not None:   # tarayıcının ilk (kimliksiz) isteği deneme sayılmaz
+            if auth is not None and not trusted:   # tarayıcının ilk (kimliksiz) isteği sayılmaz
                 _note_auth_failure(key, now)
             return Response(
                 "Kimlik doğrulama gerekli", 401,
                 {"WWW-Authenticate": 'Basic realm="Mail Otomasyon", charset="UTF-8"'},
             )
+        if not trusted:
+            g.set_trusted_cookie = token
     elif not _env_flag("ALLOW_NO_AUTH"):
         # Parolasız mod yalnızca yerel kullanım içindir. Host başlığı da
         # kontrol edilir: aksi halde DNS rebinding ile kötü niyetli bir site
@@ -287,7 +330,8 @@ def _too_large(_e):
 # ── CONFIG ──────────────────────────────────────────────────────
 SECRET_MASK = "••••••••"
 TEST_CONNECTION_DEADLINE = 45.0
-LOG_POLL_MAX_LINES = 2000         # /api/run/logs yanıtı başına en fazla satır   # sn — bağlantı testinin toplam süre sınırı
+LOG_POLL_MAX_LINES = 2000
+PUMP_GRACE = 10.0                 # süreç bittikten sonra log okuyucuya tanınan süre (sn)         # /api/run/logs yanıtı başına en fazla satır   # sn — bağlantı testinin toplam süre sınırı
 SERVER_KEYS = ("ems", "gmail", "outlook")
 
 
@@ -308,6 +352,16 @@ class _NoAliasLoader(yaml.SafeLoader):
             raise yaml.composer.ComposerError(
                 None, None, "YAML alias (*) desteklenmiyor", event.start_mark)
         return super().compose_node(parent, index)
+
+
+def _str_timestamp(loader, node):
+    """YAML tarih/zaman değerleri metin olarak okunur: "2026-02-30" gibi geçersiz
+    bir tarih eskiden ValueError ile tüm config uç noktalarını 500'e düşürüyordu;
+    geçerli tarihler de JSON'a çevrilemiyordu. Bu config'de tarih hep metindir."""
+    return loader.construct_scalar(node)
+
+
+_NoAliasLoader.add_constructor("tag:yaml.org,2002:timestamp", _str_timestamp)
 
 
 class _NoAliasDumper(yaml.SafeDumper):
@@ -377,16 +431,125 @@ def _validate_ports(cfg: dict) -> dict:
     return cfg
 
 
+# YAML'ın ürettiği ama JSON'a güvenle çevrilemeyen değerler: .inf/.nan
+# (tarayıcının okuyamadığı "Infinity" JSON'u), !!set / !!binary / tarih nesneleri.
+_YAML_ERRORS = (UnicodeDecodeError, yaml.YAMLError, RecursionError,
+                ValueError, TypeError, OverflowError)
+
+
+def _check_json_safe(value, where: str = "config", depth: int = 0) -> None:
+    """Config değerleri JSON'a birebir çevrilebilmeli; değilse ConfigError.
+
+    Eskiden 1e999/.inf kaydedilince /api/config tarayıcının okuyamadığı JSON
+    döndürüyor (form boş açılıyordu), !!set/!!binary import edilince dosya
+    yazılıp sonraki her GET 500 veriyordu.
+    """
+    if depth > 50:
+        raise ConfigError(f"'{where}' çok derin iç içe değer içeriyor")
+    if value is None or isinstance(value, (str, bool, int)):
+        return
+    if isinstance(value, float):
+        if value != value or value in (float("inf"), float("-inf")):
+            raise ConfigError(f"'{where}' sonlu bir sayı olmalı (inf/nan desteklenmez)")
+        return
+    if isinstance(value, list):
+        for i, v in enumerate(value):
+            _check_json_safe(v, f"{where}[{i}]", depth + 1)
+        return
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if not isinstance(k, str):
+                raise ConfigError(f"'{where}' içinde metin olmayan anahtar: {k!r}")
+            _check_json_safe(v, f"{where}.{k}", depth + 1)
+        return
+    raise ConfigError(f"'{where}' desteklenmeyen değer türü: {type(value).__name__} "
+                      "(tarih, !!set, !!binary vb. kullanmayın; metin olarak yazın)")
+
+
 def _read_config() -> dict:
     """config.yaml'ı güvenle okur; yoksa {} döner, bozuksa ConfigError."""
     if not CONFIG_PATH.exists():
         return {}
     try:
         text = CONFIG_PATH.read_text(encoding="utf-8")
-        return _normalize_config(_yaml_load(text))
-    except (UnicodeDecodeError, yaml.YAMLError, RecursionError) as e:
-        # RecursionError: aşırı iç içe YAML ([[[[...]]]]) — eskiden yakalanmıyor, 500 veriyordu
+        data = _normalize_config(_yaml_load(text))
+    except ConfigError:
+        raise
+    except _YAML_ERRORS as e:
+        # RecursionError: aşırı iç içe YAML; ValueError: "2026-02-30" gibi
+        # geçersiz tarih ya da 4300+ haneli sayı — eskiden hepsi 500 veriyordu.
         raise ConfigError(f"config.yaml okunamadı: {type(e).__name__}: {e}") from e
+    except OSError as e:
+        # Klasör, okuma izni yok, G/Ç hatası — eskiden HTML 500
+        raise ConfigError(f"config.yaml okunamadı: {e}") from e
+    _check_json_safe(data)
+    return data
+
+
+class _SalvageLoader(yaml.SafeLoader):
+    """Yalnızca kurtarma için: alias'a izin verir (genişleme boyutu ayrıca
+    sınırlanır). Eskiden alias'lı dosyada hiçbir bölüm kurtarılamıyordu."""
+
+
+def _lenient_int(loader, node):
+    try:
+        return yaml.SafeLoader.construct_yaml_int(loader, node)
+    except ValueError:              # 4300+ haneli sayı: metin olarak kurtar
+        return loader.construct_scalar(node)
+
+
+_SalvageLoader.add_constructor("tag:yaml.org,2002:timestamp", _str_timestamp)
+_SalvageLoader.add_constructor("tag:yaml.org,2002:int", _lenient_int)
+
+
+_SALVAGE_MAX_NODES = 100_000
+_MAX_BACKUPS = 5
+
+
+def _expanded_size(obj, cap: int) -> int:
+    """Alias'lar açıldığında düğüm sayısı (cap'te durur — "billion laughs")."""
+    count, stack = 0, [obj]
+    while stack:
+        cur = stack.pop()
+        count += 1
+        if count > cap:
+            return count
+        if isinstance(cur, dict):
+            stack.extend(cur.values())
+        elif isinstance(cur, list):
+            stack.extend(cur)
+    return count
+
+
+def _write_private(path: Path, data: bytes) -> None:
+    """Yalnızca sahibin okuyabildiği (0600) dosya — config ve yedekler şifre içerir."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+    os.chmod(path, 0o600)
+
+
+def _backup_corrupt_config(raw: bytes) -> str:
+    """Bozuk config'in yedeği: 0600 izinli, aynı içerik tekrar yedeklenmez ve
+    en fazla _MAX_BACKUPS yedek tutulur (eskiden 0644 ve sınırsızdı)."""
+    pattern = f"{CONFIG_PATH.name}.bozuk-*.bak"
+    existing = sorted(CONFIG_PATH.parent.glob(pattern), key=lambda p: p.stat().st_mtime)
+    if existing:
+        try:
+            if existing[-1].read_bytes() == raw:
+                return existing[-1].name
+        except OSError:
+            pass
+    backup = CONFIG_PATH.with_name(
+        f"{CONFIG_PATH.name}.bozuk-{datetime.now().strftime('%Y%m%d-%H%M%S')}-"
+        f"{uuid.uuid4().hex[:6]}.bak")
+    _write_private(backup, raw)
+    for old in (existing + [backup])[:-_MAX_BACKUPS]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    return backup.name
 
 
 def _salvage_config() -> tuple:
@@ -396,23 +559,27 @@ def _salvage_config() -> tuple:
     bölüm (API key, diğer sunucuların şifreleri) yedeksiz siliniyordu.
     Returns: (kurtarılan bölümler, yedek dosya adı)
     """
-    backup = CONFIG_PATH.with_name(
-        f"{CONFIG_PATH.name}.bozuk-{datetime.now().strftime('%Y%m%d-%H%M%S')}-"
-        f"{uuid.uuid4().hex[:6]}.bak")
     raw = CONFIG_PATH.read_bytes()
-    backup.write_bytes(raw)
+    backup_name = _backup_corrupt_config(raw)
     salvaged = {}
     try:
-        data = _yaml_load(raw.decode("utf-8"))
+        data = yaml.load(raw.decode("utf-8"), Loader=_SalvageLoader)  # noqa: S506
     except Exception:  # noqa: BLE001 — sözdizimi bozuk: kurtarılacak bölüm yok
         data = None
-    if isinstance(data, dict):
+    if isinstance(data, dict) and _expanded_size(data, _SALVAGE_MAX_NODES) <= _SALVAGE_MAX_NODES:
         for key, value in data.items():
-            if isinstance(key, str) and isinstance(value, dict):
-                salvaged[key] = value
-            elif isinstance(key, str) and value is None:
+            if not isinstance(key, str):
+                continue
+            if value is None:
                 salvaged[key] = {}
-    return salvaged, backup.name
+            elif isinstance(value, dict):
+                value = copy.deepcopy(value)       # alias paylaşımını kopyaya çevir
+                try:
+                    _check_json_safe(value, key)
+                except ConfigError:
+                    continue                       # bozuk bölüm: yalnızca yedekte kalır
+                salvaged[key] = value
+    return salvaged, backup_name
 
 
 def _write_config(data: dict) -> None:
@@ -421,8 +588,9 @@ def _write_config(data: dict) -> None:
     tmp = CONFIG_PATH.with_name(f"{CONFIG_PATH.name}.{uuid.uuid4().hex}.tmp")
     try:
         with _config_lock:
-            with open(tmp, "w", encoding="utf-8") as f:
-                _yaml_dump(data, f)
+            buf = io.StringIO()
+            _yaml_dump(data, buf)
+            _write_private(tmp, buf.getvalue().encode("utf-8"))  # 0600: şifre içerir
             os.replace(tmp, CONFIG_PATH)  # yarım yazılmış config kalmasın
     finally:
         try:
@@ -474,6 +642,7 @@ def save_config():
         return jsonify({"ok": False, "error": "Kaydedilecek config boş"}), 400
     try:
         _validate_ports(incoming)
+        _check_json_safe(incoming)
     except ConfigError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     with _config_lock:
@@ -527,6 +696,7 @@ def import_config():
         return jsonify({"ok": False, "error": "Yalnızca .yaml / .yml dosyaları kabul edilir"}), 400
     try:
         data = _validate_ports(_normalize_config(_yaml_load(f.read().decode("utf-8-sig"))))
+        _check_json_safe(data)
     except RecursionError:
         return jsonify({"ok": False, "error": "YAML çok derin iç içe yapı içeriyor"}), 400
     except UnicodeDecodeError:
@@ -535,6 +705,9 @@ def import_config():
         return jsonify({"ok": False, "error": f"YAML okunamadı: {e}"}), 400
     except ConfigError as e:
         return jsonify({"ok": False, "error": f"Geçersiz YAML yapısı: {e}"}), 400
+    except (ValueError, TypeError, OverflowError) as e:
+        # "2026-02-30" gibi geçersiz tarih, 4300+ haneli sayı — eskiden 500
+        return jsonify({"ok": False, "error": f"YAML okunamadı: {e}"}), 400
     if not data:
         return jsonify({"ok": False, "error": "Dosya boş"}), 400
     try:
@@ -549,6 +722,8 @@ def import_config():
 def export_config():
     if not CONFIG_PATH.exists():
         return jsonify({"ok": False, "error": "Henüz kaydedilmiş config yok"}), 404
+    if not CONFIG_PATH.is_file():
+        return jsonify({"ok": False, "error": "config.yaml bir dosya değil"}), 500
     return send_file(CONFIG_PATH, as_attachment=True, download_name="config.yaml", mimetype="text/yaml")
 
 def _same_target(form: dict, saved: dict) -> bool:
@@ -578,7 +753,8 @@ def _login_with_code(do_login, auth_method: str, username: str, password: str, c
 @app.route("/api/config/test-connection", methods=["POST"])
 def test_connection():
     import imaplib, smtplib
-    from mail_transport import Deadline, explain_connection_error, imap_connect, smtp_connect
+    from mail_transport import (Deadline, _as_bool, explain_connection_error, imap_connect,
+                                smtp_connect, smtp_mode)
 
     body       = _json_body()
     server_key = str(body.get("server") or "")
@@ -640,6 +816,7 @@ def test_connection():
                 pass
 
         imap_note = ""
+        imap_mode = None
         if sc.get("imap_host") and sc.get("imap_port"):
             if auth_method == "otp_only" and not totp_secret:
                 imap_note = " (IMAP, tek kullanımlık kod yeniden kullanılamayacağı için test edilmedi)"
@@ -658,10 +835,13 @@ def test_connection():
                     except Exception:
                         pass
                 imap_note = " (SMTP + IMAP)"
-        from mail_transport import _as_bool, smtp_mode
+                imap_mode = ("ssl" if _as_bool(sc.get("imap_use_ssl"), True)
+                             else "starttls" if _as_bool(sc.get("imap_use_starttls"), False)
+                             else "plain")
         # Arayüzdeki güvenlik rozetleri gerçek bağlantı moduna göre çizilir;
-        # eskiden düz SMTP / tls_verify:false için de "Güvenli" gösteriliyordu.
-        security = {"smtp_mode": smtp_mode(sc),
+        # eskiden düz SMTP / tls_verify:false / şifresiz IMAP için de "Güvenli"
+        # gösteriliyordu.
+        security = {"smtp_mode": smtp_mode(sc), "imap_mode": imap_mode,
                     "tls_verify": _as_bool(sc.get("tls_verify"), True)}
         return jsonify({"ok": True, "message": f"✅ {label} bağlantısı başarılı{imap_note}",
                         "security": security})
@@ -866,19 +1046,38 @@ def _parse_combos(value):
     return out
 
 
-def _kill_tree(proc: subprocess.Popen, grace: float = 5.0) -> None:
-    """main.py'yi önce nazikçe (SIGTERM), olmazsa zorla sonlandırır."""
+def _signal_group(proc, sig) -> bool:
+    """Süreç grubuna sinyal (main.py + başlattığı alt süreçler). POSIX dışı ya
+    da grup yoksa False."""
+    if not hasattr(os, "killpg") or not isinstance(getattr(proc, "pid", None), int):
+        return False
     try:
-        proc.terminate()
+        os.killpg(os.getpgid(proc.pid), sig)
+        return True
+    except (OSError, ProcessLookupError):
+        return False
+
+
+def _kill_tree(proc: subprocess.Popen, grace: float = 5.0) -> None:
+    """main.py'yi önce nazikçe (SIGTERM), olmazsa zorla sonlandırır.
+
+    Tüm süreç grubu sonlandırılır: stdout borusunu tutan bir alt süreç kalırsa
+    log okuyucu hiç bitmiyor, /api/run/logs sonsuza dek done=false dönüyordu.
+    """
+    try:
+        if not _signal_group(proc, signal.SIGTERM):
+            proc.terminate()
         proc.wait(timeout=grace)
     except subprocess.TimeoutExpired:
         try:
-            proc.kill()
+            if not _signal_group(proc, signal.SIGKILL):
+                proc.kill()
             proc.wait(timeout=grace)
         except (OSError, subprocess.TimeoutExpired):
             pass
     except OSError:
         pass
+    _signal_group(proc, signal.SIGKILL)   # ana süreç çıktıysa geride kalan torunlar
 
 
 def _reap_orphan_run() -> None:
@@ -949,6 +1148,7 @@ def start_run():
             proc = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, encoding="utf-8", errors="replace", cwd=str(DATA_DIR), env=env,
+                **({"start_new_session": True} if os.name == "posix" else {}),
             )
         except OSError as e:
             return jsonify({"ok": False, "error": f"Test süreci başlatılamadı: {e}"}), 500
@@ -993,7 +1193,33 @@ def start_run():
                 if run_state.get("run_id") == run_id:
                     run_state["pump_done"] = True
 
+    def _watchdog():
+        # Süreç bittikten sonra boru hâlâ açıksa (alt süreç tutuyor) okuyucu
+        # bitmez; PUMP_GRACE sn sonra koşu "bitti" sayılır ki arayüz takılmasın.
+        try:
+            proc.wait()
+        except Exception:  # noqa: BLE001
+            return
+        end = time.time() + PUMP_GRACE
+        while time.time() < end:
+            if run_state.get("run_id") != run_id or run_state.get("pump_done"):
+                return
+            time.sleep(0.2)
+        with _run_lock:
+            if run_state.get("run_id") == run_id and not run_state.get("pump_done"):
+                try:
+                    with open(log_file, "a", encoding="utf-8") as lf:
+                        lf.write("[UYARI] Süreç bitti ama çıktı borusu açık kaldı "
+                                 "(alt süreç?) — log okuma sonlandırıldı.\n")
+                except OSError:
+                    pass
+                run_state.update({"pump_done": True, "running": False, "process": None,
+                                  "exit_code": proc.returncode,
+                                  "finished_at": run_state.get("finished_at")
+                                  or datetime.now().isoformat()})
+
     threading.Thread(target=_pump, daemon=True).start()
+    threading.Thread(target=_watchdog, daemon=True).start()
     return jsonify({"ok": True, "cmd": " ".join(cmd)})
 
 @app.route("/api/run/stop", methods=["POST"])
@@ -1063,7 +1289,7 @@ def _inside_reports(path: Path) -> bool:
     """Dosya (sembolik bağ çözüldükten sonra) raporlar dizininde mi?"""
     try:
         return path.resolve(strict=True).is_relative_to(REPORTS_DIR.resolve())
-    except (OSError, RuntimeError):
+    except (OSError, RuntimeError, ValueError):   # ValueError: yolda NUL baytı (%00)
         return False
 
 

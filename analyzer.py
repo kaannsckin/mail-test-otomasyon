@@ -78,6 +78,15 @@ def _dumps(value) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2, default=_json_default)
 
 
+def _is_warning(detail: str) -> bool:
+    return str(detail or "").strip().casefold().startswith(("uyarı", "uyari", "warning"))
+
+
+def _valid_key(key: str) -> bool:
+    """HTTP header'a konabilir mi? ASCII yazdırılabilir, boşluksuz."""
+    return bool(key) and key.isascii() and key.isprintable() and not any(c.isspace() for c in key)
+
+
 class _GeminiEmpty(ValueError):
     """Gemini yanıtı aday/içerik içermiyor (güvenlik filtresi, boş yanıt)."""
 
@@ -101,7 +110,9 @@ class MailAnalyzer:
             raise ValueError(
                 f"Bilinmeyen provider: {provider}. 'claude' veya 'gemini' kullanın."
             )
-        self.api_key = str(api_key or "")
+        # Baş/son boşluk ve satır sonu atılır; eskiden "AIza...\n" bağlantı
+        # hatası gibi görünüp devre kesiciyi besliyordu.
+        self.api_key = str(api_key or "").strip()
         self.effort = (effort or DEFAULT_EFFORT).lower().strip()
         # Yapılandırılmış çıktı / fallback / effort'u desteklemeyen eski bir
         # model seçilmişse ilk 400'den sonra sade isteğe geçilir (yapışkan).
@@ -111,19 +122,26 @@ class MailAnalyzer:
         if self.provider == "gemini":
             self.model = model or DEFAULT_GEMINI_MODEL
             self.client = None
-            if not self.api_key.strip():
+            if not self.api_key:
                 self._open_circuit("Gemini API key tanımlı değil — Konfigürasyon → gemini.api_key.")
+            elif not _valid_key(self.api_key):
+                self._open_circuit("Gemini API key geçersiz karakter içeriyor (boşluk/ASCII dışı) — "
+                                   "Konfigürasyon → gemini.api_key.")
         else:
             self.model = model or DEFAULT_MODEL
             # Boş key: ortam değişkeni varsa SDK onu kullanır (None); yoksa her
             # senaryo "bağlanılamadı" hatasıyla 3 boş çağrı yapıyordu — baştan kapat.
             key = self.api_key.strip() or None
-            if key is None and not os.environ.get("ANTHROPIC_API_KEY"):
+            env_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+            if key is None and not env_key:
                 self._open_circuit("Claude API key tanımlı değil — Konfigürasyon → anthropic.api_key.")
+            elif key is not None and not _valid_key(key):
+                self._open_circuit("Claude API key geçersiz karakter içeriyor (boşluk/ASCII dışı) — "
+                                   "Konfigürasyon → anthropic.api_key.")
             # SDK 408/409/429/5xx ve bağlantı hatalarında exponential backoff ile
             # bir kez yeniden dener; senaryo başına en kötü durum ~3 dk.
             # Key hiç yoksa SDK kurucu hata atar; devre zaten açık, istemci kullanılmaz.
-            client_key = key if (key or os.environ.get("ANTHROPIC_API_KEY")) else "tanımsız"
+            client_key = key if (key and _valid_key(key)) else (env_key or "tanımsız")
             self.client = anthropic.Anthropic(api_key=client_key, max_retries=1, timeout=90.0)
 
     def analyze(self, scenario_type: str, send_meta: dict,
@@ -228,8 +246,9 @@ Kontrol edilecekler:
 2. METHOD=REQUEST parametresi korunmuş mu? (davet olarak tanınması için şart)
 3. invite.ics eki iletilmiş mi? (attachments içinde .ics dosyası)
 4. VEVENT içeriği bozulmamış mı? (UID {send_meta.get('ics_uid', '?')} korunmalı)
-5. Sunucu daveti düz ek dosyaya indirgemiş mi? (text/calendar kaybolduysa
-   istemci "Kabul Et / Reddet" düğmelerini gösteremez — bu bir BAŞARISIZLIKTIR)
+5. Davet, takvim daveti olarak korunmuş mu (düz ek dosyaya indirgenmemiş mi)?
+   (text/calendar kaybolduysa istemci "Kabul Et / Reddet" düğmelerini
+   gösteremez — bu bir BAŞARISIZLIKTIR)
 """,
             "i18n": f"""
 Gönderilen alfabe grupları: {send_meta.get('body_charsets', [])}
@@ -254,7 +273,8 @@ Kontrol edilecekler:
 2. text/html part'ı mevcut ve gövdesi boş değil mi?
 3. CSS içeriği korunmuş mu? (<style> bloğu veya inline style attribute'ları)
 4. Media query (@media) ifadesi hayatta kalmış mı? Kaldırıldıysa duyarlı
-   yerleşim bozulur — bunu bir uyarı olarak raporla.
+   yerleşim bozulur — bu bir UYARIDIR: kontrolü passed=true bırak, detail'i
+   "Uyarı:" ile başlatıp durumu yaz ve recommendations'a ekle.
 5. HTML uzunluğu ciddi şekilde kısalmış mı? (sunucu sanitizasyonu içeriği
    buduyor olabilir)
 """,
@@ -264,7 +284,7 @@ Kontrol edilecekler:
 2. <table> yapısı korunmuş mu? (tr/td/th etiketleri hayatta mı)
 3. Hücre stilleri (border, padding, background) korunmuş mu?
 4. Tablo içindeki Türkçe karakterler bozulmamış mı? (ğüşıöç)
-5. Tablo düz metne indirgenmiş mi? (yapı kaybolduysa BAŞARISIZ sayılır)
+5. Tablo yapısı korunmuş mu (düz metne indirgenmemiş mi)? (yapı kaybolduysa BAŞARISIZ sayılır)
 """,
             "forward": f"""
 İletilen orijinal mesaj: {send_meta.get('original_msg_id', '?')} | \
@@ -277,7 +297,7 @@ Kontrol edilecekler:
    (orijinal Message-ID {send_meta.get('original_msg_id', '?')} korunmalı)
 4. Gövdedeki "---------- İletilen Mesaj ----------" bloğu ve orijinal
    Kimden/Tarih/Konu bilgileri duruyor mu?
-5. MIME boundary izolasyonu bozulmuş mu? (iç içe part'lar karışmamalı)
+5. MIME boundary izolasyonu sağlam mı? (iç içe part'lar karışmamalı)
 """,
             "multi_attachment": f"""
 Gönderilen ek sayısı: {send_meta.get('attachment_count', '?')} | \
@@ -337,6 +357,13 @@ Aşağıdaki JSON formatında yanıt ver, başka hiçbir şey yazma:
   "issues": ["varsa bulunan sorunlar listesi"],
   "recommendations": ["varsa öneri listesi"]
 }}
+
+Kurallar:
+- checks[].passed: true = kontrol noktasında SORUN YOK (beklenen durum sağlandı),
+  false = sorun var. Soru olumsuz kurulmuş olsa bile ("bozulmuş mu?") anlam budur.
+- Yalnızca uyarı niteliğindeki gözlemlerde kontrolü passed=true bırak ve
+  detail'i "Uyarı:" ile başlat.
+- Herhangi bir kontrol passed=false ise genel "passed" de false olmalıdır.
 
 Sadece JSON döndür, markdown veya açıklama ekleme."""
 
@@ -596,7 +623,10 @@ Sadece JSON döndür, markdown veya açıklama ekleme."""
 
         # LLM'in genel kararı kendi kontrolleriyle çelişemez. Eskiden
         # passed=true + tüm kontroller başarısız + dolu issues → PASS kalıyordu.
-        failed_checks = [c["name"] for c in checks if not c["passed"]]
+        # "Uyarı:" ile işaretli kontroller (ör. @media kaldırıldı) başarısızlık
+        # sayılmaz — prompt bunları uyarı olarak istiyor.
+        failed_checks = [c["name"] for c in checks
+                         if not c["passed"] and not _is_warning(c["detail"])]
         if passed and failed_checks:
             passed = False
             notes.append("LLM genel sonucu PASS dedi ama başarısız kontrol var: "

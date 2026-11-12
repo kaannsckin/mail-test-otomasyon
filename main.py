@@ -45,6 +45,8 @@ EXIT_OK = 0              # tüm (atlanmayan) senaryolar PASS
 EXIT_ERROR = 1           # araç/config hatası ya da hiç sonuç üretilemedi
 EXIT_TEST_FAILURES = 2   # koşu tamamlandı, en az bir senaryo FAIL
 EXIT_INTERRUPTED = 130   # Ctrl-C / arayüzden durdurma (kısmi rapor yazılır)
+# Rapor yazımı sırasında gelen SIGTERM/SIGINT ertelenir (bkz. main()).
+_INTERRUPT = {"defer": False, "pending": False}
 
 # prepare_test_files() tarafından üretilen ek örnek dosyalar — çoklu ek
 # senaryosunun tek dosyayla anlamsızlaşmaması için.
@@ -124,7 +126,18 @@ def get_server_config(config: dict, server_name: str) -> dict:
     key = SERVER_KEY_MAP.get(server_name.lower())
     if not key or key not in config:
         raise ValueError(f"Bilinmeyen sunucu: {server_name}. config.yaml'da tanımlı değil.")
-    return config[key]
+    sc = config[key]
+    if not isinstance(sc, dict):
+        raise ValueError(f"'{key}' bölümü anahtar: değer listesi olmalı")
+    # Boş host/adres eskiden kontrolden geçiyordu: boş imap_host localhost'a
+    # bağlanıyor, boş smtp_host anlaşılmaz "please run connect() first" veriyordu.
+    blank = [k for k in ("smtp_host", "smtp_port", "imap_host", "imap_port", "test_address")
+             if not str(sc.get(k) if sc.get(k) is not None else "").strip()]
+    if blank:
+        raise ValueError(f"'{key}' bölümünde boş/eksik alan: {', '.join(blank)}")
+    from sender import parse_addresses
+    parse_addresses(sc["test_address"])   # geçersiz adres → ValueError
+    return sc
 
 
 class _NoAliasLoader(yaml.SafeLoader):
@@ -137,6 +150,10 @@ class _NoAliasLoader(yaml.SafeLoader):
             raise yaml.composer.ComposerError(
                 None, None, "YAML alias (*) desteklenmiyor", event.start_mark)
         return super().compose_node(parent, index)
+
+
+_NoAliasLoader.add_constructor(       # arayüzle aynı: tarihler metin olarak okunur
+    "tag:yaml.org,2002:timestamp", lambda loader, node: loader.construct_scalar(node))
 
 
 def load_config(path: str) -> dict:
@@ -153,14 +170,19 @@ def load_config(path: str) -> dict:
             raise
     if not isinstance(config, dict):
         raise ValueError("config.yaml kökü 'anahtar: değer' yapısında olmalı")
-    return {k: (v if v is not None else {}) for k, v in config.items()}
+    out = {k: (v if v is not None else {}) for k, v in config.items()}
+    # Eskiden "test: abc" gibi bir değer ham AttributeError traceback'i veriyordu.
+    bad = [str(k) for k, v in out.items() if not isinstance(v, dict)]
+    if bad:
+        raise ValueError(f"config.yaml bölümleri 'anahtar: değer' yapısında olmalı: {', '.join(bad)}")
+    return out
 
 
 def _num(value, default, cast=int):
     """Config'den sayı oku: '15' (metin) da kabul edilir, bozuksa varsayılan."""
     try:
         return cast(float(value)) if value not in (None, "") else default
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):   # OverflowError: .inf
         logger.warning(f"Geçersiz sayısal config değeri {value!r} — varsayılan {default} kullanılıyor")
         return default
 
@@ -301,19 +323,15 @@ def _resolve_attachment_paths(test_config: dict) -> list[str]:
     """
     repo_root = Path(__file__).parent
 
-    paths_cfg = test_config.get("test_attachment_paths")
-    if paths_cfg and isinstance(paths_cfg, list):
-        raw_list = paths_cfg
-    else:
-        raw_list = [test_config.get("test_attachment_path", "test_files/test_document.pdf")]
+    raw_list = _configured_attachment_list(test_config) or [DEFAULT_ATTACHMENT]
 
     resolved: list[str] = []
     for raw in raw_list:
         p = Path(raw)
-        if p.exists():
+        if p.exists() and p.is_file():
             resolved.append(str(p))
-        elif (repo_root / p).exists():
-            resolved.append(str(repo_root / p))
+        elif (found := _find_file(raw)) is not None:
+            resolved.append(str(found))
         else:
             logger.warning(f"Ek dosya bulunamadı: {raw}")
     return resolved
@@ -379,26 +397,50 @@ def _attachment_tag(paths: list[str]) -> str:
     return f"{count} Ek: {types_str}, {size_str}"
 
 
+DEFAULT_ATTACHMENT = "test_files/test_document.pdf"
+
+
+def _blank(value) -> bool:
+    return value is None or not str(value).strip()
+
+
+def _configured_attachment_list(test_config: dict) -> list:
+    """test_attachment_paths (liste) ya da test_attachment_path; boş değerler
+    "ayarlanmamış" sayılır (eskiden null → TypeError, "" → çalışma dizini ek
+    olarak gönderilmeye çalışılıyordu)."""
+    listed = test_config.get("test_attachment_paths")
+    if isinstance(listed, list):
+        listed = [str(x) for x in listed if not _blank(x)]
+        if listed:
+            return listed
+    single = test_config.get("test_attachment_path")
+    return [] if _blank(single) else [str(single)]
+
+
+def _find_file(raw: str):
+    """Ek yolu: ~ genişletilir; çalışma dizini, DATA_DIR ve repo köküne göre
+    aranır (S/MIME ve TLS yollarıyla aynı kural). Bulunamazsa None."""
+    p = resolve_path(raw)
+    if p is not None and p.exists() and p.is_file():
+        return p
+    repo = Path(__file__).parent / Path(os.path.expanduser(raw))
+    return repo if repo.exists() and repo.is_file() else None
+
+
 def _missing_configured_attachments(test_config: dict, scenario_key: str) -> list[str]:
     """Config'de AÇIKÇA belirtilmiş ama bulunamayan ek dosyaları.
 
     Eskiden bulunamayan ek sessizce varsayılan test_document.pdf ile
     değiştiriliyor, test yapılandırılandan başka bir dosyayla PASS oluyordu.
     """
-    repo_root = Path(__file__).parent
     raw: list = []
-    if scenario_key == "multi_attachment" and isinstance(
-            test_config.get("test_multi_attachment_paths"), list) \
-            and test_config.get("test_multi_attachment_paths"):
-        raw = test_config["test_multi_attachment_paths"]
+    multi = test_config.get("test_multi_attachment_paths")
+    if scenario_key == "multi_attachment" and isinstance(multi, list) \
+            and any(not _blank(x) for x in multi):
+        raw = [str(x) for x in multi if not _blank(x)]
     elif scenario_key in ("attachment", "multi_attachment"):
-        listed = test_config.get("test_attachment_paths")
-        if isinstance(listed, list) and listed:
-            raw = listed
-        elif test_config.get("test_attachment_path"):
-            raw = [test_config["test_attachment_path"]]
-    return [str(r) for r in raw
-            if not (Path(str(r)).exists() or (repo_root / str(r)).exists())]
+        raw = _configured_attachment_list(test_config)
+    return [r for r in raw if _find_file(r) is None]
 
 
 def _resolve_multi_attachment_paths(test_config: dict) -> list[str]:
@@ -411,14 +453,16 @@ def _resolve_multi_attachment_paths(test_config: dict) -> list[str]:
     repo_root = Path(__file__).parent
 
     explicit = test_config.get("test_multi_attachment_paths")
+    if isinstance(explicit, list):
+        explicit = [str(x) for x in explicit if not _blank(x)]
     if explicit and isinstance(explicit, list):
         resolved = []
         for raw in explicit:
             p = Path(raw)
-            if p.exists():
+            if p.exists() and p.is_file():
                 resolved.append(str(p))
-            elif (repo_root / p).exists():
-                resolved.append(str(repo_root / p))
+            elif (found := _find_file(raw)) is not None:
+                resolved.append(str(found))
             else:
                 logger.warning(f"Çoklu ek dosyası bulunamadı: {raw}")
         return resolved
@@ -458,12 +502,20 @@ def _stamp_html_run_id(html: str, run_id: str) -> str:
     return html + stamp
 
 
+def _scenario_label(combo: TestCombination, scenario_key: str) -> str:
+    """Rapordaki "Senaryo Tipi": normal satırlarla aynı CSV etiketi. Hata/SKIP
+    satırları eskiden anahtarı ("attachment") yazıyor, aynı senaryo raporda
+    iki ayrı tip gibi görünüyordu."""
+    sc = getattr(combo, "scenarios", {}).get(scenario_key)
+    return getattr(sc, "scenario_type", None) or scenario_key
+
+
 def _skipped_result(combo: TestCombination, scenario_key: str,
                     test_time: str, reason: str) -> dict:
     """Senaryo çalıştırılamadığında PASS/FAIL yerine SKIP sonucu üretir."""
     return {
         "combination": combo.label,
-        "scenario_type": scenario_key,
+        "scenario_type": _scenario_label(combo, scenario_key),
         "scenario_key": scenario_key,
         "test_time": test_time,
         "analysis": {
@@ -484,7 +536,7 @@ def _error_result(combo: TestCombination, scenario_key: str, test_time: str,
     """Senaryo yarıda kaldığında FAIL sonucu — sonuç ASLA sessizce düşmez."""
     return {
         "combination": combo.label,
-        "scenario_type": scenario_key,
+        "scenario_type": _scenario_label(combo, scenario_key),
         "scenario_key": scenario_key,
         "test_time": test_time,
         "analysis": {
@@ -763,7 +815,7 @@ def run_scenario(
             recommendations = ([hint] if hint else []) + ["SMTP bağlantı ayarlarını kontrol edin"]
         return {
             "combination": combo.label,
-            "scenario_type": scenario_key,
+            "scenario_type": _scenario_label(combo, scenario_key),
             "scenario_key": scenario_key,
             "test_time": test_time,
             "analysis": {
@@ -779,7 +831,7 @@ def run_scenario(
     if send_meta and send_meta.get("skipped"):
         return {
             "combination": combo.label,
-            "scenario_type": scenario_key,
+            "scenario_type": _scenario_label(combo, scenario_key),
             "scenario_key": scenario_key,
             "test_time": test_time,
             "analysis": {
@@ -888,8 +940,8 @@ def main():
     parser.add_argument("--combo", type=_combo_list, default=None,
                         help="Yalnızca bu kombinasyon(lar)ı çalıştır (0-index): 3 veya 1,4,7")
     parser.add_argument("--scenario", default=None,
-                        help="Sadece belirtilen senaryo tipini çalıştır "
-                             "(plain_text|attachment|inline_image|smime|reply_chain)")
+                        help="Sadece belirtilen senaryo tipini çalıştır ("
+                             + "|".join(sorted(SUPPORTED_SCENARIOS)) + ")")
     parser.add_argument("--dry-run", action="store_true", help="Bağlantı testi, mail gönderme")
     args = parser.parse_args()
 
@@ -956,9 +1008,15 @@ def main():
     # blokları (2FA köprüsü temizliği) çalışsın ve o ana kadarki sonuçlar
     # raporlansın. Dry-run dahil tüm modlarda geçerli.
     def _on_sigterm(signum, frame):
+        if _INTERRUPT["defer"]:
+            # Rapor yazılırken gelen Durdur/Ctrl-C ertelenir: eskiden yazım
+            # yarıda kesiliyor ve hiç rapor kalmıyordu.
+            _INTERRUPT["pending"] = True
+            return
         raise KeyboardInterrupt
     try:
         signal.signal(signal.SIGTERM, _on_sigterm)
+        signal.signal(signal.SIGINT, _on_sigterm)
     except (ValueError, OSError):
         pass  # ana thread değil (testler) — yoksay
 
@@ -1017,7 +1075,11 @@ def _dry_run(config: dict, combinations: list) -> None:
 
 def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
     # Analiz için LLM — analysis.provider: claude (varsayılan) | gemini
-    provider = (str((config.get("analysis") or {}).get("provider") or "claude")).lower()
+    provider = (str((config.get("analysis") or {}).get("provider") or "claude")).strip().lower()
+    if provider not in ("claude", "gemini"):
+        # Eskiden "gemni" / "gemini " sessizce Claude ile çalışıyordu.
+        logger.error(f"Bilinmeyen analysis.provider: {provider!r} — 'claude' veya 'gemini' kullanın.")
+        sys.exit(EXIT_ERROR)
     if provider == "gemini":
         gemini_cfg = config.get("gemini") or {}
         analyzer = MailAnalyzer(
@@ -1117,12 +1179,14 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
         logger.warning("Hiçbir test sonucu üretilemedi.")
         sys.exit(EXIT_INTERRUPTED if interrupted else EXIT_ERROR)
 
-    html_path = test_config.get("report_output", "reports/test_report.html")
-    csv_path_out = test_config.get("results_csv", "reports/test_results.csv")
+    # Boş değer ("" / null) "ayarlanmamış" sayılır; eskiden tüm sonuçlar kayboluyordu.
+    html_path = str(test_config.get("report_output") or "").strip() or "reports/test_report.html"
+    csv_path_out = str(test_config.get("results_csv") or "").strip() or "reports/test_results.csv"
     note = ("Koşu kullanıcı tarafından DURDURULDU — bu rapor kısmi sonuçları içerir; "
             "çalıştırılmayan senaryolar listede yoktur.") if interrupted else ""
     # Rapor yazılamazsa sonuçlar kaybolur: koşu "başarılı" (çıkış 0) bitmemeli.
     report_errors = []
+    _INTERRUPT["defer"] = True
     for kind, writer, path, kwargs in (("HTML rapor", generate_html_report, html_path, {"note": note}),
                                         ("CSV sonuç", generate_csv_results, csv_path_out, {})):
         try:
@@ -1131,6 +1195,10 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
         except Exception as e:  # noqa: BLE001 — biri bozulsa diğeri yine yazılsın
             logger.error(f"{kind} yazılamadı ({path}): {e}", exc_info=True)
             report_errors.append(kind)
+    _INTERRUPT["defer"] = False
+    if _INTERRUPT["pending"]:
+        interrupted = True
+        logger.warning("⏹ Durdurma isteği rapor yazımı bitince uygulandı.")
     logger.info(f"\n{'='*60}")
     logger.info("TEST DURDURULDU (kısmi sonuç)" if interrupted else "TEST TAMAMLANDI")
     total = len(all_results)

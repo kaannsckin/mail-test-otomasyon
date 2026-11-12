@@ -24,6 +24,7 @@ import hmac
 import hashlib
 import struct
 import base64
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -117,9 +118,18 @@ class MFAManager:
 
     @staticmethod
     def _write_json(path: Path, data: dict):
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data), encoding="utf-8")
-        tmp.replace(path)
+        # Her yazım kendi geçici dosyasını kullanır: ortak "response.tmp" adı
+        # eşzamanlı submit/cancel'da birinin dosyasını diğerinin replace'ine
+        # kaptırıyor, istek FileNotFoundError ile 500 veriyordu.
+        tmp = path.with_name(f"{path.stem}.{uuid.uuid4().hex}.tmp")
+        try:
+            tmp.write_text(json.dumps(data), encoding="utf-8")
+            tmp.replace(path)
+        finally:
+            try:
+                tmp.unlink()
+            except FileNotFoundError:
+                pass
 
     @staticmethod
     def _read_json(path: Path) -> Optional[dict]:

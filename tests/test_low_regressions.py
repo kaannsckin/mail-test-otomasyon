@@ -354,7 +354,7 @@ class TestConnectionDeadline:
                     "smtp_host": "h", "smtp_port": 25, "smtp_use_tls": False,
                     "tls_verify": False, "username": "u", "password": "p"}}).get_json()
         assert data["ok"] is True
-        assert data["security"] == {"smtp_mode": "plain", "tls_verify": False}
+        assert data["security"] == {"smtp_mode": "plain", "imap_mode": None, "tls_verify": False}
 
 
 # ═══════════════════════════════════════════════════════════════════

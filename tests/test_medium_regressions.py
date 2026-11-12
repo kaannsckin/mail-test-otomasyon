@@ -116,7 +116,7 @@ class TestPortValidation:
                               data={"file": (io.BytesIO(b"ems:\n  smtp_port: abc\n"), "c.yaml")})
         assert r.status_code == 400 and "port" in r.get_json()["error"]
 
-    @pytest.mark.parametrize("port", ["abc", "1e999", ".inf", "{a: 1}"])
+    @pytest.mark.parametrize("port", ["abc", "1e999", "{a: 1}"])
     def test_diagnostics_survives_hand_edited_bad_port(self, flask_client, monkeypatch, port):
         app_mod.CONFIG_PATH.write_text(
             f"ems:\n  smtp_host: mail.kurum.local\n  smtp_port: {port}\n"
@@ -131,6 +131,14 @@ class TestPortValidation:
         labels = [t["label"] for t in r.get_json().get("targets", r.get_json().get("results", []))]
         assert not any("EMS SMTP (config)" in l for l in labels)   # geçersiz port atlandı
         assert any("EMS IMAP (config)" in l for l in labels)       # geçerli olan denendi
+
+    def test_diagnostics_with_unreadable_config_is_200(self, flask_client, monkeypatch):
+        # .inf JSON'a çevrilemez: config okunamaz sayılır, teşhis yine çalışır
+        app_mod.CONFIG_PATH.write_text("ems:\n  smtp_host: h\n  smtp_port: .inf\n", encoding="utf-8")
+        monkeypatch.setattr(app_mod.socket, "create_connection",
+                            lambda *a, **k: (_ for _ in ()).throw(ConnectionRefusedError(111, "x")))
+        monkeypatch.setattr(app_mod.socket, "getaddrinfo", lambda *a, **k: [])
+        assert flask_client.get("/api/diagnostics/network").status_code == 200
 
     @pytest.mark.parametrize("port", ["abc", {"a": 1}, "1e999"])
     def test_test_connection_bad_form_port_is_json(self, flask_client, port):

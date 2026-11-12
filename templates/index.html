@@ -1478,9 +1478,17 @@ async function checkSecurity(srv) {
     const connBadge = verified
       ? `<span class="sec-badge green">✅ Bağlantı: Güvenli (sertifika doğrulandı)</span>`
       : `<span class="sec-badge yellow">⚠ Bağlantı: ${tls ? 'sertifika doğrulanmıyor' : 'şifresiz'}</span>`;
-    badges.innerHTML = `${tlsBadge}
+    const imapBadge = !sec.imap_mode ? ''
+      : sec.imap_mode === 'plain'
+        ? `<span class="sec-badge red">❌ IMAP: Şifresiz (parola açık metin gider)</span>`
+        : `<span class="sec-badge green">✅ IMAP TLS: Aktif (${sec.imap_mode === 'ssl' ? 'SSL 993' : 'STARTTLS'})</span>`;
+    // Bağlantı ancak SMTP ve (test edildiyse) IMAP şifreli + sertifika doğrulanıyorsa "Güvenli"
+    const allSecure = verified && sec.imap_mode !== 'plain';
+    const connBadge2 = allSecure ? connBadge
+      : `<span class="sec-badge yellow">⚠ Bağlantı: ${!tls || sec.imap_mode === 'plain' ? 'şifresiz bölüm var' : 'sertifika doğrulanmıyor'}</span>`;
+    badges.innerHTML = `${tlsBadge}${imapBadge}
       <span class="sec-badge green">✅ Kimlik Doğrulama: Başarılı</span>
-      ${connBadge}`;
+      ${connBadge2}`;
     toast(res.message, 'ok');
   } else if (res.needs_mfa) {
     badges.innerHTML = `<span class="sec-badge yellow">⚠ 2FA Gerekli</span>`;

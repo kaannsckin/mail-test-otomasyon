@@ -4,6 +4,7 @@ Her senaryo tipi için ayrı metot: plain, attachment, inline_image, smime, repl
 """
 from __future__ import annotations
 
+import re
 import smtplib
 import ssl
 import uuid
@@ -17,13 +18,14 @@ from email.mime.base import MIMEBase
 from email.mime.image import MIMEImage
 from email.mime.message import MIMEMessage
 from email import encoders
-from email.utils import formatdate, getaddresses, make_msgid
+from email.header import Header
+from email.utils import formatdate, getaddresses, make_msgid, quote
 from email.policy import SMTPUTF8, compat32
 import shutil
 from typing import Optional
 
 from auth_manager import generate_totp, mfa_manager
-from mail_transport import smtp_connect
+from mail_transport import Deadline, smtp_connect
 
 # Kablo üzerinde CRLF — compat32 davranışı aynen korunur, yalnız satır sonu değişir.
 SMTP_POLICY = compat32.clone(linesep="\r\n")
@@ -31,6 +33,79 @@ SMTP_POLICY = compat32.clone(linesep="\r\n")
 SMTPUTF8_POLICY = SMTPUTF8.clone(linesep="\r\n")
 
 logger = logging.getLogger(__name__)
+
+# SMTP bağlantı + giriş için toplam süre sınırı (soket timeout'u yalnızca tek
+# okumayı sınırlar; satır damlatan bir sunucu koşuyu süresiz bekletebiliyordu).
+CONNECT_DEADLINE = 90.0
+
+
+def _ascii_address(addr: str) -> str:
+    """Yerel kısım ASCII, alan adı IDN ise alan adını A-label'a (xn--) çevirir.
+
+    Böyle bir adres SMTPUTF8 gerektirmez; eskiden info@müller.de SMTPUTF8'siz
+    sunucuda reddediliyordu. Yerel kısım ASCII değilse adres olduğu gibi kalır.
+    """
+    if "@" not in addr:
+        return addr
+    local, _, domain = addr.rpartition("@")
+    if local.isascii() and not domain.isascii():
+        try:
+            return f"{local}@{domain.encode('idna').decode('ascii')}"
+        except UnicodeError:
+            return addr
+    return addr
+
+
+def parse_addresses(value) -> list:
+    """Alıcı/gönderici alanını [(görünen ad, adres)] listesine çevirir.
+
+    ``,`` ve (tırnak dışındaki) ``;`` ayraç kabul edilir; boş girdiler (sondaki
+    virgül) atılır. Adres içermeyen ya da geçersiz bir girdi ValueError verir
+    (eskiden ham metin tek bir bozuk RCPT olarak gidiyordu).
+    """
+    # Tırnak dışındaki , ve ; ile böl; boş parçalar (sondaki virgül) atılır.
+    # Python 3.13'ün katı getaddresses'i sondaki virgülde tüm girdiyi reddeder.
+    parts, cur, quoted = [], [], False
+    for ch in str(value or ""):
+        if ch == '"':
+            quoted = not quoted
+        if ch in ",;" and not quoted:
+            parts.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    parts.append("".join(cur))
+    parts = [x.strip() for x in parts if x.strip()]
+    pairs = [(n, a.strip()) for n, a in (getaddresses([", ".join(parts)]) if parts else [])
+             if n or a]
+    if len(pairs) != len(parts):
+        raise ValueError(f"Geçersiz e-posta adresi: {value!r}")
+    for _, addr in pairs:
+        local, at, domain = addr.rpartition("@")
+        if not at or not local or not domain or any(c.isspace() for c in addr):
+            raise ValueError(f"Geçersiz e-posta adresi: {value!r}")
+    if not pairs:
+        raise ValueError(f"Geçersiz e-posta adresi: {value!r}")
+    return [(n, _ascii_address(a)) for n, a in pairs]
+
+
+def format_address_header(value) -> str:
+    """From/To header değeri: yalnızca görünen ad RFC 2047 ile kodlanır.
+
+    Eskiden "Ünal Çelik <b@x>" tek bir encoded-word'e (adres dahil) dönüşüyor,
+    istemciler adresi okuyamıyordu.
+    """
+    out = []
+    for name, addr in parse_addresses(value):
+        if not name:
+            out.append(addr)
+        elif not name.isascii():
+            out.append(f"{Header(name, 'utf-8').encode()} <{addr}>")
+        elif any(c in name for c in '()<>@,;:\\".[]'):
+            out.append(f'"{quote(name)}" <{addr}>')
+        else:
+            out.append(f"{name} <{addr}>")
+    return ", ".join(out)
 
 
 def _interactive_mfa_enabled() -> bool:
@@ -72,6 +147,23 @@ def _ics_fold(line: str) -> str:
     return "\r\n ".join(c.decode("utf-8") for c in chunks)
 
 
+def _ics_party(prop: str, value: str, params: str) -> str:
+    """ORGANIZER/ATTENDEE satırı: mailto'ya yalnızca adres yazılır, CN tırnaklanır.
+
+    Eskiden görünen adlı ya da listeli adres "mailto:Ad <a@b>" gibi geçersiz
+    bir URI üretiyordu.
+    """
+    try:
+        name, addr = parse_addresses(value)[0]
+    except ValueError:
+        # Tırnaksız virgüllü görünen ad ("Çelik, Ünal <u@x>"): son adresi al
+        found = re.findall(r'[^\s<>,;"]+@[^\s<>,;"]+', str(value))
+        addr = found[-1] if found else str(value)
+        name = str(value).replace(f"<{addr}>", "").strip().strip('",;').strip()
+    cn = (name or addr).replace('"', "'")
+    return f'{prop};CN="{cn}"{params}:mailto:{addr}'
+
+
 def _build_ics(uid: str, summary: str, description: str, location: str,
                start, end, organizer: str, attendee: str) -> str:
     """METHOD:REQUEST içeren minimal ama standart uyumlu VEVENT üretir."""
@@ -90,9 +182,8 @@ def _build_ics(uid: str, summary: str, description: str, location: str,
         f"SUMMARY:{_ics_escape(summary)}",
         f"DESCRIPTION:{_ics_escape(description)}",
         f"LOCATION:{_ics_escape(location)}",
-        f"ORGANIZER;CN={_ics_escape(organizer)}:mailto:{organizer}",
-        f"ATTENDEE;CN={_ics_escape(attendee)};ROLE=REQ-PARTICIPANT;"
-        f"PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:{attendee}",
+        _ics_party("ORGANIZER", organizer, ""),
+        _ics_party("ATTENDEE", attendee, ";ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE"),
         "SEQUENCE:0",
         "STATUS:CONFIRMED",
         "TRANSP:OPAQUE",
@@ -177,15 +268,27 @@ class MailSender:
     def _connect(self) -> smtplib.SMTP:
         # TLS modu (465 SSL / STARTTLS / düz), iç CA ve doğrulama ayarları
         # mail_transport'ta — web arayüzünün bağlantı testi de aynı kodu kullanır.
-        smtp = smtp_connect(self.config, timeout=30)
+        deadline = Deadline(CONNECT_DEADLINE)
         try:
-            self._login(smtp)
-        except Exception:
+            smtp = smtp_connect(self.config, timeout=30, deadline=deadline)
             try:
-                smtp.close()
+                # Kullanıcı adı yoksa kimlik doğrulamasız relay: giriş yapılmaz
+                # (eskiden AUTH desteklemeyen relay'de SMTPNotSupportedError).
+                if self.username or self.auth_method == "otp_only":
+                    self._login(smtp)
             except Exception:
-                pass
+                try:
+                    smtp.close()
+                except Exception:
+                    pass
+                raise
+        except Exception as e:
+            if deadline.expired:
+                raise TimeoutError(f"SMTP bağlantısı {CONNECT_DEADLINE:.0f} sn içinde "
+                                   f"kurulamadı ({self.host}:{self.port})") from e
             raise
+        finally:
+            deadline.close()   # bağlantı kuruldu: süre sınırı yalnızca bağlanma/giriş için
         logger.debug(f"SMTP bağlantısı kuruldu: {self.host}:{self.port}")
         return smtp
 
@@ -194,8 +297,8 @@ class MailSender:
             "Message-ID": msg_id or make_msgid(),
             "Date": formatdate(localtime=True),
             "Subject": subject,
-            "From": self.from_address,
-            "To": to_address,
+            "From": format_address_header(self.from_address),
+            "To": format_address_header(to_address),
             "X-Test-Automation": "mail-otomasyon-v1",
         }
 
@@ -258,6 +361,9 @@ class MailSender:
             "sent_at": sent_at,
             "scenario": "attachment",
             "attachment_name": names,
+            # Analiz promptu boyutu bekliyordu ama hiç gönderilmiyordu ("? byte").
+            "attachment_size": (attached_files[0]["size"] if len(attached_files) == 1
+                                else ", ".join(str(a["size"]) for a in attached_files) or 0),
             "attachment_count": len(attached_files),
             "attachments": attached_files,
         }
@@ -350,7 +456,9 @@ class MailSender:
             "-signer", cert_path,
             "-inkey", key_path,
             "-out", signed_path,
-            "-text"
+            # -text YOK: girdi zaten MIME varlığı (Content-Type başlıklı). -text
+            # ile openssl başına bir text/plain başlığı daha ekliyor, alıcı asıl
+            # metin yerine başlıklar + base64 görüyordu.
         ]
         try:
             result = subprocess.run(cmd, capture_output=True, text=True)
@@ -362,6 +470,10 @@ class MailSender:
 
         if result.returncode != 0:
             logger.error(f"S/MIME imzalama hatası: {result.stderr}")
+            try:
+                os.unlink(signed_path)   # openssl boş çıktı dosyası bırakır
+            except FileNotFoundError:
+                pass
             return {"msg_id": msg_id, "sent_at": None, "scenario": "smime",
                     "error": result.stderr}
 
@@ -584,23 +696,31 @@ class MailSender:
     #  İç yardımcılar
     # ------------------------------------------------------------------ #
     def _send(self, msg, to_address: str) -> float:
-        # "a@x, b@y" tek alıcı sayılıp sunucuya tek RCPT olarak gidiyordu (501).
-        recipients = [addr for _, addr in getaddresses([to_address]) if addr] or [to_address]
-        needs_utf8 = not (str(self.from_address) + "".join(recipients)).isascii()
+        # Zarf adresleri: görünen ad atılır, IDN alan adı A-label'a çevrilir;
+        # "a@x, b@y" / "a@x; b@y" ayrı RCPT olur.
+        recipients = [addr for _, addr in parse_addresses(to_address)]
+        envelope_from = parse_addresses(self.from_address)[0][1]
+        # Yalnızca ADRESLER ASCII dışıysa SMTPUTF8 gerekir; Türkçe görünen ad
+        # header'da RFC 2047 ile kodlanır (eskiden gereksiz SMTPUTF8 isteniyordu).
+        needs_utf8 = not (envelope_from + "".join(recipients)).isascii()
         with self._connect() as smtp:
             if needs_utf8:
-                # Eskiden smtplib'in 'ascii' codec hatası (UnicodeEncodeError) ham dönüyordu.
                 if not smtp.has_extn("smtputf8"):
                     raise smtplib.SMTPNotSupportedError(
                         "ASCII olmayan e-posta adresi (ör. ğüş@örnek.com) için sunucunun "
                         "SMTPUTF8 desteği gerekli; bu sunucu SMTPUTF8 bildirmiyor.")
-                smtp.sendmail(self.from_address, recipients,
-                              msg.as_bytes(policy=SMTPUTF8_POLICY), mail_options=["SMTPUTF8"])
-                return time.time()
-            # policy=SMTP: satır sonları CRLF olur. Varsayılan (compat32) yalın LF
-            # üretir; smtplib bytes'ı normalize etmediği için katı RFC 5321
-            # sunucuları (aiosmtpd, Exim >= 4.97) mesajı reddeder.
-            smtp.sendmail(self.from_address, recipients, msg.as_bytes(policy=SMTP_POLICY))
+                refused = smtp.sendmail(envelope_from, recipients,
+                                        msg.as_bytes(policy=SMTPUTF8_POLICY),
+                                        mail_options=["SMTPUTF8"])
+            else:
+                # CRLF satır sonları: compat32 yalın LF üretir; katı RFC 5321
+                # sunucuları (aiosmtpd, Exim >= 4.97) mesajı reddeder.
+                refused = smtp.sendmail(envelope_from, recipients,
+                                        msg.as_bytes(policy=SMTP_POLICY))
+        if isinstance(refused, dict) and refused:
+            # Alıcılardan biri reddedildi: smtplib yalnızca HEPSİ reddedilirse
+            # hata atar; eskiden kısmi ret "gönderildi" sayılıyordu.
+            raise smtplib.SMTPRecipientsRefused(refused)
         return time.time()
 
     @staticmethod

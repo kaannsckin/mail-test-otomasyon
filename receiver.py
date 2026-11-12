@@ -13,7 +13,10 @@ from email.parser import BytesHeaderParser
 from typing import Optional
 
 from auth_manager import generate_totp, mfa_manager
-from mail_transport import imap_connect
+from mail_transport import Deadline, imap_connect
+
+# IMAP bağlantı + giriş + INBOX seçimi için toplam süre sınırı
+CONNECT_DEADLINE = 90.0
 
 logger = logging.getLogger(__name__)
 
@@ -64,18 +67,28 @@ class MailReceiver:
         imap.login(self.username, self.password)
 
     def _connect(self) -> imaplib.IMAP4:
-        imap = imap_connect(self.config, timeout=30)
+        # Toplam süre sınırı: satır damlatan sunucu koşuyu süresiz bekletmesin.
+        deadline = Deadline(CONNECT_DEADLINE)
         try:
-            self._login(imap)
-            status, _ = imap.select("INBOX")
-            if status != "OK":
-                raise imaplib.IMAP4.error("INBOX seçilemedi")
-        except Exception:
+            imap = imap_connect(self.config, timeout=30, deadline=deadline)
             try:
-                imap.logout()
+                self._login(imap)
+                status, _ = imap.select("INBOX")
+                if status != "OK":
+                    raise imaplib.IMAP4.error("INBOX seçilemedi")
             except Exception:
-                pass
+                try:
+                    imap.logout()
+                except Exception:
+                    pass
+                raise
+        except Exception as e:
+            if deadline.expired:
+                raise TimeoutError(f"IMAP bağlantısı {CONNECT_DEADLINE:.0f} sn içinde kurulamadı "
+                                   f"({self.config.get('imap_host')}:{self.config.get('imap_port')})") from e
             raise
+        finally:
+            deadline.close()
         return imap
 
     # IMAP SEARCH SINCE tarihi yerel ayardan bağımsız İngilizce ay adı ister.
@@ -258,7 +271,7 @@ class MailReceiver:
                 result["attachments"].append({
                     **part_info,
                     "filename": self._decode_header(part.get_filename() or ""),
-                    "size": len(inner_msg.as_bytes()) if inner_msg is not None else 0,
+                    "size": self._safe_size(inner_msg),
                     "encapsulated_headers": inner_headers,
                 })
                 continue
@@ -288,6 +301,17 @@ class MailReceiver:
                 except Exception:
                     text = ""
                 result["parts"].append({**part_info, "text_preview": text[:500]})
+
+    @staticmethod
+    def _safe_size(inner_msg) -> int:
+        """İletilen mesajın boyutu; aşırı iç içe message/rfc822 (300+ seviye)
+        eskiden RecursionError ile tüm mesajı "IMAP kontrol edilemedi" yapıyordu."""
+        if inner_msg is None:
+            return 0
+        try:
+            return len(inner_msg.as_bytes())
+        except (RecursionError, Exception):  # noqa: BLE001 — boyut bilgisi opsiyonel
+            return 0
 
     @staticmethod
     def _unfold(value: str) -> str:
