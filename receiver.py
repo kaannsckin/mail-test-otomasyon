@@ -233,6 +233,10 @@ class MailReceiver:
             # Ham 8-bit değerlerde .get() Header nesnesi döndürebilir — metne çevir.
             disposition = self._unfold(part.get("Content-Disposition", ""))
             content_id = self._unfold(part.get("Content-ID", ""))
+            # RFC 2183: disposition tipi büyük/küçük harfe duyarsızdır ve yalnızca
+            # ilk token'dır. Eskiden "Attachment" ek sayılmıyor, "inline;
+            # filename=attachment.png" ise ek sayılıyordu (yanlış FAIL'ler).
+            disp_type = disposition.split(";", 1)[0].strip().lower()
 
             part_info = {
                 "content_type": content_type,
@@ -259,7 +263,7 @@ class MailReceiver:
                 })
                 continue
 
-            if "attachment" in disposition:
+            if disp_type == "attachment":
                 filename = part.get_filename() or ""
                 payload = part.get_payload(decode=True)
                 result["attachments"].append({
@@ -269,7 +273,7 @@ class MailReceiver:
                     # İlk baytlar (dosya imzası, ör. %PDF) — JSON'a uygun hex metin
                     "payload_head_hex": payload[:16].hex() if payload else "",
                 })
-            elif content_id and "inline" in disposition:
+            elif content_id and disp_type == "inline":
                 payload = part.get_payload(decode=True)
                 result["inline_images"].append({
                     **part_info,

@@ -925,9 +925,12 @@ class TestCrashRegressions:
              patch.object(main_mod, "MailAnalyzer"), \
              patch.object(main_mod, "run_scenario", return_value={"analysis": {"passed": True}}), \
              patch.object(main_mod, "generate_html_report", side_effect=TypeError("bozuk")), \
-             patch.object(main_mod, "generate_csv_results") as csvr:
+             patch.object(main_mod, "generate_csv_results") as csvr, \
+             pytest.raises(SystemExit) as exc:
             _run_cli(["--config", str(cli_env), "--combo", "0", "--scenario", "plain_text"])
         assert csvr.called
+        # Rapor yazılamadıysa koşu "başarılı" bitmez (eskiden çıkış 0'dı)
+        assert exc.value.code == main_mod.EXIT_ERROR
 
     def test_multiple_combos_keep_original_index(self, cli_env):
         seen = []

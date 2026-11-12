@@ -78,7 +78,10 @@ def ssl_context_for(server_config: dict) -> ssl.SSLContext:
 
 def smtp_mode(server_config: dict) -> str:
     """'ssl' (465, doğrudan TLS) | 'starttls' | 'plain'"""
-    port = int(server_config.get("smtp_port") or 0)
+    try:
+        port = int(server_config.get("smtp_port") or 0)
+    except (TypeError, ValueError, OverflowError):
+        port = 0   # geçersiz port: bağlantı kurulurken anlaşılır hata verir, burada 500 değil
     if _as_bool(server_config.get("smtp_use_ssl"), port == 465):
         return "ssl"
     if _as_bool(server_config.get("smtp_use_tls"), True):
@@ -99,7 +102,7 @@ def connection_fingerprint(server_config: dict) -> tuple:
     def port(v):
         try:
             return int(v)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return norm(v)
 
     imap_ssl = _as_bool(sc.get("imap_use_ssl"), True)

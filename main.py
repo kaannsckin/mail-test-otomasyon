@@ -147,10 +147,14 @@ def _num(value, default, cast=int):
 
 
 def _is_auth_failure(exc: BaseException) -> bool:
+    """Kalıcı kimlik reddi mi? Yalnızca 5xx (ör. 535) — 4xx (ör. 454 "temporary
+    authentication failure") geçicidir; eskiden sunucuyu koşu boyunca kilitleyip
+    kalan senaryoları denemeden FAIL sayıyordu."""
     err = exc
     while err is not None:
         if isinstance(err, smtplib.SMTPAuthenticationError):
-            return True
+            code = getattr(err, "smtp_code", None)
+            return not (isinstance(code, int) and 400 <= code < 500)
         err = err.__cause__ or err.__context__
     return False
 
@@ -729,6 +733,18 @@ def run_scenario(
             "skipped": True,
         }
 
+    if isinstance(send_meta, dict) and send_meta.get("error"):
+        # Gönderici hata sözlüğü döndürdü (ör. S/MIME imzalama başarısız): mesaj
+        # hiç gitmedi. Eskiden tam bekleme süresi + tüm denemeler boyunca
+        # beklenip "teslim edilemedi — timeout" deniyor, gerçek hata kayboluyordu.
+        err = str(send_meta["error"]).strip()
+        logger.info(f"◼ Sonuç: ❌ FAIL | {combo.label} / {scenario_key} | gönderilemedi")
+        return _error_result(
+            combo, scenario_key, test_time,
+            f"Mesaj gönderilmedi: {err[:300]}", err,
+            ["Gönderici loglarını inceleyin (ör. S/MIME sertifika/anahtar yolları)."],
+            check_name="Gönderim")
+
     received = receiver.wait_for_message(
         expected_msg_id=send_meta["msg_id"],
         subject_prefix=subject_prefix,
@@ -1045,14 +1061,16 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
     csv_path_out = test_config.get("results_csv", "reports/test_results.csv")
     note = ("Koşu kullanıcı tarafından DURDURULDU — bu rapor kısmi sonuçları içerir; "
             "çalıştırılmayan senaryolar listede yoktur.") if interrupted else ""
-    try:
-        generate_html_report(all_results, html_path, note=note)
-    except Exception as e:  # noqa: BLE001 — biri bozulsa diğeri yine yazılsın
-        logger.error(f"HTML rapor yazılamadı: {e}", exc_info=True)
-    try:
-        generate_csv_results(all_results, csv_path_out)
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"CSV sonuç yazılamadı: {e}", exc_info=True)
+    # Rapor yazılamazsa sonuçlar kaybolur: koşu "başarılı" (çıkış 0) bitmemeli.
+    report_errors = []
+    for kind, writer, path, kwargs in (("HTML rapor", generate_html_report, html_path, {"note": note}),
+                                        ("CSV sonuç", generate_csv_results, csv_path_out, {})):
+        try:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            writer(all_results, path, **kwargs)
+        except Exception as e:  # noqa: BLE001 — biri bozulsa diğeri yine yazılsın
+            logger.error(f"{kind} yazılamadı ({path}): {e}", exc_info=True)
+            report_errors.append(kind)
     logger.info(f"\n{'='*60}")
     logger.info("TEST DURDURULDU (kısmi sonuç)" if interrupted else "TEST TAMAMLANDI")
     total = len(all_results)
@@ -1062,12 +1080,15 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
     failed = effective - passed
     rate = round(passed / effective * 100, 1) if effective else 0
     logger.info(f"Sonuç: {passed}/{effective} PASS ({rate}%) | {skipped} atlandı")
-    logger.info(f"HTML Rapor: {html_path}")
-    logger.info(f"CSV Sonuçlar: {csv_path_out}")
+    logger.info(f"HTML Rapor: {'YAZILAMADI — ' if 'HTML rapor' in report_errors else ''}{html_path}")
+    logger.info(f"CSV Sonuçlar: {'YAZILAMADI — ' if 'CSV sonuç' in report_errors else ''}{csv_path_out}")
     logger.info(f"{'='*60}")
 
     if interrupted:
         sys.exit(EXIT_INTERRUPTED)
+    if report_errors:
+        logger.error(f"{' ve '.join(report_errors)} yazılamadı — sonuçlar kaydedilmedi.")
+        sys.exit(EXIT_ERROR)
     if failed:
         sys.exit(EXIT_TEST_FAILURES)
 

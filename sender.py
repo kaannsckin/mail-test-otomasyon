@@ -347,8 +347,13 @@ class MailSender:
             "-out", signed_path,
             "-text"
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        os.unlink(tmp_path)
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+        except OSError as e:   # openssl CLI yok vb. — eskiden imzasız .eml /tmp'de kalıyordu
+            return {"msg_id": msg_id, "sent_at": None, "scenario": "smime",
+                    "error": f"openssl çalıştırılamadı: {e}"}
+        finally:
+            os.unlink(tmp_path)
 
         if result.returncode != 0:
             logger.error(f"S/MIME imzalama hatası: {result.stderr}")

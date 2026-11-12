@@ -281,6 +281,38 @@ def _normalize_config(data) -> dict:
     return out
 
 
+PORT_KEYS = ("smtp_port", "imap_port")
+
+
+def _safe_port(value):
+    """Geçerli bir TCP portu ise int, değilse None (hiçbir girdide hata atmaz)."""
+    if isinstance(value, bool):
+        return None
+    try:
+        port = int(str(value).strip()) if isinstance(value, str) else int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return port if 0 < port < 65536 else None
+
+
+def _validate_ports(cfg: dict) -> dict:
+    """Formdan/import'tan gelen port alanlarını doğrular ve int'e çevirir.
+
+    Eskiden "abc" gibi bir port kaydediliyor, sonra /api/diagnostics/network
+    ve /api/config/test-connection int() hatasıyla 500 veriyordu.
+    """
+    for section, values in cfg.items():
+        for key in PORT_KEYS:
+            if key not in values or values[key] in (None, ""):
+                continue
+            port = _safe_port(values[key])
+            if port is None:
+                raise ConfigError(f"'{section}.{key}' geçerli bir port olmalı (1-65535): "
+                                  f"{values[key]!r}")
+            values[key] = port
+    return cfg
+
+
 def _read_config() -> dict:
     """config.yaml'ı güvenle okur; yoksa {} döner, bozuksa ConfigError."""
     if not CONFIG_PATH.exists():
@@ -288,8 +320,35 @@ def _read_config() -> dict:
     try:
         text = CONFIG_PATH.read_text(encoding="utf-8")
         return _normalize_config(_yaml_load(text))
-    except (UnicodeDecodeError, yaml.YAMLError) as e:
-        raise ConfigError(f"config.yaml okunamadı: {e}") from e
+    except (UnicodeDecodeError, yaml.YAMLError, RecursionError) as e:
+        # RecursionError: aşırı iç içe YAML ([[[[...]]]]) — eskiden yakalanmıyor, 500 veriyordu
+        raise ConfigError(f"config.yaml okunamadı: {type(e).__name__}: {e}") from e
+
+
+def _salvage_config() -> tuple:
+    """Bozuk config.yaml'ın yedeğini alır ve kurtarılabilen bölümleri döndürür.
+
+    Eskiden dosya bozuksa kayıt existing={} ile yapılıyor, formda olmayan her
+    bölüm (API key, diğer sunucuların şifreleri) yedeksiz siliniyordu.
+    Returns: (kurtarılan bölümler, yedek dosya adı)
+    """
+    backup = CONFIG_PATH.with_name(
+        f"{CONFIG_PATH.name}.bozuk-{datetime.now().strftime('%Y%m%d-%H%M%S')}-"
+        f"{uuid.uuid4().hex[:6]}.bak")
+    raw = CONFIG_PATH.read_bytes()
+    backup.write_bytes(raw)
+    salvaged = {}
+    try:
+        data = _yaml_load(raw.decode("utf-8"))
+    except Exception:  # noqa: BLE001 — sözdizimi bozuk: kurtarılacak bölüm yok
+        data = None
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if isinstance(key, str) and isinstance(value, dict):
+                salvaged[key] = value
+            elif isinstance(key, str) and value is None:
+                salvaged[key] = {}
+    return salvaged, backup.name
 
 
 def _write_config(data: dict) -> None:
@@ -349,16 +408,29 @@ def save_config():
         return jsonify({"ok": False, "error": str(e)}), 400
     if not incoming:
         return jsonify({"ok": False, "error": "Kaydedilecek config boş"}), 400
+    try:
+        _validate_ports(incoming)
+    except ConfigError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
     with _config_lock:
         return _merge_and_save(incoming)
 
 
 def _merge_and_save(incoming: dict):
     """save_config'in oku-birleştir-yaz kısmı; _config_lock altında çağrılır."""
+    warning = None
     try:
         existing = _read_config()
-    except ConfigError:
-        existing = {}  # bozuk dosya: formdan gelen geçerli config ile onarılır
+    except ConfigError as e:
+        # Bozuk dosya: önce yedeklenir, geçerli bölümleri korunur, formdan
+        # gelen config ile onarılır.
+        try:
+            existing, backup_name = _salvage_config()
+        except OSError as oe:
+            return jsonify({"ok": False, "error": f"Bozuk config yedeklenemedi: {oe}"}), 500
+        warning = (f"Mevcut config.yaml bozuktu ({e}); yedeği {backup_name} olarak "
+                   f"alındı ve geçerli bölümleri ({', '.join(existing) or 'yok'}) korundu.")
+        app.logger.warning(warning)
 
     # Alan bazında birleştir: formda olmayan anahtarlar (calendar_*, smime_*,
     # smtp_use_ssl, tls_* ...) silinmesin; boş/maskeli secret'lar korunur.
@@ -376,7 +448,9 @@ def _merge_and_save(incoming: dict):
         merged[section] = new
     try:
         _write_config(merged)
-        return jsonify({"ok": True})
+        return jsonify({"ok": True, **({"warning": warning} if warning else {})})
+    except RecursionError:
+        return jsonify({"ok": False, "error": "Config çok derin iç içe değer içeriyor"}), 400
     except OSError as e:
         return jsonify({"ok": False, "error": f"Config yazılamadı: {e}"}), 500
 
@@ -388,7 +462,9 @@ def import_config():
     if not (f.filename or "").lower().endswith((".yaml", ".yml")):
         return jsonify({"ok": False, "error": "Yalnızca .yaml / .yml dosyaları kabul edilir"}), 400
     try:
-        data = _normalize_config(_yaml_load(f.read().decode("utf-8-sig")))
+        data = _validate_ports(_normalize_config(_yaml_load(f.read().decode("utf-8-sig"))))
+    except RecursionError:
+        return jsonify({"ok": False, "error": "YAML çok derin iç içe yapı içeriyor"}), 400
     except UnicodeDecodeError:
         return jsonify({"ok": False, "error": "Dosya UTF-8 kodlamalı olmalı"}), 400
     except yaml.YAMLError as e:
@@ -399,6 +475,8 @@ def import_config():
         return jsonify({"ok": False, "error": "Dosya boş"}), 400
     try:
         _write_config(data)
+    except RecursionError:
+        return jsonify({"ok": False, "error": "YAML çok derin iç içe yapı içeriyor"}), 400
     except OSError as e:
         return jsonify({"ok": False, "error": f"Config yazılamadı: {e}"}), 500
     return jsonify({"ok": True, "config": _mask_secrets(data)})
@@ -644,12 +722,10 @@ def diagnostics_network():
         sc = cfg.get(key) or {}
         for proto, host_key, port_key in (("SMTP", "smtp_host", "smtp_port"),
                                           ("IMAP", "imap_host", "imap_port")):
-            host, port = sc.get(host_key), sc.get(port_key)
-            if host and port and (host, int(port)) not in {(h, p) for _, h, p in targets}:
-                try:
-                    targets.append((f"{sc.get('label') or key.upper()} {proto} (config)", str(host), int(port)))
-                except (TypeError, ValueError):
-                    pass
+            host, port = sc.get(host_key), _safe_port(sc.get(port_key))
+            # Geçersiz port (elle düzenlenmiş dosya) hedef dışı bırakılır — eskiden 500
+            if host and port and (str(host), port) not in {(h, p) for _, h, p in targets}:
+                targets.append((f"{sc.get('label') or key.upper()} {proto} (config)", str(host), port))
 
     for label, host, port in targets:
         entry = {"label": label, "host": host, "port": port}

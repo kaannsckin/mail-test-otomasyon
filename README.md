@@ -334,7 +334,7 @@ rapor yazılır. `main.py` çıkış kodları (CI/zamanlanmış koşular için):
 | `0` | Tüm (atlanmayan) senaryolar PASS |
 | `2` | Koşu tamamlandı, en az bir senaryo FAIL (dry-run'da: bağlantı hatası) |
 | `130` | Koşu durduruldu — kısmi rapor yazıldı |
-| `1` | Araç/config/CSV hatası ya da hiç sonuç üretilemedi |
+| `1` | Araç/config/CSV hatası, hiç sonuç üretilemedi ya da rapor dosyası yazılamadı |
 
 ---
 

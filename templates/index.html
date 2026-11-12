@@ -1368,7 +1368,10 @@ async function saveConfig(silent=false) {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({config: cfg}),
   });
-  if (res.ok) { if (!silent) toast('✅ Konfigürasyon kaydedildi','ok'); }
+  if (res.ok) {
+    if (res.warning) toast('⚠️ ' + res.warning, 'info');
+    else if (!silent) toast('✅ Konfigürasyon kaydedildi','ok');
+  }
   else toast('Kayıt hatası: '+res.error,'err');
   return !!res.ok;
 }
