@@ -236,6 +236,83 @@ def smtp_connect(server_config: dict, timeout: float = DEFAULT_TIMEOUT,
     return smtp
 
 
+class SMTPLoginDisconnected(smtplib.SMTPServerDisconnected):
+    """Sunucu, kimlik bilgileri gönderildiği anda yanıt vermeden bağlantıyı kesti.
+
+    Bağlantı ve TLS kurulmuştur; sorun giriştedir. smtplib bunu genel
+    ``SMTPServerDisconnected`` olarak verir: açık bir ret (535) olmadığı için
+    hesabı koruyan devre kesici çalışmıyor, her senaryo aynı hesaba yeniden
+    giriş deniyordu (bir koşuda yüzlerce başarısız giriş).
+    """
+
+    def __init__(self, host: str = "", port=0, mechanisms=(), attempts: int = 1, tried=()):
+        self.host, self.port = host, port
+        self.mechanisms = tuple(mechanisms)
+        self.attempts = attempts
+        self.tried = tuple(tried)
+        detail = f"{attempts} deneme" + (f"; AUTH {', '.join(self.tried)}" if self.tried else "")
+        super().__init__(f"{host}:{port} sunucusu girişte bağlantıyı kesti ({detail})")
+
+
+def smtp_auth_mechanisms(smtp) -> list:
+    """EHLO'da ilan edilen AUTH yöntemleri (büyük harf)."""
+    feats = getattr(smtp, "esmtp_features", None) or {}
+    return [m.upper() for m in str(feats.get("auth", "")).split()]
+
+
+def _auto_mechanism(smtp) -> str:
+    """smtplib.login'in seçeceği yöntem (tercih sırası: CRAM-MD5, PLAIN, LOGIN)."""
+    offered = smtp_auth_mechanisms(smtp)
+    return next((m for m in ("CRAM-MD5", "PLAIN", "LOGIN") if m in offered), "?")
+
+
+def smtp_login(smtp, username: str, password: str, server_config: Optional[dict] = None,
+               mechanism: Optional[str] = None) -> None:
+    """Giriş yapar; giriş sırasında kopan bağlantıyı ``SMTPLoginDisconnected`` yapar.
+
+    ``mechanism`` verilirse (ör. "LOGIN") smtplib'in otomatik seçimi yerine o
+    yöntem kullanılır — PLAIN'de kopan bağlantının yöntemden mi kaynaklandığını
+    ayırt etmek için.
+    """
+    sc = server_config or {}
+    tried = mechanism or _auto_mechanism(smtp)
+    try:
+        if mechanism:
+            smtp.user, smtp.password = username, password
+            auth_obj = getattr(smtp, "auth_" + mechanism.lower().replace("-", "_"))
+            smtp.auth(mechanism, auth_obj, initial_response_ok=False)
+        else:
+            smtp.login(username, password)
+    except SMTPLoginDisconnected:
+        raise
+    except smtplib.SMTPServerDisconnected as e:
+        raise SMTPLoginDisconnected(str(sc.get("smtp_host") or ""), sc.get("smtp_port") or 0,
+                                    smtp_auth_mechanisms(smtp), 1, (tried,)) from e
+
+
+def _explain_login_disconnect(e: "SMTPLoginDisconnected", sc: dict) -> str:
+    host = str(sc.get("smtp_host") or e.host or "").lower()
+    tried = f" ({e.attempts} deneme: AUTH {', '.join(e.tried)})" if e.tried else ""
+    parts = [f"Sunucu, kullanıcı adı ve şifre gönderildiği anda yanıt vermeden bağlantıyı "
+             f"kesti{tried}. Bağlantı ve TLS kuruldu; sorun girişte."]
+    if "gmail" in host or "google" in host:
+        parts.append("Gmail normal Google şifresini kabul etmez: 2 Adımlı Doğrulama açık "
+                     "olmalı ve myaccount.google.com/apppasswords adresinden alınan 16 haneli "
+                     "Uygulama Şifresi kullanılmalı; kullanıcı adı tam Gmail adresi olmalı.")
+        parts.append("Kısa sürede çok sayıda başarısız giriş Google'ın girişleri geçici olarak "
+                     "kısıtlamasına yol açabilir; şifreyi düzelttikten sonra hâlâ kesiliyorsa "
+                     "bir süre bekleyip yeniden deneyin.")
+    else:
+        parts.append("Kullanıcı adı/şifreyi ve hesabın SMTP girişine izinli olduğunu kontrol edin.")
+    if not _as_bool(sc.get("tls_verify"), True):
+        parts.append("TLS doğrulaması kapalı (tls_verify: false): araya giren bir güvenlik "
+                     "cihazı ya da antivirüs bağlantıyı kesiyor olabilir.")
+    parts.append("Ağdan kaynaklanıp kaynaklanmadığını ayırt etmek için aynı ayarlarla başka bir "
+                 "ağdan (ör. telefon hotspot) deneyin: kurum ağları ve e-posta tarayan güvenlik "
+                 "yazılımları giden SMTP girişini engelleyebilir.")
+    return " ".join(parts)
+
+
 def imap_connect(server_config: dict, timeout: float = DEFAULT_TIMEOUT,
                  deadline: Optional[Deadline] = None) -> imaplib.IMAP4:
     """Bağlanır, gerekiyorsa TLS'e geçer; giriş YAPMAZ."""
@@ -260,6 +337,8 @@ def explain_connection_error(exc: BaseException, server_config: Optional[dict] =
         err = err.__cause__ or err.__context__
 
     for e in chain:
+        if isinstance(e, SMTPLoginDisconnected):
+            return _explain_login_disconnect(e, sc)
         if isinstance(e, ssl.SSLCertVerificationError) or "certificate verify failed" in str(e).lower():
             return ("Sunucunun TLS sertifikası doğrulanamadı (kendinden imzalı ya da kurum içi "
                     "CA). Önerilen: kurum CA sertifikasını tls_ca_file ile verin. Yalnızca test "

@@ -23,7 +23,7 @@ import shutil
 from typing import Optional
 
 from auth_manager import generate_totp, mfa_manager
-from mail_transport import smtp_connect
+from mail_transport import SMTPLoginDisconnected, smtp_connect, smtp_login
 
 # Kablo üzerinde CRLF — compat32 davranışı aynen korunur, yalnız satır sonu değişir.
 SMTP_POLICY = compat32.clone(linesep="\r\n")
@@ -136,6 +136,16 @@ def _mime_filename(name: str):
         return ("utf-8", "", name)
 
 
+LOGIN_RETRY_DELAY = 2.0     # girişte kopan bağlantıyı yeniden denemeden önce (sn)
+
+
+def _close_quietly(smtp) -> None:
+    try:
+        smtp.close()
+    except Exception:
+        pass
+
+
 class MailSender:
     def __init__(self, server_config: dict):
         self.config = server_config
@@ -148,8 +158,13 @@ class MailSender:
         self.from_address = server_config["test_address"]
         self.auth_method = server_config.get("auth_method", "password")
         self.totp_secret = str(server_config.get("totp_secret") or "")
+        self._omit_size = False   # sunucu SIZE'ı reddettiyse sonraki gönderimlerde hiç ekleme
 
-    def _login(self, smtp: smtplib.SMTP):
+    def _auth(self, smtp: smtplib.SMTP, username: str, secret: str,
+              mechanism: Optional[str]) -> None:
+        smtp_login(smtp, username, secret, self.config, mechanism)
+
+    def _login(self, smtp: smtplib.SMTP, mechanism: Optional[str] = None):
         """auth_method'a göre giriş yapar; TOTP secret varsa kodu otomatik üretir.
 
         Secret yoksa ve web arayüzünden başlatıldıysa (MFA_INTERACTIVE=1),
@@ -165,14 +180,16 @@ class MailSender:
                 ) or ""
             if code:
                 if self.auth_method == "otp_only":
-                    smtp.login(self.username, code)
+                    self._auth(smtp, self.username, code, mechanism)
                     return
                 try:
-                    smtp.login(self.username, self.password + code)
+                    self._auth(smtp, self.username, self.password + code, mechanism)
                     return
+                except SMTPLoginDisconnected:
+                    raise                     # ölü bağlantıda ikinci deneme anlamsız
                 except smtplib.SMTPException:
                     logger.warning("Şifre+TOTP girişi reddedildi, yalnızca şifre deneniyor.")
-        smtp.login(self.username, self.password)
+        self._auth(smtp, self.username, self.password, mechanism)
 
     def _connect(self) -> smtplib.SMTP:
         # TLS modu (465 SSL / STARTTLS / düz), iç CA ve doğrulama ayarları
@@ -180,11 +197,28 @@ class MailSender:
         smtp = smtp_connect(self.config, timeout=30)
         try:
             self._login(smtp)
-        except Exception:
+        except SMTPLoginDisconnected as first:
+            # Girişte kopan bağlantı: geçici bir aksaklık olabilir. Yeni bağlantıyla
+            # bir kez, sunucu sunuyorsa farklı yöntemle (AUTH LOGIN) yeniden dene;
+            # ikinci kopma kalıcı sayılır ve devre kesiciyi tetikler (main.py).
+            _close_quietly(smtp)
+            retry = "LOGIN" if "LOGIN" in first.mechanisms and first.tried != ("LOGIN",) else None
+            logger.warning(f"{self.host}:{self.port} girişte bağlantıyı kesti; "
+                           f"{LOGIN_RETRY_DELAY:g} sn sonra "
+                           + (f"AUTH {retry} ile " if retry else "") + "bir kez yeniden deneniyor.")
+            time.sleep(LOGIN_RETRY_DELAY)
+            smtp = smtp_connect(self.config, timeout=30)
             try:
-                smtp.close()
+                self._login(smtp, mechanism=retry)
+            except SMTPLoginDisconnected as second:
+                _close_quietly(smtp)
+                raise SMTPLoginDisconnected(self.host, self.port, first.mechanisms, 2,
+                                            first.tried + second.tried) from second
             except Exception:
-                pass
+                _close_quietly(smtp)
+                raise
+        except Exception:
+            _close_quietly(smtp)
             raise
         logger.debug(f"SMTP bağlantısı kuruldu: {self.host}:{self.port}")
         return smtp
@@ -594,14 +628,43 @@ class MailSender:
                     raise smtplib.SMTPNotSupportedError(
                         "ASCII olmayan e-posta adresi (ör. ğüş@örnek.com) için sunucunun "
                         "SMTPUTF8 desteği gerekli; bu sunucu SMTPUTF8 bildirmiyor.")
-                smtp.sendmail(self.from_address, recipients,
-                              msg.as_bytes(policy=SMTPUTF8_POLICY), mail_options=["SMTPUTF8"])
+                self._sendmail(smtp, recipients, msg.as_bytes(policy=SMTPUTF8_POLICY),
+                               ["SMTPUTF8"])
                 return time.time()
             # policy=SMTP: satır sonları CRLF olur. Varsayılan (compat32) yalın LF
             # üretir; smtplib bytes'ı normalize etmediği için katı RFC 5321
             # sunucuları (aiosmtpd, Exim >= 4.97) mesajı reddeder.
-            smtp.sendmail(self.from_address, recipients, msg.as_bytes(policy=SMTP_POLICY))
+            self._sendmail(smtp, recipients, msg.as_bytes(policy=SMTP_POLICY))
         return time.time()
+
+    def _sendmail(self, smtp, recipients, data: bytes, mail_options=()) -> None:
+        """sendmail; sunucu ilan ettiği SIZE parametresini reddederse SIZE'sız bir kez daha.
+
+        smtplib, EHLO'da SIZE gören her sunucuya MAIL FROM'da ``size=N`` ekler.
+        Bazı sunucular SIZE'ı ilan edip parametreyi tanımıyor (555 5.5.2 Unknown
+        Mail command argument : size=…) ve her gönderim düşüyordu.
+        """
+        if self._omit_size:
+            smtp.esmtp_features.pop("size", None)
+        def attempt():
+            if mail_options:
+                smtp.sendmail(self.from_address, recipients, data, mail_options=list(mail_options))
+            else:
+                smtp.sendmail(self.from_address, recipients, data)
+
+        try:
+            attempt()
+        except smtplib.SMTPSenderRefused as e:
+            resp = e.smtp_error.decode("utf-8", "replace") if isinstance(e.smtp_error, bytes) \
+                else str(e.smtp_error)
+            if self._omit_size or e.smtp_code not in (501, 555) or "size" not in resp.lower():
+                raise
+            logger.warning(f"{self.host}:{self.port} ilan ettiği SIZE parametresini reddetti "
+                           f"({e.smtp_code}); bu sunucuya SIZE'sız gönderiliyor.")
+            self._omit_size = True
+            smtp.rset()
+            smtp.esmtp_features.pop("size", None)
+            attempt()
 
     @staticmethod
     def _guess_mime(filename: str) -> str:

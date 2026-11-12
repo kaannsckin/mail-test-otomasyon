@@ -287,6 +287,46 @@ class TestConfigForm:
         assert ui.input_value("#ems_smtp_host") == "kalici.host"
 
 
+class TestAnalysisProviderUi:
+    """Eski: arayüzde Gemini seçilemiyordu (yalnız config.yaml elle düzenlenerek)."""
+
+    def test_select_gemini_and_save(self, ui, tmp_path):
+        ui.click('.nav-item[data-page="config"]')
+        assert not ui.is_visible("#gemini_api_key"), "Claude seçiliyken Gemini alanı gizli"
+        ui.select_option("#analysis_provider", "gemini")
+        assert ui.is_visible("#gemini_api_key") and ui.is_visible("#gemini_model")
+        assert ui.input_value("#gemini_model") == "gemini-flash-latest"
+        ui.fill("#gemini_api_key", "AIza-UI-TEST")
+        ui.click("text=💾 Kaydet")
+        ui.wait_for_timeout(500)
+        saved = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+        assert saved["analysis"]["provider"] == "gemini"
+        assert saved["gemini"] == {"api_key": "AIza-UI-TEST", "model": "gemini-flash-latest"}
+        stored = ui.evaluate("localStorage.getItem('mail_otomasyon_config')") or ""
+        assert "AIza-UI-TEST" not in stored
+
+    def test_saved_gemini_restored_masked(self, browser, live_server, tmp_path, monkeypatch):
+        _write_config(tmp_path, {"analysis": {"provider": "gemini"},
+                                 "gemini": {"api_key": "AIza-COK-GIZLI", "model": "gemini-3.5-flash"}})
+        monkeypatch.setattr(app_mod, "CONFIG_PATH", tmp_path / "config.yaml")
+        context, page = _open(browser, live_server)
+        page.wait_for_timeout(400)
+        page.click('.nav-item[data-page="config"]')
+        assert page.input_value("#analysis_provider") == "gemini"
+        assert page.input_value("#gemini_model") == "gemini-3.5-flash"
+        assert set(page.input_value("#gemini_api_key")) == {"•"}
+        assert "AIza-COK-GIZLI" not in page.content()
+        assert page.is_visible("#gemini_api_key")
+        context.close()
+
+    def test_switch_back_to_claude_hides_gemini(self, ui):
+        ui.click('.nav-item[data-page="config"]')
+        ui.select_option("#analysis_provider", "gemini")
+        ui.select_option("#analysis_provider", "claude")
+        assert not ui.is_visible("#gemini_api_key")
+        assert ui.evaluate("getComputedStyle(document.getElementById('claude_card')).opacity") == "1"
+
+
 # ═══════════════════════════════════════════════════════════════════
 #  Test matrisi
 # ═══════════════════════════════════════════════════════════════════
