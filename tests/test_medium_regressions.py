@@ -86,7 +86,7 @@ class TestCorruptConfigSave:
 
 class TestPortValidation:
 
-    @pytest.mark.parametrize("port", ["abc", "1e999", 0, 70000, -5, {"a": 1}, [587], True, 1.5e300])
+    @pytest.mark.parametrize("port", ["abc", "1e999", "0", 70000, -5, {"a": 1}, [587], True, 1.5e300])
     def test_save_rejects_invalid_port(self, flask_client, port):
         # Eski: "abc" kaydediliyor, sonra diagnostics/test-connection 500 veriyordu
         r = flask_client.post("/api/config", json={"config": {"ems": {"smtp_port": port}}})
@@ -99,6 +99,13 @@ class TestPortValidation:
             "smtp_port": " 587 ", "imap_port": "993", "smtp_host": "h"}}})
         assert r.status_code == 200
         assert _saved()["ems"]["smtp_port"] == 587 and _saved()["ems"]["imap_port"] == 993
+
+    def test_zero_port_from_old_ui_means_unset(self, flask_client):
+        # Arayüz boş port alanını eskiden 0 olarak gönderiyordu; kayıt 400 olmamalı
+        r = flask_client.post("/api/config", json={"config": {"ems": {
+            "smtp_host": "h", "smtp_port": 0, "imap_port": 0}}})
+        assert r.status_code == 200
+        assert _saved()["ems"]["smtp_port"] == "" and _saved()["ems"]["imap_port"] == ""
 
     def test_empty_port_allowed(self, flask_client):
         r = flask_client.post("/api/config", json={"config": {"ems": {"smtp_port": ""}}})

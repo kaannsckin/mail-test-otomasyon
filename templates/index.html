@@ -1194,6 +1194,13 @@ function lsSave(cfg) {
 }
 // Form değerlerini döndürür — secret'lar boş/maskeliyse backend dosyadaki
 // kayıtlı değeri kullanır (localStorage'dan secret birleştirme YAPILMAZ).
+// Boş port alanı "" gönderilir (eskiden +"" → 0 gidiyor, sunucu 400 veriyordu).
+function portVal(id) {
+  const el = document.getElementById(id);
+  const v = el ? String(el.value).trim() : '';
+  return v === '' ? '' : +v;
+}
+
 function buildConfigFull() {
   return buildConfig();
 }
@@ -1331,13 +1338,13 @@ function buildConfig() {
   const cfg = {};
   for (const s of ['ems','gmail','outlook']) {
     cfg[s] = {
-      smtp_host: g(`${s}_smtp_host`), smtp_port: +g(`${s}_smtp_port`),
+      smtp_host: g(`${s}_smtp_host`), smtp_port: portVal(`${s}_smtp_port`),
       // Gmail/Outlook için TLS bayrakları formda yok: gönderilmez ki config'te
       // elle ayarlanmış değerler her kayıtta ezilmesin (varsayılanlar zaten açık).
       ...(s === 'ems' ? { smtp_use_tls: gb('ems_smtp_use_tls'), imap_use_ssl: gb('ems_imap_use_ssl'),
                           smtp_use_ssl: gb('ems_smtp_use_ssl'), tls_verify: gb('ems_tls_verify'),
                           tls_ca_file: g('ems_tls_ca_file').trim() } : {}),
-      imap_host: g(`${s}_imap_host`), imap_port: +g(`${s}_imap_port`),
+      imap_host: g(`${s}_imap_host`), imap_port: portVal(`${s}_imap_port`),
       username: g(`${s}_username`),
       password: sec(`${s}_password`),
       test_address: g(`${s}_test_address`),

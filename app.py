@@ -366,6 +366,9 @@ def _validate_ports(cfg: dict) -> dict:
         for key in PORT_KEYS:
             if key not in values or values[key] in (None, ""):
                 continue
+            if values[key] == 0 and not isinstance(values[key], bool):
+                values[key] = ""    # eski arayüz boş alanı 0 olarak gönderir: "ayarlanmamış"
+                continue
             port = _safe_port(values[key])
             if port is None:
                 raise ConfigError(f"'{section}.{key}' geçerli bir port olmalı (1-65535): "
