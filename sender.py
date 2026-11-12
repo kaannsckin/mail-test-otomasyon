@@ -158,6 +158,7 @@ class MailSender:
         self.from_address = server_config["test_address"]
         self.auth_method = server_config.get("auth_method", "password")
         self.totp_secret = str(server_config.get("totp_secret") or "")
+        self._omit_size = False   # sunucu SIZE'ı reddettiyse sonraki gönderimlerde hiç ekleme
 
     def _auth(self, smtp: smtplib.SMTP, username: str, secret: str,
               mechanism: Optional[str]) -> None:
@@ -627,14 +628,43 @@ class MailSender:
                     raise smtplib.SMTPNotSupportedError(
                         "ASCII olmayan e-posta adresi (ör. ğüş@örnek.com) için sunucunun "
                         "SMTPUTF8 desteği gerekli; bu sunucu SMTPUTF8 bildirmiyor.")
-                smtp.sendmail(self.from_address, recipients,
-                              msg.as_bytes(policy=SMTPUTF8_POLICY), mail_options=["SMTPUTF8"])
+                self._sendmail(smtp, recipients, msg.as_bytes(policy=SMTPUTF8_POLICY),
+                               ["SMTPUTF8"])
                 return time.time()
             # policy=SMTP: satır sonları CRLF olur. Varsayılan (compat32) yalın LF
             # üretir; smtplib bytes'ı normalize etmediği için katı RFC 5321
             # sunucuları (aiosmtpd, Exim >= 4.97) mesajı reddeder.
-            smtp.sendmail(self.from_address, recipients, msg.as_bytes(policy=SMTP_POLICY))
+            self._sendmail(smtp, recipients, msg.as_bytes(policy=SMTP_POLICY))
         return time.time()
+
+    def _sendmail(self, smtp, recipients, data: bytes, mail_options=()) -> None:
+        """sendmail; sunucu ilan ettiği SIZE parametresini reddederse SIZE'sız bir kez daha.
+
+        smtplib, EHLO'da SIZE gören her sunucuya MAIL FROM'da ``size=N`` ekler.
+        Bazı sunucular SIZE'ı ilan edip parametreyi tanımıyor (555 5.5.2 Unknown
+        Mail command argument : size=…) ve her gönderim düşüyordu.
+        """
+        if self._omit_size:
+            smtp.esmtp_features.pop("size", None)
+        def attempt():
+            if mail_options:
+                smtp.sendmail(self.from_address, recipients, data, mail_options=list(mail_options))
+            else:
+                smtp.sendmail(self.from_address, recipients, data)
+
+        try:
+            attempt()
+        except smtplib.SMTPSenderRefused as e:
+            resp = e.smtp_error.decode("utf-8", "replace") if isinstance(e.smtp_error, bytes) \
+                else str(e.smtp_error)
+            if self._omit_size or e.smtp_code not in (501, 555) or "size" not in resp.lower():
+                raise
+            logger.warning(f"{self.host}:{self.port} ilan ettiği SIZE parametresini reddetti "
+                           f"({e.smtp_code}); bu sunucuya SIZE'sız gönderiliyor.")
+            self._omit_size = True
+            smtp.rset()
+            smtp.esmtp_features.pop("size", None)
+            attempt()
 
     @staticmethod
     def _guess_mime(filename: str) -> str:
