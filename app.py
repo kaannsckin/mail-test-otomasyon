@@ -88,6 +88,11 @@ run_state = {
 # start/stop/bitiş geçişleri tek kilit altında — çift tıklama veya
 # stop→start yarışında iki koşu aynı anda başlayamasın.
 _run_lock = threading.Lock()
+# config.yaml oku-birleştir-yaz işlemleri sıraya girer: kilitsizken eşzamanlı
+# kayıtlar (iki sekme, çift tık, her koşudan önceki otomatik kayıt) birbirinin
+# bölümlerini — secret'lar dahil — siliyor ve ortak .tmp dosyası yüzünden 500
+# veriyordu. Uygulama tek süreçte çalışır (python app.py), thread kilidi yeterli.
+_config_lock = threading.RLock()
 RUN_PID_FILE = LOGS_DIR / "run.pid"
 
 SUPPORTED_SCENARIO_KEYS = None  # csv_parser'dan tembel yüklenir
@@ -288,10 +293,19 @@ def _read_config() -> dict:
 
 
 def _write_config(data: dict) -> None:
-    tmp = CONFIG_PATH.with_name(CONFIG_PATH.name + ".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        _yaml_dump(data, f)
-    os.replace(tmp, CONFIG_PATH)  # yarım yazılmış config kalmasın
+    # Her yazım kendi geçici dosyasını kullanır; ortak ".tmp" adı eşzamanlı
+    # yazımlarda birinin dosyasını diğerinin os.replace'ine kaptırıyordu.
+    tmp = CONFIG_PATH.with_name(f"{CONFIG_PATH.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with _config_lock:
+            with open(tmp, "w", encoding="utf-8") as f:
+                _yaml_dump(data, f)
+            os.replace(tmp, CONFIG_PATH)  # yarım yazılmış config kalmasın
+    finally:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
 
 def _is_unset(value) -> bool:
     """Boş ya da maskeden ibaret (UI'dan dokunulmadan dönen) secret değeri."""
@@ -335,6 +349,12 @@ def save_config():
         return jsonify({"ok": False, "error": str(e)}), 400
     if not incoming:
         return jsonify({"ok": False, "error": "Kaydedilecek config boş"}), 400
+    with _config_lock:
+        return _merge_and_save(incoming)
+
+
+def _merge_and_save(incoming: dict):
+    """save_config'in oku-birleştir-yaz kısmı; _config_lock altında çağrılır."""
     try:
         existing = _read_config()
     except ConfigError:

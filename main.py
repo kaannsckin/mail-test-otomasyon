@@ -969,6 +969,10 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
             logger.info(f"Kombinasyon [#{combo_idx}]: {combo.label}")
             logger.info(f"{'='*60}")
 
+            scenarios_to_run = list(combo.scenarios.keys())
+            if args.scenario:
+                scenarios_to_run = [s for s in scenarios_to_run if s == args.scenario]
+
             # Sender/Receiver kurulumu
             try:
                 sender_config = get_server_config(config, combo.sender_server)
@@ -976,12 +980,19 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
                 sender = MailSender(sender_config)
                 receiver = MailReceiver(receiver_config)
             except (ValueError, KeyError, TypeError) as e:
-                logger.error(f"Config hatası: {e} — kombinasyon atlanıyor.")
+                # Kombinasyon çalıştırılamıyor — senaryoları sessizce düşmesin,
+                # her biri FAIL satırı olarak rapora ve çıkış koduna yansısın.
+                logger.error(f"Config hatası: {e} — kombinasyonun senaryoları FAIL sayılıyor.")
+                test_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                for sc_key in scenarios_to_run:
+                    all_results.append(_error_result(
+                        combo, sc_key, test_time,
+                        f"Kombinasyon çalıştırılamadı — config hatası: {e}",
+                        f"Config hatası: {e}",
+                        ["config.yaml'da bu kombinasyonun gönderici/alıcı sunucu "
+                         "bölümlerini (smtp_host, imap_host, test_address) tamamlayın."],
+                        check_name="Konfigürasyon"))
                 continue
-
-            scenarios_to_run = list(combo.scenarios.keys())
-            if args.scenario:
-                scenarios_to_run = [s for s in scenarios_to_run if s == args.scenario]
 
             for sc_key in scenarios_to_run:
                 test_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

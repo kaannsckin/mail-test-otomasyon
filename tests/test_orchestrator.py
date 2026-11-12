@@ -711,28 +711,71 @@ class TestMainCli:
         assert len(failed) == 1 and "beklenmeyen" in failed[0]["analysis"]["summary"]
         assert exc.value.code == main_mod.EXIT_TEST_FAILURES
 
-    def test_unknown_server_skips_combination(self, cli_env, tmp_path):
+    def test_unknown_server_reports_fail_rows(self, cli_env, tmp_path):
+        # Regresyon: config'de olmayan sunucuya ait kombinasyon eskiden yalnızca
+        # log satırıyla atlanıyor, rapora ve çıkış koduna hiç yansımıyordu
+        # (README: "yarıda kalan her senaryo FAIL satırı olarak raporlanır").
         cfg = yaml.safe_load(cli_env.read_text(encoding="utf-8"))
         del cfg["gmail"]
         cli_env.write_text(yaml.dump(cfg, allow_unicode=True), encoding="utf-8")
         with patch.object(main_mod, "MailSender"), patch.object(main_mod, "MailReceiver"), \
              patch.object(main_mod, "MailAnalyzer"), \
              patch.object(main_mod, "run_scenario") as rs, \
-             patch.object(main_mod, "generate_html_report"), \
+             patch.object(main_mod, "generate_html_report") as html, \
+             patch.object(main_mod, "generate_csv_results") as csv_out, \
              pytest.raises(SystemExit) as exc:
             _run_cli(["--config", str(cli_env), "--combo", "0"])
         rs.assert_not_called()
-        assert exc.value.code == main_mod.EXIT_ERROR
+        assert exc.value.code == main_mod.EXIT_TEST_FAILURES
+        results = html.call_args[0][0]
+        assert csv_out.call_args[0][0] == results
+        assert len(results) == 11
+        for r in results:
+            assert r["analysis"]["passed"] is False
+            assert "config hatası" in r["analysis"]["summary"]
+            assert r["analysis"]["checks"][0]["name"] == "Konfigürasyon"
 
-    def test_no_results_skips_reporting(self, cli_env, caplog):
+    def test_unknown_server_respects_scenario_filter(self, cli_env):
         cfg = yaml.safe_load(cli_env.read_text(encoding="utf-8"))
         del cfg["gmail"]
         cli_env.write_text(yaml.dump(cfg, allow_unicode=True), encoding="utf-8")
         with patch.object(main_mod, "MailSender"), patch.object(main_mod, "MailReceiver"), \
              patch.object(main_mod, "MailAnalyzer"), \
              patch.object(main_mod, "generate_html_report") as html, \
+             patch.object(main_mod, "generate_csv_results"), \
+             pytest.raises(SystemExit) as exc:
+            _run_cli(["--config", str(cli_env), "--combo", "0", "--scenario", "plain_text"])
+        assert exc.value.code == main_mod.EXIT_TEST_FAILURES
+        results = html.call_args[0][0]
+        assert [r["scenario_key"] for r in results] == ["plain_text"]
+
+    def test_bad_combo_does_not_hide_good_one(self, cli_env):
+        # Bir kombinasyon config hatası verirken diğeri PASS olsa bile koşu
+        # "başarılı" görünmemeli: eskiden "1/1 PASS", çıkış 0 idi.
+        cfg = yaml.safe_load(cli_env.read_text(encoding="utf-8"))
+        del cfg["gmail"]
+        cli_env.write_text(yaml.dump(cfg, allow_unicode=True), encoding="utf-8")
+        with patch.object(main_mod, "MailSender"), patch.object(main_mod, "MailReceiver"), \
+             patch.object(main_mod, "MailAnalyzer"), \
+             patch.object(main_mod, "run_scenario", return_value={"analysis": {"passed": True}}), \
+             patch.object(main_mod, "generate_html_report") as html, \
+             patch.object(main_mod, "generate_csv_results"), \
+             patch.object(main_mod.time, "sleep"), \
+             pytest.raises(SystemExit) as exc:
+            _run_cli(["--config", str(cli_env), "--scenario", "plain_text"])
+        results = html.call_args[0][0]
+        passed = [r for r in results if r["analysis"]["passed"] is True]
+        failed = [r for r in results if r["analysis"]["passed"] is False]
+        assert passed and failed          # gmail'siz kombinasyonlar FAIL, diğerleri PASS
+        assert exc.value.code == main_mod.EXIT_TEST_FAILURES
+
+    def test_no_results_skips_reporting(self, cli_env, caplog):
+        # Hiç senaryo seçilmediğinde (filtre kombinasyonla eşleşmedi) rapor yazılmaz.
+        with patch.object(main_mod, "MailSender"), patch.object(main_mod, "MailReceiver"), \
+             patch.object(main_mod, "MailAnalyzer"), \
+             patch.object(main_mod, "generate_html_report") as html, \
              caplog.at_level("WARNING"), pytest.raises(SystemExit) as exc:
-            _run_cli(["--config", str(cli_env), "--combo", "0"])
+            _run_cli(["--config", str(cli_env), "--combo", "0", "--scenario", "olmayan_senaryo"])
         assert exc.value.code == main_mod.EXIT_ERROR
         html.assert_not_called()
         assert "Hiçbir test sonucu üretilemedi" in caplog.text

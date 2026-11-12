@@ -18,10 +18,14 @@ from email.mime.image import MIMEImage
 from email.mime.message import MIMEMessage
 from email import encoders
 from email.utils import formatdate, make_msgid
+from email.policy import compat32
 from typing import Optional
 
 from auth_manager import generate_totp, mfa_manager
 from mail_transport import smtp_connect
+
+# Kablo üzerinde CRLF — compat32 davranışı aynen korunur, yalnız satır sonu değişir.
+SMTP_POLICY = compat32.clone(linesep="\r\n")
 
 logger = logging.getLogger(__name__)
 
@@ -571,7 +575,10 @@ class MailSender:
     # ------------------------------------------------------------------ #
     def _send(self, msg, to_address: str) -> float:
         with self._connect() as smtp:
-            smtp.sendmail(self.from_address, [to_address], msg.as_bytes())
+            # policy=SMTP: satır sonları CRLF olur. Varsayılan (compat32) yalın LF
+            # üretir; smtplib bytes'ı normalize etmediği için katı RFC 5321
+            # sunucuları (aiosmtpd, Exim >= 4.97) mesajı reddeder.
+            smtp.sendmail(self.from_address, [to_address], msg.as_bytes(policy=SMTP_POLICY))
         return time.time()
 
     @staticmethod

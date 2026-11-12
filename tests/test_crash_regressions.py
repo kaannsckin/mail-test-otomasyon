@@ -823,3 +823,175 @@ class TestRound2MailPipeline:
                                     {"wait_seconds": 0, "max_retries": 1, "retry_interval": 0})
         summary = res["analysis"]["summary"]
         assert summary.index("smtp_use_ssl") < summary.index("giden SMTP portuna")
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  3. tur crash test — yüksek öncelikli bulgular
+# ═══════════════════════════════════════════════════════════════════
+
+class TestConcurrentConfigSave:
+    """Eski: kilitsiz oku-birleştir-yaz + ortak config.yaml.tmp → 40 paralel
+    kayıtta 10 adet 500, 40 bölümden 1'i kaldı, mevcut ems/şifre silindi."""
+
+    def test_parallel_saves_keep_every_section(self, flask_client):
+        app_mod.CONFIG_PATH.write_text(
+            yaml.dump({"ems": {"smtp_host": "h", "password": "REALPW"}}), encoding="utf-8")
+        codes, errors = [], []
+
+        def save(i):
+            try:
+                with app_mod.app.test_client() as c:
+                    r = c.post("/api/config", json={"config": {f"sec{i}": {"k": i}}})
+                    codes.append(r.status_code)
+            except Exception as e:  # noqa: BLE001
+                errors.append(e)
+
+        threads = [threading.Thread(target=save, args=(i,)) for i in range(40)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors
+        assert codes == [200] * 40
+        saved = yaml.safe_load(app_mod.CONFIG_PATH.read_text(encoding="utf-8"))
+        assert {f"sec{i}" for i in range(40)} <= set(saved)
+        assert saved["ems"]["password"] == "REALPW"
+        assert not list(app_mod.CONFIG_PATH.parent.glob("config.yaml*.tmp"))
+
+    def test_failed_write_leaves_no_temp_file(self, flask_client, monkeypatch):
+        def boom(data, f):
+            raise OSError("disk dolu")
+        monkeypatch.setattr(app_mod, "_yaml_dump", boom)
+        r = flask_client.post("/api/config", json={"config": {"ems": {"smtp_host": "h"}}})
+        assert r.status_code == 500
+        assert r.get_json()["ok"] is False
+        assert not list(app_mod.CONFIG_PATH.parent.glob("config.yaml*.tmp"))
+
+
+class _WireCapture:
+    """Ham DATA satırlarını kaydeden minimal SMTP sunucusu."""
+
+    def __init__(self):
+        self.sock = socket.socket()
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(1)
+        self.port = self.sock.getsockname()[1]
+        self.data_lines = []
+        self.thread = threading.Thread(target=self._serve, daemon=True)
+        self.thread.start()
+
+    def _serve(self):
+        conn, _ = self.sock.accept()
+        f = conn.makefile("rb")
+        conn.sendall(b"220 test\r\n")
+        in_data = False
+        while True:
+            line = f.readline()
+            if not line:
+                break
+            if in_data:
+                self.data_lines.append(line)
+                if line.rstrip(b"\r\n") == b".":
+                    in_data = False
+                    conn.sendall(b"250 ok\r\n")
+                continue
+            cmd = line.upper()
+            if cmd.startswith(b"DATA"):
+                in_data = True
+                conn.sendall(b"354 go\r\n")
+            elif cmd.startswith(b"QUIT"):
+                conn.sendall(b"221 bye\r\n")
+                break
+            elif cmd.startswith(b"EHLO"):
+                conn.sendall(b"250-test\r\n250 AUTH PLAIN LOGIN\r\n")
+            elif cmd.startswith(b"AUTH"):
+                conn.sendall(b"235 ok\r\n")
+            else:
+                conn.sendall(b"250 ok\r\n")
+        conn.close()
+        self.sock.close()
+
+
+class TestSmtpWireLineEndings:
+    """Eski: msg.as_bytes() yalın LF üretiyordu; smtplib bytes'ı normalize
+    etmediği için katı RFC 5321 sunucuları (aiosmtpd, Exim >= 4.97) ~1000
+    baytı aşan mesajı "500 Line too long" ile reddetti."""
+
+    @pytest.mark.parametrize("scenario", ["plain_text", "html", "attachment"])
+    def test_data_uses_crlf_only(self, scenario, tmp_path):
+        cap = _WireCapture()
+        cfg = {"smtp_host": "127.0.0.1", "smtp_port": cap.port, "smtp_use_tls": False,
+               "username": "u@test.local", "password": "p", "test_address": "a@test.local"}
+        sender = MailSender(cfg)
+        body = "satır ğüşıöç\n" * 400   # > 1000 bayt, çok satırlı
+        if scenario == "plain_text":
+            meta = sender.send_plain_text("b@test.local", "[T] crlf", body)
+        elif scenario == "html":
+            meta = sender.send_html_message("b@test.local", "[T] crlf", f"<p>{body}</p>", body)
+        else:
+            pdf = tmp_path / "ek.pdf"
+            pdf.write_bytes(b"%PDF-1.4\n" + b"x" * 5000)
+            meta = sender.send_with_attachment("b@test.local", "[T] crlf", body, [str(pdf)])
+        cap.thread.join(timeout=10)
+        assert meta.get("sent_at")
+        assert cap.data_lines, "DATA alınmadı"
+        bad = [l for l in cap.data_lines if not l.endswith(b"\r\n") or l.endswith(b"\r\r\n")]
+        assert bad == []
+        assert all(len(l) <= 1000 for l in cap.data_lines)
+
+
+class TestReceiverOddHeaders:
+    """Eski: geçerli/yarı geçerli header'lar mesaj ayrıştırmayı çökertiyor,
+    teslim edilmiş mesaj "IMAP kontrol edilemedi" FAIL'ine dönüşüyordu."""
+
+    def _details(self, raw: bytes) -> dict:
+        r = MailReceiver.__new__(MailReceiver)
+        return r._extract_details(message_from_bytes(raw), raw, "1")
+
+    def test_raw_8bit_utf8_from_and_subject(self):
+        # Eski: From → AttributeError('Header' .split), Subject → LookupError('unknown-8bit')
+        raw = ("From: Ünal Çelik <a@b.c>\r\nTo: Şule <d@e.f>\r\nSubject: Çağrı şöyle\r\n"
+               "Message-ID: <1@x>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n"
+               "merhaba\r\n").encode("utf-8")
+        d = self._details(raw)
+        assert d["headers"]["message_id"] == "<1@x>"
+        assert "Çağrı" in d["headers"]["subject"]
+        assert "Ünal" in d["headers"]["from"] and "a@b.c" in d["headers"]["from"]
+
+    @pytest.mark.parametrize("value", ["=?foo?q?x?=", "=?unknown-8bit?b?w4c=?=",
+                                       "Önce =?x-yok?Q?abc?= sonra"])
+    def test_unknown_charset_encoded_word(self, value):
+        out = MailReceiver._decode_header(value)
+        assert isinstance(out, str) and out
+
+    def test_unknown_charset_in_attachment_and_inner_message(self):
+        raw = (b"Subject: =?foo?q?dis?=\r\nMessage-ID: <2@x>\r\nMIME-Version: 1.0\r\n"
+               b"Content-Type: multipart/mixed; boundary=B\r\n\r\n"
+               b"--B\r\nContent-Type: text/plain\r\n\r\nhi\r\n"
+               b"--B\r\nContent-Type: application/pdf\r\n"
+               b"Content-Disposition: attachment; filename=\"=?foo?q?ek?=.pdf\"\r\n"
+               b"Content-Transfer-Encoding: base64\r\n\r\nJVBERg==\r\n"
+               b"--B\r\nContent-Type: message/rfc822\r\n\r\n"
+               b"Subject: =?bar?q?ic?=\r\nFrom: \xc3\x9cnal <x@y.z>\r\n\r\nic govde\r\n"
+               b"--B--\r\n")
+        d = self._details(raw)
+        assert d["headers"]["message_id"] == "<2@x>"
+        assert any(a["filename"].endswith(".pdf") for a in d["attachments"])
+        fwd = [a for a in d["attachments"] if a["content_type"] == "message/rfc822"]
+        assert fwd and "Ünal" in fwd[0]["encapsulated_headers"]["From"]
+
+    def test_8bit_message_found_by_wait_for_message(self):
+        raw = ("From: Ünal <a@b.c>\r\nSubject: [TEST] Çağrı\r\nMessage-ID: <3@x>\r\n"
+               "Content-Type: text/plain; charset=utf-8\r\n\r\nhi\r\n").encode("utf-8")
+        r = MailReceiver({"imap_host": "h", "imap_port": 993, "username": "u",
+                          "password": "p", "test_address": "u@h"})
+        with patch.object(r, "_connect", return_value=MagicMock()), \
+             patch.object(r, "_candidates_by_header", return_value=[b"1"]), \
+             patch.object(r, "_fetch_full", return_value=raw):
+            found = r.wait_for_message("<3@x>", "[TEST]", wait_seconds=0,
+                                       max_retries=1, retry_interval=0)
+        assert r.last_error is None
+        assert found is not None
+        assert found["headers"]["message_id"] == "<3@x>"
+        assert "Çağrı" in found["headers"]["subject"]
