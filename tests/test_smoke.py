@@ -345,7 +345,8 @@ class TestMailAnalyzer:
         a = MailAnalyzer("sk-ant-test")
         raw = json.dumps({
             "passed": True, "confidence": "HIGH",
-            "checks": [], "summary": "OK", "issues": [], "recommendations": []
+            "checks": [{"name": "Teslim", "passed": True, "detail": "ok"}],
+            "summary": "OK", "issues": [], "recommendations": []
         })
         result = a._parse_response(raw, "plain_text")
         assert result["passed"] is True

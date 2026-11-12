@@ -10,6 +10,7 @@ Provider seçimi config.yaml'daki ``analysis.provider`` alanı ile yapılır:
 
 import json
 import logging
+import os
 import re
 from typing import Optional
 
@@ -77,6 +78,10 @@ def _dumps(value) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2, default=_json_default)
 
 
+class _GeminiEmpty(ValueError):
+    """Gemini yanıtı aday/içerik içermiyor (güvenlik filtresi, boş yanıt)."""
+
+
 def _failure(summary: str, issue: str, check_name: str = "Analiz") -> dict:
     return {
         "passed": False,
@@ -106,11 +111,20 @@ class MailAnalyzer:
         if self.provider == "gemini":
             self.model = model or DEFAULT_GEMINI_MODEL
             self.client = None
+            if not self.api_key.strip():
+                self._open_circuit("Gemini API key tanımlı değil — Konfigürasyon → gemini.api_key.")
         else:
             self.model = model or DEFAULT_MODEL
+            # Boş key: ortam değişkeni varsa SDK onu kullanır (None); yoksa her
+            # senaryo "bağlanılamadı" hatasıyla 3 boş çağrı yapıyordu — baştan kapat.
+            key = self.api_key.strip() or None
+            if key is None and not os.environ.get("ANTHROPIC_API_KEY"):
+                self._open_circuit("Claude API key tanımlı değil — Konfigürasyon → anthropic.api_key.")
             # SDK 408/409/429/5xx ve bağlantı hatalarında exponential backoff ile
             # bir kez yeniden dener; senaryo başına en kötü durum ~3 dk.
-            self.client = anthropic.Anthropic(api_key=self.api_key, max_retries=1, timeout=90.0)
+            # Key hiç yoksa SDK kurucu hata atar; devre zaten açık, istemci kullanılmaz.
+            client_key = key if (key or os.environ.get("ANTHROPIC_API_KEY")) else "tanımsız"
+            self.client = anthropic.Anthropic(api_key=client_key, max_retries=1, timeout=90.0)
 
     def analyze(self, scenario_type: str, send_meta: dict,
                 received_msg: Optional[dict], combination: dict) -> dict:
@@ -436,6 +450,9 @@ Sadece JSON döndür, markdown veya açıklama ekleme."""
             "generationConfig": {"maxOutputTokens": 8192,
                                  "responseMimeType": "application/json"},
         }
+        # Claude yolundaki devre kesici Gemini için de geçerli: eskiden kalıcı
+        # 403'te her senaryo yeniden çağrı yapıyor, asılı uç noktada her biri
+        # 60 sn bekliyordu (198 senaryoda ~3 saat).
         try:
             resp = httpx.post(
                 url,
@@ -444,18 +461,62 @@ Sadece JSON döndür, markdown veya açıklama ekleme."""
                 timeout=60.0,
             )
             resp.raise_for_status()
-            data = resp.json()
-            return data["candidates"][0]["content"]["parts"][0]["text"]
-        except (httpx.HTTPError, KeyError, IndexError, ValueError) as e:
-            logger.error(f"Gemini API hatası: {e}")
-            return json.dumps({
-                "passed": False,
-                "confidence": "LOW",
-                "checks": [],
-                "summary": f"Gemini API erişim hatası: {e}",
-                "issues": [str(e)],
-                "recommendations": [],
-            })
+            text = self._gemini_text(resp.json())
+            self._consecutive_unavailable = 0
+            return text
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code
+            detail = f"HTTP {status}: {e.response.text[:300]}"
+            if status in (401, 403):
+                error_msg = "Gemini API key geçersiz ya da bu modele erişim izni yok."
+                self._open_circuit(error_msg)       # sonraki her çağrı da aynı sonucu verir
+            elif status == 404:
+                error_msg = (f"Gemini modeli bulunamadı: {self.model} — "
+                             "Konfigürasyondan güncel bir model seçin.")
+                self._open_circuit(error_msg)
+            elif status == 429:
+                error_msg = "Gemini API rate limit aşıldı — daha sonra tekrar deneyin."
+                self._note_unavailable(error_msg)
+            elif status >= 500:
+                error_msg = f"Gemini API hatası (HTTP {status})."
+                self._note_unavailable(error_msg)
+            else:
+                error_msg = f"Gemini API isteği reddetti (HTTP {status})."
+        except httpx.TimeoutException as e:
+            error_msg = "Gemini API zaman aşımı."
+            detail = f"{type(e).__name__}: {e}"
+            self._note_unavailable(error_msg)
+        except httpx.HTTPError as e:
+            error_msg = "Gemini API'ye bağlanılamadı — ağ bağlantısını kontrol edin."
+            detail = f"{type(e).__name__}: {e}"
+            self._note_unavailable(error_msg)
+        except _GeminiEmpty as e:
+            error_msg = str(e)
+            detail = error_msg
+        except ValueError as e:   # JSON olmayan gövde
+            error_msg = "Gemini yanıtı JSON değil."
+            detail = f"{type(e).__name__}: {e}"
+
+        logger.error(f"Gemini API hatası: {error_msg} ({detail})")
+        return json.dumps(_failure(f"Gemini API erişim hatası: {error_msg}", detail,
+                                   check_name="LLM Analizi"))
+
+    @staticmethod
+    def _gemini_text(data) -> str:
+        """generateContent yanıtından metni çıkarır; boş/engellenmiş yanıtta
+        anlaşılır hata verir (eskiden "'candidates'" gibi ham KeyError metni)."""
+        candidates = data.get("candidates") if isinstance(data, dict) else None
+        if not candidates:
+            reason = ((data or {}).get("promptFeedback") or {}).get("blockReason") \
+                if isinstance(data, dict) else None
+            raise _GeminiEmpty(f"Gemini yanıt üretmedi (blockReason={reason or 'yok'}).")
+        cand = candidates[0] if isinstance(candidates[0], dict) else {}
+        parts = (cand.get("content") or {}).get("parts") or []
+        texts = [p.get("text") for p in parts if isinstance(p, dict) and p.get("text")]
+        if not texts:
+            raise _GeminiEmpty(f"Gemini boş içerik döndürdü "
+                               f"(finishReason={cand.get('finishReason') or 'yok'}).")
+        return "".join(texts)
 
     # ------------------------------------------------------------------ #
     #  Response parser
@@ -532,6 +593,16 @@ Sadece JSON döndür, markdown veya açıklama ekleme."""
             if isinstance(value, list):
                 return [str(v) for v in value if v not in (None, "")]
             return [str(value)] if value not in (None, "") else []
+
+        # LLM'in genel kararı kendi kontrolleriyle çelişemez. Eskiden
+        # passed=true + tüm kontroller başarısız + dolu issues → PASS kalıyordu.
+        failed_checks = [c["name"] for c in checks if not c["passed"]]
+        if passed and failed_checks:
+            passed = False
+            notes.append("LLM genel sonucu PASS dedi ama başarısız kontrol var: "
+                         + ", ".join(failed_checks))
+        elif passed and not checks:
+            notes.append("LLM PASS dedi ama hiçbir kontrol sonucu döndürmedi")
 
         issues = _str_list(data.get("issues")) + notes
         if notes:

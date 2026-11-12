@@ -17,11 +17,18 @@ from email.mime.base import MIMEBase
 from email.mime.image import MIMEImage
 from email.mime.message import MIMEMessage
 from email import encoders
-from email.utils import formatdate, make_msgid
+from email.utils import formatdate, getaddresses, make_msgid
+from email.policy import SMTPUTF8, compat32
+import shutil
 from typing import Optional
 
 from auth_manager import generate_totp, mfa_manager
 from mail_transport import smtp_connect
+
+# Kablo üzerinde CRLF — compat32 davranışı aynen korunur, yalnız satır sonu değişir.
+SMTP_POLICY = compat32.clone(linesep="\r\n")
+# ASCII dışı adresler (EAI, RFC 6531): header'lar ham UTF-8 gider, sunucu SMTPUTF8 ister.
+SMTPUTF8_POLICY = SMTPUTF8.clone(linesep="\r\n")
 
 logger = logging.getLogger(__name__)
 
@@ -314,13 +321,15 @@ class MailSender:
         cert_path: PEM formatında sertifika
         key_path: PEM formatında özel anahtar
         """
-        try:
-            from OpenSSL import crypto
-            from email import message_from_bytes
-        except ImportError:
-            logger.warning("pyOpenSSL kurulu değil. S/MIME testi atlanıyor.")
+        from email import message_from_bytes
+
+        # İmzalama openssl CLI ile yapılır; eskiden yalnızca kapı olarak
+        # pyOpenSSL import ediliyordu (hiç kullanılmadan) ve kurulu değilse
+        # geçerli sertifikayla bile S/MIME testi atlanıyordu.
+        if not shutil.which("openssl"):
+            logger.warning("openssl komutu bulunamadı. S/MIME testi atlanıyor.")
             return {"msg_id": None, "sent_at": None, "scenario": "smime", "skipped": True,
-                    "skip_reason": "pyOpenSSL kurulu değil"}
+                    "skip_reason": "openssl komutu bulunamadı (PATH)"}
 
         # İmzalı MIME oluştur
         msg_id = make_msgid()
@@ -343,8 +352,13 @@ class MailSender:
             "-out", signed_path,
             "-text"
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        os.unlink(tmp_path)
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+        except OSError as e:   # openssl CLI yok vb. — eskiden imzasız .eml /tmp'de kalıyordu
+            return {"msg_id": msg_id, "sent_at": None, "scenario": "smime",
+                    "error": f"openssl çalıştırılamadı: {e}"}
+        finally:
+            os.unlink(tmp_path)
 
         if result.returncode != 0:
             logger.error(f"S/MIME imzalama hatası: {result.stderr}")
@@ -570,8 +584,23 @@ class MailSender:
     #  İç yardımcılar
     # ------------------------------------------------------------------ #
     def _send(self, msg, to_address: str) -> float:
+        # "a@x, b@y" tek alıcı sayılıp sunucuya tek RCPT olarak gidiyordu (501).
+        recipients = [addr for _, addr in getaddresses([to_address]) if addr] or [to_address]
+        needs_utf8 = not (str(self.from_address) + "".join(recipients)).isascii()
         with self._connect() as smtp:
-            smtp.sendmail(self.from_address, [to_address], msg.as_bytes())
+            if needs_utf8:
+                # Eskiden smtplib'in 'ascii' codec hatası (UnicodeEncodeError) ham dönüyordu.
+                if not smtp.has_extn("smtputf8"):
+                    raise smtplib.SMTPNotSupportedError(
+                        "ASCII olmayan e-posta adresi (ör. ğüş@örnek.com) için sunucunun "
+                        "SMTPUTF8 desteği gerekli; bu sunucu SMTPUTF8 bildirmiyor.")
+                smtp.sendmail(self.from_address, recipients,
+                              msg.as_bytes(policy=SMTPUTF8_POLICY), mail_options=["SMTPUTF8"])
+                return time.time()
+            # policy=SMTP: satır sonları CRLF olur. Varsayılan (compat32) yalın LF
+            # üretir; smtplib bytes'ı normalize etmediği için katı RFC 5321
+            # sunucuları (aiosmtpd, Exim >= 4.97) mesajı reddeder.
+            smtp.sendmail(self.from_address, recipients, msg.as_bytes(policy=SMTP_POLICY))
         return time.time()
 
     @staticmethod

@@ -24,7 +24,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from csv_parser import SCENARIO_TYPE_MAP, SUPPORTED_SCENARIOS  # noqa: E402
+from csv_parser import SCENARIO_TYPE_MAP, SUPPORTED_SCENARIOS, _read_rows  # noqa: E402
 
 DEFAULT_CSV = REPO_ROOT / "mail_test_checklist.csv"
 PENDING = "⬜ Bekliyor"
@@ -94,7 +94,11 @@ SCENARIO_STEPS: dict[str, list[str]] = {
 
 
 def is_combo_header(row: list[str]) -> bool:
-    return bool(row) and "🔀" in row[0]
+    # csv_parser ile aynı kural: Excel-TR (cp1254) 🔀 emojisini saklayamaz.
+    if not row:
+        return False
+    head = row[0]
+    return "🔀" in head or ("Kombinasyon" in head and "Alan" in head and "Gönderen" in head)
 
 
 def is_scenario_header(row: list[str]) -> bool:
@@ -127,8 +131,9 @@ class Combination:
 
 def parse(path: Path):
     """CSV'yi (önsöz satırları, kombinasyon listesi) olarak ayrıştırır."""
-    with open(path, "r", encoding="utf-8") as f:
-        rows = list(csv.reader(f))
+    # csv_parser ile aynı okuyucu: UTF-8 (BOM'lu) ve Excel-TR (cp1254, ';')
+    # desteklenir. Eskiden cp1254 dosyada ham UnicodeDecodeError traceback'i çıkıyordu.
+    rows = _read_rows(str(path))
 
     preamble: list[list[str]] = []
     combos: list[Combination] = []

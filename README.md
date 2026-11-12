@@ -323,7 +323,9 @@ Her test çalışmasının ardından iki dosya üretilir:
 - `reports/test_report.html` — Kombinasyon bazlı görsel rapor (web arayüzünden görüntülenebilir)
 - `reports/test_results.csv` — Google Sheets'e aktarılabilir sonuçlar
 
-Yarıda kalan her senaryo **FAIL** satırı olarak raporlanır (sessizce düşmez).
+Yarıda kalan her senaryo **FAIL** satırı olarak raporlanır (sessizce düşmez);
+sunucusu `config.yaml`'da tanımlı olmayan ya da eksik kombinasyonların
+senaryoları da "Konfigürasyon" FAIL'i olarak rapora girer.
 Koşu durdurulursa (arayüzde **Durdur** / Ctrl-C) o ana kadarki sonuçlarla kısmi
 rapor yazılır. `main.py` çıkış kodları (CI/zamanlanmış koşular için):
 
@@ -332,7 +334,7 @@ rapor yazılır. `main.py` çıkış kodları (CI/zamanlanmış koşular için):
 | `0` | Tüm (atlanmayan) senaryolar PASS |
 | `2` | Koşu tamamlandı, en az bir senaryo FAIL (dry-run'da: bağlantı hatası) |
 | `130` | Koşu durduruldu — kısmi rapor yazıldı |
-| `1` | Araç/config/CSV hatası ya da hiç sonuç üretilemedi |
+| `1` | Araç/config/CSV hatası, hiç sonuç üretilemedi ya da rapor dosyası yazılamadı |
 
 ---
 

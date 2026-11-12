@@ -1194,6 +1194,13 @@ function lsSave(cfg) {
 }
 // Form değerlerini döndürür — secret'lar boş/maskeliyse backend dosyadaki
 // kayıtlı değeri kullanır (localStorage'dan secret birleştirme YAPILMAZ).
+// Boş port alanı "" gönderilir (eskiden +"" → 0 gidiyor, sunucu 400 veriyordu).
+function portVal(id) {
+  const el = document.getElementById(id);
+  const v = el ? String(el.value).trim() : '';
+  return v === '' ? '' : +v;
+}
+
 function buildConfigFull() {
   return buildConfig();
 }
@@ -1331,13 +1338,13 @@ function buildConfig() {
   const cfg = {};
   for (const s of ['ems','gmail','outlook']) {
     cfg[s] = {
-      smtp_host: g(`${s}_smtp_host`), smtp_port: +g(`${s}_smtp_port`),
+      smtp_host: g(`${s}_smtp_host`), smtp_port: portVal(`${s}_smtp_port`),
       // Gmail/Outlook için TLS bayrakları formda yok: gönderilmez ki config'te
       // elle ayarlanmış değerler her kayıtta ezilmesin (varsayılanlar zaten açık).
       ...(s === 'ems' ? { smtp_use_tls: gb('ems_smtp_use_tls'), imap_use_ssl: gb('ems_imap_use_ssl'),
                           smtp_use_ssl: gb('ems_smtp_use_ssl'), tls_verify: gb('ems_tls_verify'),
                           tls_ca_file: g('ems_tls_ca_file').trim() } : {}),
-      imap_host: g(`${s}_imap_host`), imap_port: +g(`${s}_imap_port`),
+      imap_host: g(`${s}_imap_host`), imap_port: portVal(`${s}_imap_port`),
       username: g(`${s}_username`),
       password: sec(`${s}_password`),
       test_address: g(`${s}_test_address`),
@@ -1368,7 +1375,10 @@ async function saveConfig(silent=false) {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({config: cfg}),
   });
-  if (res.ok) { if (!silent) toast('✅ Konfigürasyon kaydedildi','ok'); }
+  if (res.ok) {
+    if (res.warning) toast('⚠️ ' + res.warning, 'info');
+    else if (!silent) toast('✅ Konfigürasyon kaydedildi','ok');
+  }
   else toast('Kayıt hatası: '+res.error,'err');
   return !!res.ok;
 }
@@ -1459,10 +1469,18 @@ async function checkSecurity(srv) {
   });
   const badges = document.getElementById(`secBadges-${srv}`);
   if (res.ok) {
-    badges.innerHTML = `
-      <span class="sec-badge green">✅ SMTP TLS: Aktif</span>
+    const sec = res.security || {};
+    const tls = sec.smtp_mode === 'ssl' || sec.smtp_mode === 'starttls';
+    const verified = tls && sec.tls_verify !== false;
+    const tlsBadge = tls
+      ? `<span class="sec-badge green">✅ SMTP TLS: Aktif (${sec.smtp_mode === 'ssl' ? 'SSL 465' : 'STARTTLS'})</span>`
+      : `<span class="sec-badge red">❌ SMTP TLS: Kapalı (şifresiz)</span>`;
+    const connBadge = verified
+      ? `<span class="sec-badge green">✅ Bağlantı: Güvenli (sertifika doğrulandı)</span>`
+      : `<span class="sec-badge yellow">⚠ Bağlantı: ${tls ? 'sertifika doğrulanmıyor' : 'şifresiz'}</span>`;
+    badges.innerHTML = `${tlsBadge}
       <span class="sec-badge green">✅ Kimlik Doğrulama: Başarılı</span>
-      <span class="sec-badge green">✅ Bağlantı: Güvenli</span>`;
+      ${connBadge}`;
     toast(res.message, 'ok');
   } else if (res.needs_mfa) {
     badges.innerHTML = `<span class="sec-badge yellow">⚠ 2FA Gerekli</span>`;
@@ -1585,6 +1603,7 @@ let allCombinations = [];
 async function loadCombinations() {
   const res = await api('/api/combinations');
   if (!res.ok) { toast(res.error, 'err'); return; }
+  if (res.warning) toast('⚠️ ' + res.warning, 'err');
   allCombinations = res.combinations;
   renderComboGrid(allCombinations);
   renderDashCombos(allCombinations);
@@ -1693,17 +1712,22 @@ function finishProgress(ok, label) {
 }
 
 // ── LOGS ───────────────────────────────────────────────────────────
+let logRunId = null;
 function startLogStream() {
   if (logPollInterval) clearInterval(logPollInterval);
   document.getElementById('terminalBody').innerHTML = ''; logLineCount = 0;
-  logOffset = 0;
+  logOffset = 0; logRunId = null;
   logPollInterval = setInterval(async () => {
     try {
       const res = await api(`/api/run/logs?offset=${logOffset}`);
-      if (res.lines && res.lines.length > 0) {
-        res.lines.forEach(line => appendLog(line));
-        logOffset = res.next_offset;
+      // Yeni koşu başladıysa (başka sekme/yeniden yükleme) eski satırları temizle
+      if (res.reset || (logRunId && res.run_id && res.run_id !== logRunId)) {
+        document.getElementById('terminalBody').innerHTML = ''; logLineCount = 0;
+        if (!res.reset) { logOffset = 0; logRunId = res.run_id; return; }
       }
+      if (res.run_id) logRunId = res.run_id;
+      if (res.lines && res.lines.length > 0) res.lines.forEach(line => appendLog(line));
+      if (typeof res.next_offset === 'number') logOffset = res.next_offset;
       if (res.done) {
         clearInterval(logPollInterval);
         logPollInterval = null;
@@ -1837,6 +1861,14 @@ function refreshAll() { loadConfig(); loadDashboard(); toast('↻ Yenilendi','in
 initSecretClearButtons();
 loadConfig();
 loadDashboard();
+// Sayfa koşu sürerken yenilendiyse arayüz "Beklemede" görünüp Başlat 400
+// veriyordu: çalışan koşuya yeniden bağlan.
+(async () => {
+  try {
+    const st = await api('/api/run/status');
+    if (st.running) { setRunningUI(true); startLogStream(); startStatusPoll(); startMFAPoll(); }
+  } catch (e) {}
+})();
 </script>
 </body>
 </html>

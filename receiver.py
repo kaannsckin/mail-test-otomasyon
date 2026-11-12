@@ -230,15 +230,20 @@ class MailReceiver:
         """MIME ağacını dolaşarak part'ları kategorize eder."""
         for part in msg.walk():
             content_type = part.get_content_type()
-            disposition = part.get("Content-Disposition", "")
-            content_id = part.get("Content-ID", "")
+            # Ham 8-bit değerlerde .get() Header nesnesi döndürebilir — metne çevir.
+            disposition = self._unfold(part.get("Content-Disposition", ""))
+            content_id = self._unfold(part.get("Content-ID", ""))
+            # RFC 2183: disposition tipi büyük/küçük harfe duyarsızdır ve yalnızca
+            # ilk token'dır. Eskiden "Attachment" ek sayılmıyor, "inline;
+            # filename=attachment.png" ise ek sayılıyordu (yanlış FAIL'ler).
+            disp_type = disposition.split(";", 1)[0].strip().lower()
 
             part_info = {
                 "content_type": content_type,
                 "charset": part.get_content_charset(),
                 "content_id": content_id,
                 "disposition": disposition,
-                "transfer_encoding": part.get("Content-Transfer-Encoding", ""),
+                "transfer_encoding": self._unfold(part.get("Content-Transfer-Encoding", "")),
             }
 
             if content_type == "message/rfc822":
@@ -258,7 +263,7 @@ class MailReceiver:
                 })
                 continue
 
-            if "attachment" in disposition:
+            if disp_type == "attachment":
                 filename = part.get_filename() or ""
                 payload = part.get_payload(decode=True)
                 result["attachments"].append({
@@ -268,7 +273,7 @@ class MailReceiver:
                     # İlk baytlar (dosya imzası, ör. %PDF) — JSON'a uygun hex metin
                     "payload_head_hex": payload[:16].hex() if payload else "",
                 })
-            elif content_id and "inline" in disposition:
+            elif content_id and disp_type == "inline":
                 payload = part.get_payload(decode=True)
                 result["inline_images"].append({
                     **part_info,
@@ -296,17 +301,34 @@ class MailReceiver:
         """
         if not value:
             return ""
+        if not isinstance(value, str):
+            # Ham 8-bit header'larda compat32 str yerine email.header.Header
+            # döndürür; .split() AttributeError verip mesajı kaybettiriyordu.
+            value = MailReceiver._decode_header(value)
         return " ".join(value.split())
 
     @staticmethod
     def _decode_header(value: str) -> str:
+        """RFC 2047 header'ını metne çevirir; hiçbir girdide exception atmaz.
+
+        Gerçek sunucularda görülen ama geçerli/yarı geçerli değerler eskiden
+        mesaj ayrıştırmayı çökertip teslim edilmiş mesajı "IMAP kontrol
+        edilemedi" diye FAIL'e çeviriyordu: ham 8-bit UTF-8 (charset
+        'unknown-8bit'), bilinmeyen charset (=?foo?q?x?=), Header nesnesi.
+        """
         if not value:
             return ""
-        decoded_parts = decode_header(value)
+        try:
+            decoded_parts = decode_header(value)
+        except Exception:  # noqa: BLE001 — bozuk encoded-word: ham metni koru
+            return str(value)
         parts = []
         for text, charset in decoded_parts:
             if isinstance(text, bytes):
-                parts.append(text.decode(charset or "utf-8", errors="replace"))
+                try:
+                    parts.append(text.decode(charset or "utf-8", errors="replace"))
+                except LookupError:  # bilinmeyen / unknown-8bit charset
+                    parts.append(text.decode("utf-8", errors="replace"))
             else:
                 parts.append(text)
         return "".join(parts)

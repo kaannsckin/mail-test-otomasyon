@@ -123,10 +123,12 @@ class MFAManager:
 
     @staticmethod
     def _read_json(path: Path) -> Optional[dict]:
+        """Köprü dosyasını okur; sözlük olmayan/bozuk içerik → None."""
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):   # ValueError: JSONDecodeError + UnicodeDecodeError
             return None
+        return data if isinstance(data, dict) else None
 
     def clear_bridge(self):
         """Önceki çalışmadan kalan köprü dosyalarını temizler."""
@@ -239,7 +241,10 @@ class MFAManager:
         data = self._read_json(challenge_file)
         if not data:
             return None
-        if time.time() - data.get("created_at", 0) > self.STALE_AFTER:
+        created = data.get("created_at")
+        # Bozuk created_at ("x", null) eskiden TypeError → mfa/* ve run/stop 500 veriyordu
+        if (not isinstance(created, (int, float)) or isinstance(created, bool)
+                or time.time() - created > self.STALE_AFTER):
             self.clear_bridge()  # sahipsiz kalmış eski challenge
             return None
         return data

@@ -24,6 +24,8 @@ import os
 import smtplib
 import socket
 import ssl
+import threading
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -78,7 +80,10 @@ def ssl_context_for(server_config: dict) -> ssl.SSLContext:
 
 def smtp_mode(server_config: dict) -> str:
     """'ssl' (465, doğrudan TLS) | 'starttls' | 'plain'"""
-    port = int(server_config.get("smtp_port") or 0)
+    try:
+        port = int(server_config.get("smtp_port") or 0)
+    except (TypeError, ValueError, OverflowError):
+        port = 0   # geçersiz port: bağlantı kurulurken anlaşılır hata verir, burada 500 değil
     if _as_bool(server_config.get("smtp_use_ssl"), port == 465):
         return "ssl"
     if _as_bool(server_config.get("smtp_use_tls"), True):
@@ -99,7 +104,7 @@ def connection_fingerprint(server_config: dict) -> tuple:
     def port(v):
         try:
             return int(v)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return norm(v)
 
     imap_ssl = _as_bool(sc.get("imap_use_ssl"), True)
@@ -114,17 +119,105 @@ def connection_fingerprint(server_config: dict) -> tuple:
     )
 
 
-def smtp_connect(server_config: dict, timeout: float = DEFAULT_TIMEOUT) -> smtplib.SMTP:
+class Deadline:
+    """Bağlantı işleminin TOPLAM süre sınırı.
+
+    Soket ``timeout`` değeri yalnızca tek bir okumayı sınırlar: her 5 sn'de bir
+    satır damlatan (``220-...``) bir sunucu isteği süresiz meşgul edebiliyordu.
+    Süre dolunca soket shutdown edilir; bekleyen okuma hemen hata ile döner.
+    """
+
+    def __init__(self, seconds: float):
+        self.seconds = seconds
+        self.expires = time.monotonic() + seconds
+        self.expired = False
+        self._lock = threading.Lock()
+        self._socks = []
+        self._timer = threading.Timer(seconds, self._fire)
+        self._timer.daemon = True
+        self._timer.start()
+
+    def arm(self, sock) -> None:
+        # Kendi kopyamız (dup): asıl soket STARTTLS ile sarmalansa/kapansa da
+        # aynı bağlantıyı gösterir, fd numarası başka bir sokete geçemez.
+        try:
+            dup = socket.socket(fileno=os.dup(sock.fileno()))
+        except OSError:
+            return
+        with self._lock:
+            if self.expired:
+                self._shutdown(dup)
+            self._socks.append(dup)
+
+    @staticmethod
+    def _shutdown(sock) -> None:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+    def _fire(self) -> None:
+        with self._lock:
+            self.expired = True
+            for s in self._socks:
+                self._shutdown(s)
+
+    def close(self) -> None:
+        self._timer.cancel()
+        with self._lock:
+            for s in self._socks:
+                try:
+                    s.close()
+                except OSError:
+                    pass
+            self._socks.clear()
+
+
+_deadline_classes: dict = {}
+
+
+def _deadline_class(base, hook_name: str):
+    """``base``in soket oluşturan metoduna (SMTP._get_socket / IMAP4._create_socket)
+    Deadline bağlayan alt sınıf. ``base`` sınıf değilse (sarmalayıcı/test çifti)
+    None döner ve çağıran normal yoldan bağlanır."""
+    if not isinstance(base, type):
+        return None
+    key = (base, hook_name)
+    if key not in _deadline_classes:
+        def __init__(self, *args, deadline=None, **kwargs):
+            self._deadline = deadline
+            base.__init__(self, *args, **kwargs)
+
+        def hook(self, *args, **kwargs):
+            sock = getattr(base, hook_name)(self, *args, **kwargs)
+            if self._deadline:
+                self._deadline.arm(sock)
+            return sock
+
+        _deadline_classes[key] = type(f"Deadline{base.__name__}", (base,),
+                                      {"__init__": __init__, hook_name: hook})
+    return _deadline_classes[key]
+
+
+def _open(base, hook_name: str, deadline, *args, **kwargs):
+    cls = _deadline_class(base, hook_name) if deadline else None
+    if cls is None:
+        return base(*args, **kwargs)
+    return cls(*args, deadline=deadline, **kwargs)
+
+
+def smtp_connect(server_config: dict, timeout: float = DEFAULT_TIMEOUT,
+                 deadline: Optional[Deadline] = None) -> smtplib.SMTP:
     """Bağlanır, gerekiyorsa TLS'e geçer; giriş YAPMAZ."""
     host = server_config["smtp_host"]
     port = int(server_config["smtp_port"])
     mode = smtp_mode(server_config)
     if mode == "ssl":
-        smtp = smtplib.SMTP_SSL(host, port, timeout=timeout,
-                                context=ssl_context_for(server_config))
+        smtp = _open(smtplib.SMTP_SSL, "_get_socket", deadline, host, port, timeout=timeout,
+                     context=ssl_context_for(server_config))
         smtp.ehlo()
         return smtp
-    smtp = smtplib.SMTP(host, port, timeout=timeout)
+    smtp = _open(smtplib.SMTP, "_get_socket", deadline, host, port, timeout=timeout)
     try:
         smtp.ehlo()
         if mode == "starttls":
@@ -143,14 +236,15 @@ def smtp_connect(server_config: dict, timeout: float = DEFAULT_TIMEOUT) -> smtpl
     return smtp
 
 
-def imap_connect(server_config: dict, timeout: float = DEFAULT_TIMEOUT) -> imaplib.IMAP4:
+def imap_connect(server_config: dict, timeout: float = DEFAULT_TIMEOUT,
+                 deadline: Optional[Deadline] = None) -> imaplib.IMAP4:
     """Bağlanır, gerekiyorsa TLS'e geçer; giriş YAPMAZ."""
     host = server_config["imap_host"]
     port = int(server_config["imap_port"])
     if _as_bool(server_config.get("imap_use_ssl"), True):
-        return imaplib.IMAP4_SSL(host, port, ssl_context=ssl_context_for(server_config),
-                                 timeout=timeout)
-    imap = imaplib.IMAP4(host, port, timeout=timeout)
+        return _open(imaplib.IMAP4_SSL, "_create_socket", deadline, host, port,
+                     ssl_context=ssl_context_for(server_config), timeout=timeout)
+    imap = _open(imaplib.IMAP4, "_create_socket", deadline, host, port, timeout=timeout)
     if _as_bool(server_config.get("imap_use_starttls"), False):
         imap.starttls(ssl_context=ssl_context_for(server_config))
     return imap

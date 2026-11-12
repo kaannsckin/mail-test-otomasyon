@@ -127,11 +127,30 @@ def get_server_config(config: dict, server_name: str) -> dict:
     return config[key]
 
 
+class _NoAliasLoader(yaml.SafeLoader):
+    """Web arayüzüyle (app.py) aynı kural: YAML alias reddedilir. Eskiden CLI
+    alias'lı dosyayı çalıştırırken arayüz aynı dosyayı okuyamıyordu."""
+
+    def compose_node(self, parent, index):
+        if self.check_event(yaml.events.AliasEvent):
+            event = self.peek_event()
+            raise yaml.composer.ComposerError(
+                None, None, "YAML alias (*) desteklenmiyor", event.start_mark)
+        return super().compose_node(parent, index)
+
+
 def load_config(path: str) -> dict:
     """config.yaml'ı okur; boş bölümleri {} yapar (``test:`` altı boş kalsa da
     çökmesin). Kök sözlük değilse ValueError."""
     with open(path, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f) or {}
+        try:
+            config = yaml.load(f, Loader=_NoAliasLoader) or {}  # noqa: S506 — SafeLoader türevi
+        except yaml.composer.ComposerError as e:
+            if "alias" in str(e):
+                raise ValueError(
+                    "config.yaml YAML anchor/alias (&ad / *ad) içeriyor — web arayüzü bunları "
+                    "güvenlik nedeniyle kabul etmiyor; değerleri açıkça yazın.") from e
+            raise
     if not isinstance(config, dict):
         raise ValueError("config.yaml kökü 'anahtar: değer' yapısında olmalı")
     return {k: (v if v is not None else {}) for k, v in config.items()}
@@ -147,10 +166,14 @@ def _num(value, default, cast=int):
 
 
 def _is_auth_failure(exc: BaseException) -> bool:
+    """Kalıcı kimlik reddi mi? Yalnızca 5xx (ör. 535) — 4xx (ör. 454 "temporary
+    authentication failure") geçicidir; eskiden sunucuyu koşu boyunca kilitleyip
+    kalan senaryoları denemeden FAIL sayıyordu."""
     err = exc
     while err is not None:
         if isinstance(err, smtplib.SMTPAuthenticationError):
-            return True
+            code = getattr(err, "smtp_code", None)
+            return not (isinstance(code, int) and 400 <= code < 500)
         err = err.__cause__ or err.__context__
     return False
 
@@ -179,6 +202,15 @@ def _is_network_unreachable(exc: Exception) -> bool:
     paketi DROP eden güvenlik duvarları errno üretmez, sadece bekletir — bu
     durumda kullanıcı teşhis mesajı yerine anlamsız bir 'timed out' görüyordu.
     """
+    # Sunucu yanıt verdiyse/bağlantı kurulduysa port engelli değildir: yavaş DATA
+    # sonrası "Connection unexpectedly closed: timed out" eskiden "giden SMTP
+    # portu engelli" diye raporlanıyordu.
+    err = exc
+    while err is not None:
+        if isinstance(err, (smtplib.SMTPServerDisconnected, smtplib.SMTPResponseException)):
+            return False
+        err = err.__cause__ or err.__context__
+
     err = exc
     while err is not None:
         if isinstance(err, OSError):
@@ -347,6 +379,28 @@ def _attachment_tag(paths: list[str]) -> str:
     return f"{count} Ek: {types_str}, {size_str}"
 
 
+def _missing_configured_attachments(test_config: dict, scenario_key: str) -> list[str]:
+    """Config'de AÇIKÇA belirtilmiş ama bulunamayan ek dosyaları.
+
+    Eskiden bulunamayan ek sessizce varsayılan test_document.pdf ile
+    değiştiriliyor, test yapılandırılandan başka bir dosyayla PASS oluyordu.
+    """
+    repo_root = Path(__file__).parent
+    raw: list = []
+    if scenario_key == "multi_attachment" and isinstance(
+            test_config.get("test_multi_attachment_paths"), list) \
+            and test_config.get("test_multi_attachment_paths"):
+        raw = test_config["test_multi_attachment_paths"]
+    elif scenario_key in ("attachment", "multi_attachment"):
+        listed = test_config.get("test_attachment_paths")
+        if isinstance(listed, list) and listed:
+            raw = listed
+        elif test_config.get("test_attachment_path"):
+            raw = [test_config["test_attachment_path"]]
+    return [str(r) for r in raw
+            if not (Path(str(r)).exists() or (repo_root / str(r)).exists())]
+
+
 def _resolve_multi_attachment_paths(test_config: dict) -> list[str]:
     """Çoklu ek senaryosu için dosya listesi.
 
@@ -489,9 +543,9 @@ def run_scenario(
     ``combo_index`` mesaj şablonu rotasyonu (kısa/orta/uzun) için kullanılır.
     """
     subject_prefix = str(test_config.get("subject_prefix") or "[AUTO-TEST]")
-    wait = _num(test_config.get("wait_seconds"), 15)
+    wait = max(0, _num(test_config.get("wait_seconds"), 15))   # negatif → ValueError (sleep)
     retries = max(1, _num(test_config.get("max_retries"), 3))
-    retry_int = _num(test_config.get("retry_interval"), 5)
+    retry_int = max(0, _num(test_config.get("retry_interval"), 5))
     image_path = test_config.get("test_image_path", "test_files/test_image.png")
 
     attachment_paths = _resolve_attachment_paths(test_config)
@@ -547,6 +601,16 @@ def run_scenario(
 
     send_meta = None
     test_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    missing = _missing_configured_attachments(test_config, scenario_key)
+    if missing:
+        return _error_result(
+            combo, scenario_key, test_time,
+            f"Yapılandırılan ek dosyası bulunamadı: {', '.join(missing)}",
+            f"Bulunamayan ek: {', '.join(missing)}",
+            ["config.yaml → test.test_attachment_path(s) yolunu düzeltin "
+             "(göreli yollar veri dizinine/proje köküne göre çözülür)."],
+            check_name="Konfigürasyon")
 
     logger.info(
         f"▶ Senaryo: {scenario_key} ({tmpl.length}) | "
@@ -728,6 +792,18 @@ def run_scenario(
             },
             "skipped": True,
         }
+
+    if isinstance(send_meta, dict) and send_meta.get("error"):
+        # Gönderici hata sözlüğü döndürdü (ör. S/MIME imzalama başarısız): mesaj
+        # hiç gitmedi. Eskiden tam bekleme süresi + tüm denemeler boyunca
+        # beklenip "teslim edilemedi — timeout" deniyor, gerçek hata kayboluyordu.
+        err = str(send_meta["error"]).strip()
+        logger.info(f"◼ Sonuç: ❌ FAIL | {combo.label} / {scenario_key} | gönderilemedi")
+        return _error_result(
+            combo, scenario_key, test_time,
+            f"Mesaj gönderilmedi: {err[:300]}", err,
+            ["Gönderici loglarını inceleyin (ör. S/MIME sertifika/anahtar yolları)."],
+            check_name="Gönderim")
 
     received = receiver.wait_for_message(
         expected_msg_id=send_meta["msg_id"],
@@ -969,6 +1045,10 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
             logger.info(f"Kombinasyon [#{combo_idx}]: {combo.label}")
             logger.info(f"{'='*60}")
 
+            scenarios_to_run = list(combo.scenarios.keys())
+            if args.scenario:
+                scenarios_to_run = [s for s in scenarios_to_run if s == args.scenario]
+
             # Sender/Receiver kurulumu
             try:
                 sender_config = get_server_config(config, combo.sender_server)
@@ -976,12 +1056,19 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
                 sender = MailSender(sender_config)
                 receiver = MailReceiver(receiver_config)
             except (ValueError, KeyError, TypeError) as e:
-                logger.error(f"Config hatası: {e} — kombinasyon atlanıyor.")
+                # Kombinasyon çalıştırılamıyor — senaryoları sessizce düşmesin,
+                # her biri FAIL satırı olarak rapora ve çıkış koduna yansısın.
+                logger.error(f"Config hatası: {e} — kombinasyonun senaryoları FAIL sayılıyor.")
+                test_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                for sc_key in scenarios_to_run:
+                    all_results.append(_error_result(
+                        combo, sc_key, test_time,
+                        f"Kombinasyon çalıştırılamadı — config hatası: {e}",
+                        f"Config hatası: {e}",
+                        ["config.yaml'da bu kombinasyonun gönderici/alıcı sunucu "
+                         "bölümlerini (smtp_host, imap_host, test_address) tamamlayın."],
+                        check_name="Konfigürasyon"))
                 continue
-
-            scenarios_to_run = list(combo.scenarios.keys())
-            if args.scenario:
-                scenarios_to_run = [s for s in scenarios_to_run if s == args.scenario]
 
             for sc_key in scenarios_to_run:
                 test_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1034,14 +1121,16 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
     csv_path_out = test_config.get("results_csv", "reports/test_results.csv")
     note = ("Koşu kullanıcı tarafından DURDURULDU — bu rapor kısmi sonuçları içerir; "
             "çalıştırılmayan senaryolar listede yoktur.") if interrupted else ""
-    try:
-        generate_html_report(all_results, html_path, note=note)
-    except Exception as e:  # noqa: BLE001 — biri bozulsa diğeri yine yazılsın
-        logger.error(f"HTML rapor yazılamadı: {e}", exc_info=True)
-    try:
-        generate_csv_results(all_results, csv_path_out)
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"CSV sonuç yazılamadı: {e}", exc_info=True)
+    # Rapor yazılamazsa sonuçlar kaybolur: koşu "başarılı" (çıkış 0) bitmemeli.
+    report_errors = []
+    for kind, writer, path, kwargs in (("HTML rapor", generate_html_report, html_path, {"note": note}),
+                                        ("CSV sonuç", generate_csv_results, csv_path_out, {})):
+        try:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            writer(all_results, path, **kwargs)
+        except Exception as e:  # noqa: BLE001 — biri bozulsa diğeri yine yazılsın
+            logger.error(f"{kind} yazılamadı ({path}): {e}", exc_info=True)
+            report_errors.append(kind)
     logger.info(f"\n{'='*60}")
     logger.info("TEST DURDURULDU (kısmi sonuç)" if interrupted else "TEST TAMAMLANDI")
     total = len(all_results)
@@ -1051,12 +1140,21 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
     failed = effective - passed
     rate = round(passed / effective * 100, 1) if effective else 0
     logger.info(f"Sonuç: {passed}/{effective} PASS ({rate}%) | {skipped} atlandı")
-    logger.info(f"HTML Rapor: {html_path}")
-    logger.info(f"CSV Sonuçlar: {csv_path_out}")
+    logger.info(f"HTML Rapor: {'YAZILAMADI — ' if 'HTML rapor' in report_errors else ''}{html_path}")
+    logger.info(f"CSV Sonuçlar: {'YAZILAMADI — ' if 'CSV sonuç' in report_errors else ''}{csv_path_out}")
     logger.info(f"{'='*60}")
 
     if interrupted:
         sys.exit(EXIT_INTERRUPTED)
+    if total and not effective:
+        # Her şey SKIP: hiçbir şey test edilmedi — "başarılı" (0) sayılmamalı.
+        # (ör. CSV'de yazım hatalı senaryo adı, S/MIME-only koşu ve openssl yok)
+        logger.error("Hiçbir senaryo çalıştırılmadı — tümü atlandı. Atlanma nedenleri "
+                     "raporda; CSV senaryo adlarını ve önkoşulları kontrol edin.")
+        sys.exit(EXIT_ERROR)
+    if report_errors:
+        logger.error(f"{' ve '.join(report_errors)} yazılamadı — sonuçlar kaydedilmedi.")
+        sys.exit(EXIT_ERROR)
     if failed:
         sys.exit(EXIT_TEST_FAILURES)
 
