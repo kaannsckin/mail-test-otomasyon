@@ -19,13 +19,37 @@ Bu belge bir tartışma taslağıdır; fazların sırası değişebilir.
   etki) — uygulandı, bkz. README → Test Planı. Gmail ve Outlook/O365 dış
   dünyayı temsil eder; ağırlık EMS ↔ EMS.
 
-## Sıradaki adım: Z-Push kanalını sahada doğrulamak
+## Hedef: e-posta sisteminin son kullanıcı testleri, az testçiyle
+
+Araç EMS'e **kullanıcının girdiği kapılardan** girer (SMTP, IMAP, POP3, Z-Push,
+web arayüzü, Outlook); kaynak koduna bağlanmaz. Yönetici API'si güvenlik
+nedeniyle kısıtlı olduğu için ona bağımlılık en azda tutulur: yalnızca test
+hazırlığı (hesap/kutu sıfırlama) için ve mümkünse ayrı bir test ortamında.
+
+Ek ortam bilgisi: EMS'in kendine özel bir web istemcisi ve web API'si var;
+takvim ve rehber kapsamda; hata takibi Jira; Outlook kurulu Windows test
+makinesi POC sonrasında ayrılacak; yakın zamanda sunucu geçişi yok.
+
+Kapsam genişleme sırası:
+
+1. [x] **Koşu geçmişi, kanıt, sürümler arası fark** — diğer her şeyin temeli
+2. [ ] **Posta kutusu işlemleri**: klasör, taşıma, silme, arama, kota; kanallar
+       arası durum eşitlemesi (iPad'de okundu → Outlook'ta okundu)
+3. [ ] **Web istemcisi testleri**: giriş, yazma, yanıtlama, ek, arama (tarayıcı otomasyonu)
+4. [ ] **Outlook ajanı** (Windows): Outlook'un mesajı nasıl ayrıştırdığını nesne
+       modeli üzerinden okur — kritik istemcide manuel yükü kaldırır
+5. [ ] **Takvim ve rehber**: davet kabul/ret/güncelleme/iptal, ortak takvim, adres defteri
+6. [ ] **Politika ve güvenlik paketi**: boyut sınırı, yasaklı uzantı, spam/virüs
+       test dosyaları, hesap kilitleme, açık aktarım, otomatik yanıt/yönlendirme/kurallar
+7. [ ] **Manuel test yönetimi**: yalnızca değişeni yeniden test et (fark raporundan),
+       referans ekran görüntüsü, kişiye atama, KALDI → Jira kaydı, gereksinim izlenebilirliği
+
+## Z-Push kanalını sahada doğrulamak
 
 ActiveSync istemcisi yazıldı (okuma, görünüm kontrolleri, Z-Push üzerinden
-gönderim) ama yalnızca sahte sunucuya karşı test edildi. Sıradaki iş gerçek
-Z-Push'a karşı `scripts/zpush_check.py` ile denemek ve çıkan uyumsuzlukları
-gidermek. Olası takılma noktaları: protokol sürümü, cihaz ilkesi akışı,
-Z-Push'ın MIME ve HTML gövdeyi döndürme biçimi.
+gönderim) ama yalnızca sahte sunucuya karşı test edildi. Gerçek Z-Push'a karşı
+`scripts/zpush_check.py` ile denenecek. Olası takılma noktaları: protokol
+sürümü, cihaz ilkesi akışı, Z-Push'ın MIME ve HTML gövdeyi döndürme biçimi.
 
 ## 1. Bugün araç neyi kanıtlıyor, neyi kanıtlamıyor
 
@@ -44,9 +68,8 @@ Dürüstçe söylenmesi gereken dört boşluk:
    adı değişen kombinasyonlar otomasyon açısından aynı testi tekrar ediyor;
    fark yalnızca manuel adımda ortaya çıkıyor. Tam koşu 468 mesaj gönderir,
    bunların ~260'ı otomasyon için tekrardır.
-2. **Kanıt saklanmıyor.** Gönderilen/alınan ham mesajlar atılıyor, her koşu
-   bir öncekinin raporunun üzerine yazıyor, raporda sunucu/araç sürümü yok.
-   "Güncellemeden önce de böyleydi" bugün gösterilemez.
+2. ~~Kanıt saklanmıyor.~~ Giderildi: koşu geçmişi, ham mesaj kanıtı ve
+   referans koşuyla fark eklendi (README → Koşu Geçmişi).
 3. **Yalnızca INBOX'a bakılıyor.** Gereksiz (Junk) klasörüne düşen mesaj
    "teslim edilmedi — timeout" olarak raporlanıyor.
 4. **Kimlik doğrulama yalnızca parola tabanlı.** Gmail ve Microsoft 365 temel
@@ -92,12 +115,12 @@ Hedef: iki koşu arasındaki farkı gösterebilmek.
 
 - [ ] İlk 11 senaryoyu kataloğa taşı (beklenti + deterministik doğrulama);
       LLM her yerde danışman olsun
-- [ ] **Koşu geçmişi**: her koşu `runs/<kimlik>/` altında kalıcı (SQLite dizini)
-- [ ] **Kanıt paketi**: gönderilen ve alınan ham `.eml`, SHA-256 özetleri,
+- [x] **Koşu geçmişi**: her koşu `reports/runs/<kimlik>/` altında kalıcı
+- [x] **Kanıt paketi**: gönderilen ve alınan ham `.eml`, SHA-256 özetleri,
       manifest (araç sürümü, test planı özeti, sunucu EHLO yanıtı,
       IMAP `CAPABILITY`/`ID`, zaman damgaları)
-- [ ] **Sürüm etiketi**: koşuya "EMS 9.4.2", "iOS 19.1" gibi etiketler; raporda görünür
-- [ ] **Baseline ve fark raporu**: bir koşuyu referans işaretle; sonraki koşu
+- [x] **Sürüm etiketi**: koşuya "EMS 9.4.2", "iOS 19.1" gibi etiketler; raporda görünür
+- [x] **Baseline ve fark raporu**: bir koşuyu referans işaretle; sonraki koşu
       için "yeni FAIL / düzelen / değişen [Bilgi] satırları (ör. sunucu artık
       8bit'i QP'ye çeviriyor) / başlık farkı" raporu
 - [ ] İmzalanabilir rapor (PDF + özet dosyası) — denetim kanıtı

@@ -75,6 +75,7 @@ print(f"📁 Veri dizini: {DATA_DIR}")
 os.environ["DATA_DIR"] = str(DATA_DIR)
 from auth_manager import mfa_manager, generate_totp, totp_remaining_seconds  # noqa: E402
 import manual_verify  # noqa: E402
+import run_history  # noqa: E402
 from scenario_catalog import (  # noqa: E402
     GROUP_LABELS, catalog as scenario_catalog_items, is_valid_scenario_filter,
     scenario_label,
@@ -991,7 +992,15 @@ def start_run():
         if impact and impact not in plan.impact_keys():
             return jsonify({"ok": False, "error": "Geçersiz etki seçimi"}), 400
 
+    labels = body.get("labels") or []
+    if not isinstance(labels, list) or not all(isinstance(x, str) for x in labels):
+        return jsonify({"ok": False, "error": "labels bir metin listesi olmalı"}), 400
+
     cmd = [sys.executable, str(BASE_DIR / "main.py"), "--config", str(CONFIG_PATH)]
+    # "--label=değer" biçimi: '-' ile başlayan etiket seçenek sanılmasın.
+    cmd += [f"--label={label}" for label in run_history.clean_labels(labels)]
+    if body.get("baseline") is True:
+        cmd += ["--baseline"]
     if tier:
         cmd += ["--tier", tier]
     if impact:
@@ -1205,6 +1214,49 @@ def latest_results():
     except (OSError, csv.Error) as e:
         return jsonify({"ok": False, "error": f"Sonuç dosyası okunamadı ({files[0].name}): {e}"})
     return jsonify({"ok": True, "results": rows, "file": files[0].name})
+
+# ── KOŞU GEÇMİŞİ · REFERANS · FARK ──────────────────────────────
+@app.route("/api/runs")
+def runs_list():
+    return jsonify({"ok": True, "runs": run_history.list_runs(REPORTS_DIR),
+                    "baseline": run_history.get_baseline(REPORTS_DIR)})
+
+
+@app.route("/api/runs/<run_id>/baseline", methods=["POST"])
+def runs_set_baseline(run_id):
+    if not run_history.set_baseline(REPORTS_DIR, run_id):
+        return jsonify({"ok": False, "error": "Koşu bulunamadı"}), 404
+    return jsonify({"ok": True, "baseline": run_id})
+
+
+@app.route("/api/runs/diff")
+def runs_diff():
+    """?new=<koşu> [&base=<koşu>] — base verilmezse referans koşu kullanılır."""
+    base_id = request.args.get("base") or run_history.get_baseline(REPORTS_DIR)
+    if not base_id:
+        return jsonify({"ok": False, "error": "Referans koşu yok — önce bir koşuyu referans işaretleyin"})
+    base = run_history.load_run(REPORTS_DIR, base_id)
+    new = run_history.load_run(REPORTS_DIR, request.args.get("new") or "")
+    if base is None or new is None:
+        return jsonify({"ok": False, "error": "Koşu bulunamadı"}), 404
+    diff = run_history.diff_runs(base, new)
+    return jsonify({"ok": True, "diff": diff, "summary": run_history.diff_summary(diff)})
+
+
+@app.route("/api/runs/<run_id>/files/<path:filename>")
+def runs_file(run_id, filename):
+    """Koşu dizininden rapor ya da kanıt (.eml) indirir."""
+    allowed = filename in ("report.html", "results.csv", "manifest.json") or (
+        filename.startswith("evidence/")
+        and run_history.EVIDENCE_NAME_RE.match(filename[len("evidence/"):]))
+    if not run_history.RUN_ID_RE.match(run_id) or not allowed:
+        return jsonify({"ok": False}), 404
+    directory = run_history.runs_dir(REPORTS_DIR) / run_id
+    if not _inside_reports(directory / filename):
+        return jsonify({"ok": False}), 404
+    return send_from_directory(directory, filename,
+                               as_attachment=filename.endswith(".eml"))
+
 
 # ── SENARYO KATALOĞU ────────────────────────────────────────────
 @app.route("/api/scenarios")

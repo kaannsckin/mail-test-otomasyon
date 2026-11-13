@@ -273,6 +273,7 @@ input.has-value{border-color:rgba(0,255,148,.4)}
     <div class="nav-item" data-page="logs"><span class="nav-icon">≡</span>Canlı Loglar</div>
     <div class="nav-item" data-page="manual"><span class="nav-icon">👁</span>Manuel Doğrulama</div>
     <div class="nav-item" data-page="results"><span class="nav-icon">◈</span>Sonuçlar</div>
+    <div class="nav-item" data-page="history"><span class="nav-icon">Δ</span>Geçmiş & Fark</div>
     <div class="nav-item" data-page="reports"><span class="nav-icon">⬖</span>Raporlar</div>
     <div class="nav-item" data-page="guide"><span class="nav-icon">📖</span>Bilgilendirme</div>
   </nav>
@@ -702,6 +703,13 @@ input.has-value{border-color:rgba(0,255,148,.4)}
                 <option value="dry_run">Dry Run (Sadece Bağlantı Testi)</option>
               </select>
             </div>
+            <div class="form-group">
+              <label>Sürüm etiketleri (virgülle)</label>
+              <input type="text" id="runLabels" maxlength="300" placeholder="EMS 9.5.0, Z-Push 2.7.1, Outlook 2021">
+            </div>
+            <div class="form-group full">
+              <label class="toggle-row" style="text-transform:none;letter-spacing:0"><input type="checkbox" id="runBaseline"><span>Bu koşuyu referans (baseline) işaretle — sonraki koşular bununla karşılaştırılır</span></label>
+            </div>
           </div>
           <div class="btn-row">
             <button class="btn btn-success" id="runBtn" onclick="startRun()">▶ Testi Başlat</button>
@@ -786,6 +794,26 @@ input.has-value{border-color:rgba(0,255,148,.4)}
               <tbody id="resultsBody"><tr><td colspan="7" style="text-align:center;color:var(--muted);padding:32px">Henüz sonuç yok.</td></tr></tbody>
             </table>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- GEÇMİŞ & FARK -->
+    <div class="page" id="page-history">
+      <div class="card">
+        <div class="card-header"><span class="card-title">🕘 Koşu Geçmişi</span><button class="btn btn-ghost btn-sm" onclick="loadHistory()">↻</button></div>
+        <div class="card-body" style="padding:0"><div style="overflow-x:auto">
+          <table class="results-table">
+            <thead><tr><th>Koşu</th><th>Etiketler</th><th>Kapsam</th><th>Sonuç</th><th>Kanıt</th><th></th></tr></thead>
+            <tbody id="historyBody"><tr><td colspan="6" style="text-align:center;color:var(--muted);padding:32px">Henüz koşu yok.</td></tr></tbody>
+          </table>
+        </div></div>
+      </div>
+      <div class="card" id="diffCard" style="display:none">
+        <div class="card-header"><span class="card-title" id="diffTitle">Δ Fark</span></div>
+        <div class="card-body">
+          <div id="diffSummary" style="font-size:13px;font-weight:600;margin-bottom:14px"></div>
+          <div id="diffRows"></div>
         </div>
       </div>
     </div>
@@ -1296,6 +1324,7 @@ const PAGE_META = {
   logs:       ['Canlı Loglar', 'stdout akışı'],
   manual:     ['Manuel Doğrulama', 'istemcide adım adım kontrol · durum + not'],
   results:    ['Sonuçlar', 'son test sonuçları'],
+  history:    ['Geçmiş & Fark', 'koşular · referans · sürümler arası fark · kanıt'],
   reports:    ['Raporlar', 'html · csv dosyaları'],
   guide:      ['Bilgilendirme', 'kullanım kılavuzu · know-how · sss'],
 };
@@ -1316,6 +1345,7 @@ document.querySelectorAll('.nav-item').forEach(el => {
     if (pg === 'results')   loadResults();
     if (pg === 'reports')   loadReports();
     if (pg === 'manual')    loadManual();
+    if (pg === 'history')   loadHistory();
   });
 });
 
@@ -1770,7 +1800,9 @@ async function loadScenarios() {
 async function startRun() {
   // Formdaki kaydedilmemiş değişiklikler de koşuya yansısın: önce kaydet.
   if (!(await saveConfig(true))) return;
-  const body = { dry_run: document.getElementById('runMode').value === 'dry_run', ...planQuery() };
+  const body = { dry_run: document.getElementById('runMode').value === 'dry_run', ...planQuery(),
+    labels: document.getElementById('runLabels').value.split(',').map(x => x.trim()).filter(Boolean),
+    baseline: document.getElementById('runBaseline').checked };
   if (!selectedCombos.has('all') && selectedCombos.size > 0) body.combo = [...selectedCombos].sort((a,b)=>a-b);
   if (selectedScenario !== 'all') body.scenario = selectedScenario;
   const res = await api('/api/run/start', {
@@ -2088,6 +2120,60 @@ function renderDashResults(rows) {
       <td style="font-size:12px">${esc(r['Senaryo Tipi'])}</td>
       <td style="font-size:12px;color:var(--muted)">${esc((r['Özet']||'').slice(0,60))}</td>
     </tr>`).join('')}</tbody></table>`;
+}
+
+// ── GEÇMİŞ & FARK ──────────────────────────────────────────────────
+// Her koşu kalıcıdır; biri referans işaretlenir ve diğerleri onunla
+// karşılaştırılır: yeni hatalar, düzelenler, değişen kontroller.
+const DIFF_KIND = {regression: ['⛔ YENİ HATA', 'danger'], changed: ['≠ Değişti', 'warn'], fixed: ['✔ Düzeldi', 'accent2'],
+                   new: ['＋ Yeni', 'accent'], missing: ['－ Eksik', 'muted'], same: ['= Aynı', 'muted']};
+async function loadHistory() {
+  const res = await api('/api/runs');
+  const tbody = document.getElementById('historyBody');
+  if (!res.ok || !res.runs.length) { tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:32px">Henüz koşu yok.</td></tr>'; return; }
+  tbody.innerHTML = res.runs.map(r => {
+    const t = r.totals || {};
+    const scope = r.plan ? `${esc(r.tier)}${r.impact ? ' · etki: ' + esc(r.impact) : ''}` : 'CSV';
+    return `<tr>
+      <td style="font-family:var(--mono);font-size:11px">${r.baseline ? '📌 ' : ''}${esc(r.run_id)}<div style="color:var(--muted)">${esc(r.started_at)}</div></td>
+      <td style="font-size:12px">${(r.labels || []).map(l => `<span class="sec-badge gray" style="margin:1px">${esc(l)}</span>`).join(' ') || '<span style="color:var(--muted)">—</span>'}</td>
+      <td style="font-size:12px">${scope}</td>
+      <td style="font-family:var(--mono);font-size:12px"><span style="color:var(--accent2)">${t.passed || 0}</span> / <span style="color:var(--danger)">${t.failed || 0}</span> / <span style="color:var(--muted)">${t.skipped || 0}</span></td>
+      <td style="font-family:var(--mono);font-size:11px;color:var(--muted)">${esc(r.evidence_files)} .eml</td>
+      <td style="white-space:nowrap">
+        <a class="btn btn-ghost btn-sm" href="/api/runs/${encodeURIComponent(r.run_id)}/files/report.html" target="_blank" rel="noopener">Rapor</a>
+        ${r.baseline ? '<span class="sec-badge green">REFERANS</span>'
+          : `<button class="btn btn-ghost btn-sm" data-id="${esc(r.run_id)}" onclick="showDiff(this.dataset.id)" ${res.baseline ? '' : 'disabled title="Önce bir referans seçin"'}>Δ Fark</button>
+             <button class="btn btn-ghost btn-sm" data-id="${esc(r.run_id)}" onclick="setBaseline(this.dataset.id)">📌 Referans yap</button>`}
+      </td></tr>`;
+  }).join('');
+}
+
+async function setBaseline(id) {
+  const res = await api(`/api/runs/${encodeURIComponent(id)}/baseline`, {method: 'POST'});
+  if (!res.ok) { toast('❌ ' + (res.error || 'Olmadı'), 'err'); return; }
+  toast('📌 Referans koşu: ' + id, 'ok'); document.getElementById('diffCard').style.display = 'none'; loadHistory();
+}
+
+async function showDiff(id) {
+  const res = await api('/api/runs/diff?new=' + encodeURIComponent(id));
+  if (!res.ok) { toast('❌ ' + (res.error || 'Fark alınamadı'), 'err'); return; }
+  const d = res.diff;
+  document.getElementById('diffCard').style.display = 'block';
+  document.getElementById('diffTitle').textContent = `Δ ${d.base} ${d.base_labels.length ? '(' + d.base_labels.join(', ') + ')' : ''}  →  ${d.new} ${d.new_labels.length ? '(' + d.new_labels.join(', ') + ')' : ''}`;
+  const s = document.getElementById('diffSummary');
+  s.textContent = res.summary; s.style.color = d.counts.regression ? 'var(--danger)' : d.identical ? 'var(--accent2)' : 'var(--warn)';
+  const rows = d.rows.filter(r => r.kind !== 'same');
+  document.getElementById('diffRows').innerHTML = rows.map(r => {
+    const [label, color] = DIFF_KIND[r.kind];
+    return `<div class="mv-step">
+      <div class="mv-step-text"><span style="color:var(--${color})">${label}</span> · ${esc(r.scenario_key)} <span style="color:var(--muted);font-weight:400">· ${esc(r.combination)} · ${esc(r.before)} → ${esc(r.after)}${r.result_id ? ' · #' + esc(r.result_id) : ''}</span></div>
+      ${r.changes.map(c => `<div style="font-size:12px;line-height:1.6;margin-top:6px"><b>${esc(c.check)}</b> — ${esc(c.kind)}
+          <div style="color:var(--muted)">önce: ${esc(c.before) || '—'}</div><div>sonra: ${esc(c.after) || '—'}</div></div>`).join('')
+        || `<div style="font-size:12px;color:var(--muted)">${esc(r.summary)}</div>`}
+    </div>`;
+  }).join('') || '<div style="color:var(--muted);font-size:13px">Fark yok — tüm senaryolar ve deterministik kontroller aynı.</div>';
+  document.getElementById('diffCard').scrollIntoView({behavior: 'smooth'});
 }
 
 // ── REPORTS ────────────────────────────────────────────────────────

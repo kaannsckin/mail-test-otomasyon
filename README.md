@@ -17,6 +17,7 @@ mail_automation/
 ├── manual_verify.py      # Manuel doğrulama kayıtları, oto↔manuel uyum
 ├── plan_model.py         # Test planı: yollar, istemciler, kademeler, etki seçimi
 ├── activesync.py         # Z-Push (ActiveSync) istemcisi: okuma + gönderme
+├── run_history.py        # Koşu geçmişi, kanıt paketi, referans koşu, fark
 ├── test_plan.yaml        # Varsayılan test planı (düzenlenebilir)
 ├── receiver.py           # IMAP alım & MIME ayrıştırma
 ├── mail_transport.py     # SMTP/IMAP bağlantı + TLS ayarları (iç CA, 465 SSL)
@@ -80,6 +81,7 @@ Eğer `5000` doluysa uygulama otomatik olarak bir sonraki boş porta geçer (ör
 | **Güvenlik & 2FA** | Her sunucu için kimlik doğrulama yöntemi ve TOTP ayarları |
 | **Test Çalıştır** | Kombinasyon ve senaryo seçimi, normal/dry-run modu |
 | **Canlı Loglar** | SSE ile gerçek zamanlı terminal çıktısı |
+| **Geçmiş & Fark** | Tüm koşular, sürüm etiketleri, referans koşu, sürümler arası fark, kanıt |
 | **Manuel Doğrulama** | Alıcı istemcide (iOS Mail, Outlook…) adım adım kontrol: her adım için durum + not |
 | **Sonuçlar** | PASS/FAIL tablosu, güven seviyesi, özet |
 | **Raporlar** | HTML raporu görüntüle, CSV indir |
@@ -311,6 +313,45 @@ manuel doğrulanır.
 
 > **Durum:** ActiveSync istemcisi sahte bir sunucuya karşı test edildi, gerçek
 > Z-Push'a karşı henüz doğrulanmadı. İlk kullanımda `zpush_check.py` çıktısına bakın.
+
+---
+
+## 🕘 Koşu Geçmişi, Kanıt ve Sürümler Arası Fark
+
+Her koşu `reports/runs/<kimlik>/` altında kalıcıdır (eski koşuların üzerine yazılmaz):
+
+| Dosya | İçerik |
+| --- | --- |
+| `manifest.json` | Araç sürümü, sürüm etiketleri, plan/kademe/etki, sunucunun bildirdiği yetenekler (SMTP `SIZE` sınırı, IMAP `CAPABILITY`), özet sayılar |
+| `results.json`, `report.html`, `results.csv` | O koşunun sonuçları ve raporları |
+| `evidence/<RunID>.<kanal>.eml` | Gönderilen (`sent`) ve her kanaldan okunan (`imap`, `pop3`, `activesync`) ham mesajlar |
+| `diff_vs_baseline.json` | Referans koşuya göre fark |
+
+**Sürüm güncellemesinde kullanım:**
+
+```bash
+# 1) Güncellemeden ÖNCE: referans koşu
+python main.py --tier regresyon --label "EMS 9.4.2" --baseline
+
+# 2) Güncellemeden SONRA: aynı plan — fark kendiliğinden raporlanır
+python main.py --tier regresyon --label "EMS 9.5.0"
+#   Δ Referans koşuya göre: 1 YENİ HATA, 0 düzelen, 1 kontrol/davranış değişikliği, ... 74 aynı.
+#   ⛔ YENİ HATA: EMS → EMS (kurum içi) / priority_high (PASS → FAIL)
+```
+
+Fark dört şeyi ayırır: **yeni hata** (önce geçiyordu), **düzelen**, **değişen
+kontrol** ve **davranış değişikliği** — karar aynı kaldığı hâlde sunucunun
+yaptığı şey değişmişse (ör. artık 8bit gövdeyi quoted-printable'a çeviriyor).
+Karşılaştırma yalnızca deterministik kontrollere bakar; LLM yorumlarındaki
+ifade farkları gürültü üretmez. Arayüzde **Geçmiş & Fark** sekmesinden herhangi
+bir koşu referans yapılabilir ve diğerleriyle karşılaştırılabilir.
+
+Kanıt ayarları (`config.yaml` → `test`): `evidence: false` kanıtı kapatır;
+`evidence_max_mb: 2` üzerindeki mesajların içeriği saklanmaz, yalnızca SHA-256
+özeti kaydedilir. `labels: ["EMS 9.5.0"]` her koşuya eklenecek etiketlerdir.
+
+> Kanıt dosyaları test mesajlarının tam içeriğidir ve `reports/` altında düz
+> dosya olarak durur; eski koşular kendiliğinden silinmez.
 
 ---
 
@@ -605,7 +646,7 @@ python -m pytest
 python -m pytest --cov=. --cov-report=term-missing
 ```
 
-1103 test (+ 30 tarayıcı testi), **%94 satır kapsamı** (tarayıcı testleri hariç). GitHub Actions üzerinde her push/PR
+1124 test (+ 31 tarayıcı testi), **%94 satır kapsamı** (tarayıcı testleri hariç). GitHub Actions üzerinde her push/PR
 için Python 3.10/3.11/3.12 matrisinde otomatik çalışır
 (`.github/workflows/tests.yml`).
 
@@ -621,6 +662,7 @@ için Python 3.10/3.11/3.12 matrisinde otomatik çalışır
 | `test_analyzer_errors.py` | Claude/Gemini API hata yolları (401, 429, 5xx, timeout, refusal) |
 | `test_ui.py` | **Tarayıcı testleri** — gezinme, secret gizliliği, form, log akışı, 2FA modal |
 | `test_new_scenarios.py` | Takvim daveti (ICS/iTIP), i18n, zengin HTML, forward, çoklu ek |
+| `test_run_history.py` | Koşu geçmişi, kanıt, referans koşu, fark (iki "sürüm" arası uçtan uca) |
 | `test_activesync.py` | Z-Push istemcisi: WBXML kodlama, cihaz ilkesi, eşitleme, mesaj çekme/gönderme (sahte sunucu), görünüm kontrolleri |
 | `test_plan_model.py` | Test planı (kademe, etki, hatalı plan), POP3 kanalı, kanallar arası karşılaştırma, istemci başına manuel kayıt |
 | `test_catalog_scenarios.py` | 15 katalog senaryosu: sağlam mesajda PASS, benzetilmiş sunucu hasarında FAIL, meşru dönüşümde (8bit→QP, eklenen yasal uyarı) PASS; karar birleştirme, manuel doğrulama, LLM'siz kip |

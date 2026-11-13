@@ -92,6 +92,11 @@ test:
   calendar_duration_minutes: 30
   calendar_location: "Çevrimiçi Toplantı"
 
+  # ── Koşu geçmişi ve kanıt (reports/runs/<kimlik>/) ───────────────
+  # labels: ["EMS 9.5.0", "Z-Push 2.7.1"]   # her koşuya eklenecek sürüm etiketleri
+  # evidence: true                    # ham mesajları (.eml) kanıt olarak sakla
+  # evidence_max_mb: 2                # üzerindeki mesajların yalnızca özeti saklanır
+
   # ── Büyük ek senaryosu (large_attachment) ────────────────────────
   # Rastgele içerikli ikili ek; sunucunun mesaj boyutu sınırına göre ayarlayın.
   large_attachment_mb: 5

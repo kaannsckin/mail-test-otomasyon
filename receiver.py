@@ -71,6 +71,10 @@ class MailReceiver:
             status, _ = imap.select("INBOX")
             if status != "OK":
                 raise imaplib.IMAP4.error("INBOX seçilemedi")
+            welcome, caps = getattr(imap, "welcome", None), getattr(imap, "capabilities", None)
+            if isinstance(welcome, bytes) and isinstance(caps, tuple):
+                self.server_info = {"imap_greeting": welcome.decode("utf-8", "replace")[:300],
+                                    "imap_capabilities": " ".join(str(c) for c in caps)}
         except Exception:
             try:
                 imap.logout()

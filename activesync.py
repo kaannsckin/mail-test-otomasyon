@@ -600,5 +600,6 @@ class EasSender(MailSender):
         return self.client
 
     def _send(self, msg, to_address: str) -> float:
-        self.client.send_mail(msg.as_bytes(policy=SMTP_POLICY))
+        self.last_raw = msg.as_bytes(policy=SMTP_POLICY)
+        self.client.send_mail(self.last_raw)
         return time.time()

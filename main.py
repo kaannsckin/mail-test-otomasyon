@@ -39,6 +39,7 @@ from verifier import (
     verify, merge_verdicts, channel_checks, apply_channel_checks, eas_view_checks,
 )
 import manual_verify
+import run_history
 from message_templates import (
     get_template,
     get_reply_original,
@@ -558,10 +559,23 @@ def run_scenario(
     Sonuca kimlik (``result_id`` = konu satırındaki Run ID), konu ve alıcı
     istemcide elle bakılacak adımlar eklenir (Manuel Doğrulama için).
     """
-    ctx: dict = {}
+    ctx: dict = {"evidence": {}}
     result = _run_scenario(scenario_key, combo, combo_index, sender, receiver,
                            analyzer, test_config, ctx)
-    return _identify(result, scenario_key, combo, ctx)
+    result = _identify(result, scenario_key, combo, ctx)
+    # Kanıt: gönderilen ve her kanaldan okunan ham mesajlar koşu dizinine yazılır.
+    run_dir = test_config.get("_run_dir") if isinstance(test_config, dict) else None
+    if run_dir and result.get("send_meta"):
+        sent = getattr(sender, "last_raw", None)
+        messages = {**({"sent": sent} if isinstance(sent, bytes) else {}), **ctx["evidence"]}
+        try:
+            result["evidence"] = run_history.save_evidence(
+                run_dir, result["result_id"], messages,
+                _num(test_config.get("evidence_max_mb"),
+                     run_history.DEFAULT_EVIDENCE_MAX_MB, float))
+        except OSError as e:
+            logger.warning(f"Kanıt yazılamadı ({result['result_id']}): {e}")
+    return result
 
 
 def _identify(result: dict, scenario_key: str, combo: TestCombination,
@@ -881,6 +895,9 @@ def _run_scenario(
         retry_interval=retry_int,
     )
 
+    if received is not None and isinstance(received.get("raw_bytes"), bytes):
+        ctx.setdefault("evidence", {})["imap"] = received["raw_bytes"]
+
     receive_error = getattr(receiver, "last_error", None) if received is None else None
     if isinstance(receive_error, BaseException):
         # Mesaj gelmiş olabilir ama kontrol edilemedi — "teslim edilemedi
@@ -928,6 +945,8 @@ def _run_scenario(
                 kwargs["subject_hint"] = run_id      # konudaki Run ID ile aday daralt
             got = channel_receiver.wait_for_message(**kwargs)
             err = getattr(channel_receiver, "last_error", None)
+            if got and isinstance(got.get("raw_bytes"), bytes):
+                ctx.setdefault("evidence", {})[channel] = got["raw_bytes"]
             extra_checks += channel_checks(
                 channel, got.get("raw_bytes") if got else None, primary_raw, expect,
                 error=f"{channel.upper()} bağlantı hatası: {err}" if got is None and err else None)
@@ -997,6 +1016,11 @@ def main():
     parser.add_argument("--impact", default=None,
                         help="Ne güncellendi? Sunucu (ems|gmail|outlook) ya da plandaki istemci "
                              "anahtarı — yalnızca etkilenen yollar koşar")
+    parser.add_argument("--label", action="append", default=None, metavar="ETİKET",
+                        help="Koşuya sürüm etiketi ekle (tekrarlanabilir): --label 'EMS 9.5.0' "
+                             "--label 'Z-Push 2.7.1'. Rapor ve koşu geçmişinde görünür")
+    parser.add_argument("--baseline", action="store_true",
+                        help="Bu koşuyu referans (baseline) olarak işaretle")
     parser.add_argument("--manual", action="store_true",
                         help="Her senaryodan sonra alıcı istemcideki manuel doğrulama "
                              "adımlarını terminalde sor (durum + not)")
@@ -1202,6 +1226,16 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
     run_info = {"started_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "analysis_provider": provider, "model": analyzer.model,
                 "finished": False, "note": "", **(getattr(args, "plan_info", None) or {})}
+    reports_dir = Path(csv_path_out).parent
+    run_dir = run_history.runs_dir(reports_dir) / run_history.new_run_id()
+    run_info["run_id"] = run_dir.name
+    run_info["labels"] = run_history.clean_labels(
+        list(getattr(args, "label", None) or []) + list(test_config.get("labels") or []))
+    run_info["servers"] = {}
+    if test_config.get("evidence", True) not in (False, "false", "no", 0):
+        test_config["_run_dir"] = str(run_dir)
+    logger.info(f"Koşu: {run_dir.name}"
+                + (f" | etiketler: {', '.join(run_info['labels'])}" if run_info["labels"] else ""))
     wanted = expand_scenario_filter(args.scenario)
     ask_manual = bool(getattr(args, "manual", False))
     if ask_manual and not sys.stdin.isatty():
@@ -1314,6 +1348,10 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
                     logger.error(f"🔒 {failed_srv}: kimlik doğrulama reddedildi — bu sunucunun "
                                  "kalan senaryoları denenmeyecek.")
                 _record(result)
+                for srv, obj in ((combo.sender_server, sender), (combo.receiver_server, receiver)):
+                    info = getattr(obj, "server_info", None)
+                    if isinstance(info, dict):
+                        run_info["servers"].setdefault(str(srv).lower(), {}).update(info)
                 time.sleep(3)
     except KeyboardInterrupt:
         interrupted = True
@@ -1345,6 +1383,27 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
         except Exception as e:  # noqa: BLE001 — biri bozulsa diğeri yine yazılsın
             logger.error(f"{kind} yazılamadı ({path}): {e}", exc_info=True)
             report_errors.append(kind)
+    # Koşuyu geçmişe yaz ve referans koşuyla karşılaştır.
+    try:
+        run_history.finalize_run(run_dir, all_results, run_info,
+                                 {"report.html": html_path, "results.csv": csv_path_out})
+        baseline = run_history.get_baseline(reports_dir)
+        if getattr(args, "baseline", False) is True and not interrupted:
+            run_history.set_baseline(reports_dir, run_dir.name)
+            logger.info(f"📌 Bu koşu referans (baseline) olarak işaretlendi: {run_dir.name}")
+        elif baseline:
+            base = run_history.load_run(reports_dir, baseline)
+            if base:
+                diff = run_history.diff_runs(base, run_history.load_run(reports_dir, run_dir.name))
+                run_history._write_json(run_dir / "diff_vs_baseline.json", diff)
+                logger.info("Δ " + run_history.diff_summary(diff))
+                for row in diff["rows"]:
+                    if row["kind"] == "regression":
+                        logger.error(f"  ⛔ YENİ HATA: {row['combination']} / {row['scenario_key']} "
+                                     f"({row['before']} → {row['after']})")
+    except Exception as e:  # noqa: BLE001 — geçmiş kaydı koşunun sonucunu etkilemesin
+        logger.warning(f"Koşu geçmişe yazılamadı ({run_dir}): {e}")
+
     logger.info(f"\n{'='*60}")
     logger.info("TEST DURDURULDU (kısmi sonuç)" if interrupted else "TEST TAMAMLANDI")
     total = len(all_results)

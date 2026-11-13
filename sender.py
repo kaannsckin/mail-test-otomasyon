@@ -187,6 +187,11 @@ class MailSender:
                 pass
             raise
         logger.debug(f"SMTP bağlantısı kuruldu: {self.host}:{self.port}")
+        features = getattr(smtp, "esmtp_features", None)
+        if isinstance(features, dict):
+            # Sunucunun bildirdiği yetenekler (SIZE sınırı, 8BITMIME, SMTPUTF8...)
+            # manifest'e girer: sürümler arasında değişirse görülür.
+            self.server_info = {"smtp_features": {str(k): str(v) for k, v in features.items()}}
         return smtp
 
     def _base_headers(self, subject: str, to_address: str, msg_id: Optional[str] = None) -> dict:
@@ -613,6 +618,8 @@ class MailSender:
         # "a@x, b@y" tek alıcı sayılıp sunucuya tek RCPT olarak gidiyordu (501).
         recipients = [addr for _, addr in getaddresses([to_address]) if addr] or [to_address]
         needs_utf8 = not (str(self.from_address) + "".join(recipients)).isascii()
+        # Kanıt paketi için: kabloya çıkan baytların kopyası.
+        self.last_raw = msg.as_bytes(policy=SMTPUTF8_POLICY if needs_utf8 else SMTP_POLICY)
         with self._connect() as smtp:
             if needs_utf8:
                 # Eskiden smtplib'in 'ascii' codec hatası (UnicodeEncodeError) ham dönüyordu.
