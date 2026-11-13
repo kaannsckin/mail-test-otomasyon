@@ -434,3 +434,87 @@ def apply_channel_checks(analysis: dict, checks: list) -> dict:
         out["summary"] = (str(analysis.get("summary") or "") + " | Kanal hatası: "
                           + "; ".join(c["name"].replace(HARD, "") for c in failed)).strip(" |")
     return out
+
+
+# ────────────────────────────────────────────────────────────────────
+#  ActiveSync (Z-Push) görünümü: telefonun ekranda gösterdiği alanlar
+# ────────────────────────────────────────────────────────────────────
+_TAG_RE = re.compile(r"<[^>]+>")
+_STYLE_RE = re.compile(r"<(style|script|head)\b.*?</\1>", re.S | re.I)
+_RUN_ID_RE = re.compile(r"\[Run ID: [0-9a-f]{8}\]")
+_TR_SAMPLE = "ğüşıöç"
+_IMPORTANCE = {"0": "low", "1": "normal", "2": "high"}
+
+
+def visible_text(body: str) -> str:
+    """HTML gövdeden ekranda görünen metin (etiketler atılır, boşluklar sadeleşir)."""
+    text = html_lib.unescape(_TAG_RE.sub(" ", _STYLE_RE.sub(" ", body or "")))
+    return " ".join(text.split())
+
+
+def eas_view_checks(view: dict, primary_raw: bytes, expect: Optional[dict]) -> list:
+    """Z-Push'ın mesajdan çıkardığı alanları (konu, gönderen, öncelik, ek
+    listesi, gövde) IMAP'teki özgün mesajla karşılaştırır.
+
+    iPad ekranda MIME'ı değil bu alanları gösterir; Z-Push dönüşümünde
+    bozulan bir alan IMAP ve POP3 kontrollerinden geçip yalnızca burada görünür.
+    """
+    tag = "ACTIVESYNC görünümü"
+    msg = email.message_from_bytes(primary_raw or b"")
+    checks = []
+
+    want_subject = _header(msg, "Subject")
+    got_subject = " ".join(str(view.get("subject") or "").split())
+    checks.append(_check(f"{tag}: konu", got_subject == want_subject,
+                         "Telefona giden konu IMAP'tekiyle aynı" if got_subject == want_subject
+                         else f"Konu farklı: {_first_diff(want_subject, got_subject)}"))
+
+    want_from = [a for _, a in _addresses(msg, "From")]
+    got_from = [a.lower() for _, a in getaddresses([str(view.get("from") or "")]) if a]
+    if want_from:
+        ok = bool(got_from) and got_from[0] == want_from[0]
+        checks.append(_check(f"{tag}: gönderen", ok,
+                             f"Gönderen korunmuş: {got_from[0]}" if ok else
+                             f"Gönderen farklı — beklenen {want_from[0]}, alınan {view.get('from')!r}"))
+
+    level = _IMPORTANCE.get(str(view.get("importance") or ""), "belirtilmemiş")
+    wanted_level = (expect or {}).get("priority_level")
+    if wanted_level:
+        checks.append(_check(f"{tag}: öncelik", level == wanted_level,
+                             f"Telefona '{level}' öncelik gidiyor"
+                             + ("" if level == wanted_level else
+                                f" — beklenen '{wanted_level}': öncelik simgesi görünmez")))
+    else:
+        checks.append(_check(f"{tag}: öncelik", True, f"Importance = {level}", hard=False))
+
+    want_files = [a["filename"] for a in _attachment_parts(msg)]
+    got_files = [str(a.get("name") or "") for a in (view.get("attachments") or [])
+                 if not a.get("inline")]
+    missing = [f for f in want_files if f not in got_files]
+    if want_files:
+        checks.append(_check(f"{tag}: ek listesi", not missing,
+                             f"{len(want_files)} ekin tamamı listeleniyor" if not missing else
+                             f"Listede olmayan/adı değişen ek: {', '.join(missing)} — "
+                             f"telefonun gördüğü: {', '.join(got_files) or 'ek yok'}"))
+
+    source = ""
+    for subtype in ("plain", "html"):
+        part = _first_text(msg, subtype)
+        if part is not None:
+            source += " " + visible_text(_part_text(part))
+    shown = visible_text(str(view.get("body") or ""))
+    marker = _RUN_ID_RE.search(source)
+    if marker:
+        problems = []
+        if marker.group(0) not in shown:
+            problems.append("gövdenin sonu (Run ID satırı) telefona giden metinde yok")
+        if _TR_SAMPLE in source and _TR_SAMPLE not in shown:
+            problems.append("Türkçe karakterler bozulmuş")
+        kind = {"1": "düz metin", "2": "HTML", "4": "MIME"}.get(str(view.get("body_type")), "?")
+        checks.append(_check(f"{tag}: gövde", not problems,
+                             f"Gövde {kind} olarak eksiksiz gidiyor ({len(shown)} karakter)"
+                             if not problems else "; ".join(problems)))
+    if view.get("truncated"):
+        checks.append(_check(f"{tag}: kırpma", True,
+                             "Sunucu gövdeyi kırparak gönderdi (Truncated=1)", hard=False))
+    return checks

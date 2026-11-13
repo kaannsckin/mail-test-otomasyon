@@ -16,6 +16,7 @@ mail_automation/
 ├── verifier.py           # Deterministik (bayt düzeyi) doğrulama
 ├── manual_verify.py      # Manuel doğrulama kayıtları, oto↔manuel uyum
 ├── plan_model.py         # Test planı: yollar, istemciler, kademeler, etki seçimi
+├── activesync.py         # Z-Push (ActiveSync) istemcisi: okuma + gönderme
 ├── test_plan.yaml        # Varsayılan test planı (düzenlenebilir)
 ├── receiver.py           # IMAP alım & MIME ayrıştırma
 ├── mail_transport.py     # SMTP/IMAP bağlantı + TLS ayarları (iç CA, 465 SSL)
@@ -30,7 +31,8 @@ mail_automation/
 ├── github_setup.sh       # GitHub repo kurulum scripti
 ├── scripts/
 │   ├── e2e_smoke.py      # Gerçek sunucuya duman testi
-│   └── extend_checklist.py  # Checklist CSV'sini senaryolarla genişletir
+│   ├── extend_checklist.py  # Checklist CSV'sini senaryolarla genişletir
+│   └── zpush_check.py    # Z-Push bağlantısını adım adım sınar
 ├── docs/
 │   └── URUN_YOL_HARITASI.md  # Ürünleştirme planı, istemci testi stratejisi
 ├── templates/
@@ -241,7 +243,7 @@ yönetilir. Etkinleştirmek için `config.yaml` → `test.plan: "test_plan.yaml"
 | --- | --- |
 | **Yol** | Gönderen sunucu → alan sunucu. Mesaj yol başına **bir kez** gönderilir |
 | **İstemci** | Bir sunucudaki kutuya belirli protokolle (`imap` / `pop3` / `activesync`) erişen gerçek uygulama |
-| **Kanal** | İstemcinin protokolü otomatik okunabiliyorsa (`imap`, `pop3`) mesaj o protokolle de okunur ve IMAP'tekiyle bayt düzeyinde karşılaştırılır |
+| **Kanal** | Mesaj istemcinin protokolüyle (`imap`, `pop3`, `activesync`) de okunur ve IMAP'tekiyle bayt düzeyinde karşılaştırılır |
 | **Kademe** | `duman` ⊂ `regresyon` ⊂ `tam` — hem yollar hem senaryolar kademelidir |
 | **Etki** | "Ne güncellendi?" — sunucu ya da istemci anahtarı; yalnızca etkilenen yollar koşar |
 
@@ -266,8 +268,49 @@ Plan kipinde Manuel Doğrulama **istemci başına** sorulur: aynı mesaja
 Outlook'ta, Android'de ve iPad'de ayrı ayrı bakılır, her biri ayrı kaydedilir.
 Hangi senaryoların istemcide sorulacağını `istemci_senaryolari` belirler.
 
-> **Z-Push (ActiveSync) henüz otomatik okunmuyor.** iPad Mail şimdilik yalnızca
-> manuel doğrulanır; ActiveSync istemcisi yol haritasındaki bir sonraki adımdır.
+### Z-Push (ActiveSync) kanalı
+
+iPad mesajı EMS'ten doğrudan değil, Z-Push'ın yeniden biçimlendirdiği hâliyle
+alır. Sunucu bölümünde `eas_url` tanımlıysa araç aynı mesajı Z-Push'tan da okur
+ve iki şeyi doğrular:
+
+- **İçerik:** Z-Push'ın verdiği MIME, IMAP'tekiyle aynı mı?
+- **Görünüm:** Z-Push'ın telefona gönderdiği alanlar — konu, gönderen, öncelik
+  (`Importance`), ek listesi ve gövde — özgün mesajla tutarlı mı? iPad ekranda
+  MIME'ı değil bu alanları gösterir; burada bozulan bir şey IMAP ve POP3
+  kontrollerinden geçer, yalnızca `ACTIVESYNC görünümü` kontrollerinde görünür.
+
+```yaml
+ems:
+  eas_url: "https://posta.kurum.gov.tr/Microsoft-Server-ActiveSync"
+  # eas_username: ""     # varsayılan: username
+  # eas_version: ""      # varsayılan: 14.0 (yoksa 12.1)
+```
+
+Önce bağlantıyı adım adım sınayın (hiçbir şeyi silmez, okundu işaretlemez):
+
+```bash
+python scripts/zpush_check.py                    # sürümler → klasörler → son mesajlar
+python scripts/zpush_check.py --find "#a1b2c3d4" # bir test mesajını indir, görünümünü göster
+python scripts/zpush_check.py --send-to adres@kurum.gov.tr   # Z-Push üzerinden gönder
+python scripts/zpush_check.py --debug            # sunucu yanıtlarını ağaç olarak dök
+```
+
+Z-Push üzerinden **gönderim** (iPad'in gönderim yolu) için plana `gonderim:
+activesync` içeren bir yol ekleyin:
+
+```yaml
+yollar:
+  - {ad: "EMS (Z-Push) → EMS", gonderen: ems, gonderim: activesync, alan: ems, kademe: regresyon}
+```
+
+Notlar: Araç sunucuda `MailTestOtomasyon` türünde, kullanıcıya göre sabit
+kimlikli bir cihaz olarak görünür; sunucu cihaz ilkesi isterse otomatik kabul
+eder. `eas_url` tanımlı değilse Z-Push kanalı uyarıyla atlanır ve iPad yalnızca
+manuel doğrulanır.
+
+> **Durum:** ActiveSync istemcisi sahte bir sunucuya karşı test edildi, gerçek
+> Z-Push'a karşı henüz doğrulanmadı. İlk kullanımda `zpush_check.py` çıktısına bakın.
 
 ---
 
@@ -562,7 +605,7 @@ python -m pytest
 python -m pytest --cov=. --cov-report=term-missing
 ```
 
-1069 test (+ 30 tarayıcı testi), **%94 satır kapsamı** (tarayıcı testleri hariç). GitHub Actions üzerinde her push/PR
+1103 test (+ 30 tarayıcı testi), **%94 satır kapsamı** (tarayıcı testleri hariç). GitHub Actions üzerinde her push/PR
 için Python 3.10/3.11/3.12 matrisinde otomatik çalışır
 (`.github/workflows/tests.yml`).
 
@@ -578,6 +621,7 @@ için Python 3.10/3.11/3.12 matrisinde otomatik çalışır
 | `test_analyzer_errors.py` | Claude/Gemini API hata yolları (401, 429, 5xx, timeout, refusal) |
 | `test_ui.py` | **Tarayıcı testleri** — gezinme, secret gizliliği, form, log akışı, 2FA modal |
 | `test_new_scenarios.py` | Takvim daveti (ICS/iTIP), i18n, zengin HTML, forward, çoklu ek |
+| `test_activesync.py` | Z-Push istemcisi: WBXML kodlama, cihaz ilkesi, eşitleme, mesaj çekme/gönderme (sahte sunucu), görünüm kontrolleri |
 | `test_plan_model.py` | Test planı (kademe, etki, hatalı plan), POP3 kanalı, kanallar arası karşılaştırma, istemci başına manuel kayıt |
 | `test_catalog_scenarios.py` | 15 katalog senaryosu: sağlam mesajda PASS, benzetilmiş sunucu hasarında FAIL, meşru dönüşümde (8bit→QP, eklenen yasal uyarı) PASS; karar birleştirme, manuel doğrulama, LLM'siz kip |
 

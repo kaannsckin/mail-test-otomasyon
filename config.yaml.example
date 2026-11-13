@@ -25,6 +25,10 @@ ems:
   # pop_host: "ems.sirket.local"      # varsayılan: imap_host
   # pop_port: 995
   # pop_use_ssl: true
+  # ── Z-Push / ActiveSync (iOS/iPadOS yolu; tanımlıysa otomatik okunur) ──
+  # eas_url: "https://ems.sirket.local/Microsoft-Server-ActiveSync"
+  # eas_username: ""                  # varsayılan: username
+  # Sınamak için: python scripts/zpush_check.py
   tls_verify: true                    # Sertifika doğrulaması (kapatmak güvensiz — yalnızca test)
   tls_ca_file: ""                     # Self-signed / iç CA ise kurum CA sertifikası (PEM), ör. certs/kurum-ca.pem
 

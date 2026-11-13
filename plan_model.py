@@ -30,9 +30,9 @@ from scenario_catalog import catalog, scenario_label
 
 TIERS = ("duman", "regresyon", "tam")
 TIER_LABELS = {"duman": "Duman (hızlı)", "regresyon": "Regresyon", "tam": "Tam"}
-# Mesajı otomatik okuyabildiğimiz erişim protokolleri. activesync (Z-Push)
-# istemcisi henüz yok: o istemciler yalnızca manuel doğrulanır.
-AUTOMATED_ACCESS = ("imap", "pop3")
+# Mesajı otomatik okuyabildiğimiz erişim protokolleri (activesync = Z-Push).
+AUTOMATED_ACCESS = ("imap", "pop3", "activesync")
+SEND_CHANNELS = ("smtp", "activesync")
 KNOWN_ACCESS = ("imap", "pop3", "activesync", "web")
 SERVERS = ("ems", "gmail", "outlook")
 
@@ -61,6 +61,7 @@ class Route:
     sender: str
     receiver: str
     tier: str = "tam"
+    send_via: str = "smtp"
 
 
 @dataclass
@@ -136,7 +137,7 @@ class Plan:
             receiver_server=route.receiver,
             receiver_client=", ".join(c.name for c in clients) or "—",
             sender_server=route.sender,
-            sender_client="SMTP",
+            sender_client="Z-Push" if route.send_via == "activesync" else "SMTP",
         )
         for key in scenario_keys:
             combo.scenarios[key] = TestScenario(
@@ -146,6 +147,7 @@ class Plan:
                 scenario_type=scenario_label(key), scenario_key=key)
         # Plan'a özgü alanlar (CSV kombinasyonlarında yoktur → getattr ile okunur)
         combo.receive_channels = channels
+        combo.send_channel = route.send_via
         combo.clients = [c.as_dict() for c in clients]
         combo.client_scenarios = self.client_scenarios
         combo.tier = route.tier
@@ -163,7 +165,8 @@ class Plan:
                         for k in self.impact_keys()],
             "clients": [c.as_dict() for c in self.clients.values()],
             "routes": [{"name": r.name, "sender": r.sender, "receiver": r.receiver,
-                        "tier": r.tier, "channels": self.channels_for(r.receiver)}
+                        "tier": r.tier, "send_via": r.send_via,
+                        "channels": self.channels_for(r.receiver)}
                        for r in self.routes],
         }
 
@@ -223,10 +226,17 @@ def parse_plan(data, path: str = "") -> Plan:
         tier = str(raw.get("kademe") or "tam").strip().lower()
         if tier not in TIERS:
             raise PlanError(f"yollar[{i}].kademe: {tier!r} geçersiz ({', '.join(TIERS)})")
-        name = str(raw.get("ad") or f"{sender.upper()} → {receiver.upper()}")
+        send_via = str(raw.get("gonderim") or "smtp").strip().lower()
+        if send_via not in SEND_CHANNELS:
+            raise PlanError(f"yollar[{i}].gonderim: {send_via!r} geçersiz "
+                            f"({', '.join(SEND_CHANNELS)})")
+        name = str(raw.get("ad") or f"{sender.upper()}"
+                   + (" (Z-Push)" if send_via == "activesync" else "")
+                   + f" → {receiver.upper()}")
         if any(r.name == name for r in plan.routes):
             raise PlanError(f"yollar[{i}]: yol adı tekrar ediyor: {name}")
-        plan.routes.append(Route(name=name, sender=sender, receiver=receiver, tier=tier))
+        plan.routes.append(Route(name=name, sender=sender, receiver=receiver, tier=tier,
+                                 send_via=send_via))
 
     tiers = data.get("kademeler") or {}
     if not isinstance(tiers, dict):

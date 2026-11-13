@@ -65,9 +65,8 @@ class TestPlanModel:
 
     def test_channels_follow_client_protocols(self, plan):
         by_label = {c.label: c for c in plan.combinations("tam")}
-        # Outlook masaüstü POP3 kullandığı için EMS kutusu POP3 ile de okunur;
-        # activesync (Z-Push) henüz otomatik okunamaz.
-        assert by_label["EMS → EMS (kurum içi)"].receive_channels == ["imap", "pop3"]
+        # Outlook masaüstü POP3, iPad Z-Push kullandığı için EMS kutusu üç kanaldan okunur.
+        assert by_label["EMS → EMS (kurum içi)"].receive_channels == ["imap", "pop3", "activesync"]
         assert by_label["EMS → Gmail (dışarıya)"].receive_channels == ["imap"]
         assert by_label["EMS → Gmail (dışarıya)"].clients == []
 
@@ -82,7 +81,7 @@ class TestPlanModel:
         assert all([cl["key"] for cl in c.clients] == ["ipad-mail"] for c in combos)
         assert all(set(c.scenarios) == set(plan.client_scenarios) for c in combos)
         # iPad activesync kullanır → bu koşuda POP3 kanalına gerek yok
-        assert all(c.receive_channels == ["imap"] for c in combos)
+        assert all(c.receive_channels == ["imap", "activesync"] for c in combos)
 
     def test_impact_outlook_desktop_reads_pop3(self, plan):
         combos = plan.combinations("duman", "outlook-masaustu")
@@ -190,7 +189,7 @@ class TestPop3Receiver:
         assert isinstance(receiver_for(cfg, "pop3"), Pop3Receiver)
         assert type(receiver_for(cfg, "imap")) is MailReceiver
         with pytest.raises(ValueError):
-            receiver_for(cfg, "activesync")
+            receiver_for(cfg, "web")
 
     def test_pop3_connect_uses_ssl_on_995_by_default(self):
         from mail_transport import pop3_connect
@@ -455,7 +454,7 @@ class TestPlanEndpoints:
         client, _ = plan_app
         data = client.get("/api/combinations?tier=duman").get_json()
         assert data["plan"] and len(data["combinations"]) == 2
-        assert data["combinations"][0]["channels"] == ["imap", "pop3"]
+        assert data["combinations"][0]["channels"] == ["imap", "pop3", "activesync"]
         bad = client.get("/api/combinations?impact=yok").get_json()
         assert not bad["ok"] and "Bilinmeyen etki" in bad["error"]
 

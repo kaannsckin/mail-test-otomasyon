@@ -19,20 +19,13 @@ Bu belge bir tartışma taslağıdır; fazların sırası değişebilir.
   etki) — uygulandı, bkz. README → Test Planı. Gmail ve Outlook/O365 dış
   dünyayı temsil eder; ağırlık EMS ↔ EMS.
 
-## Sıradaki adım: Z-Push (ActiveSync) kanalı
+## Sıradaki adım: Z-Push kanalını sahada doğrulamak
 
-iPad mesajı EMS'ten doğrudan değil, Z-Push'ın yeniden biçimlendirdiği hâliyle
-alır ve Z-Push üzerinden gönderir. Araca bir ActiveSync istemcisi eklenince:
-
-- `activesync` otomatik okunan üçüncü kanal olur: aynı mesaj IMAP, POP3 ve
-  Z-Push'tan okunup karşılaştırılır ("IMAP'te sağlam, Z-Push'ta bozuk" görünür).
-- Gönderim de Z-Push üzerinden yapılabilir (iPad'in gönderim yolu).
-- Z-Push güncellemesi `--impact` ile tek başına sınanabilir.
-
-Ön koşul: test hesabı için Z-Push'ta cihaz ilkesi/provisioning ayarının ve
-sunucu adresinin bilinmesi.
-
----
+ActiveSync istemcisi yazıldı (okuma, görünüm kontrolleri, Z-Push üzerinden
+gönderim) ama yalnızca sahte sunucuya karşı test edildi. Sıradaki iş gerçek
+Z-Push'a karşı `scripts/zpush_check.py` ile denemek ve çıkan uyumsuzlukları
+gidermek. Olası takılma noktaları: protokol sürümü, cihaz ilkesi akışı,
+Z-Push'ın MIME ve HTML gövdeyi döndürme biçimi.
 
 ## 1. Bugün araç neyi kanıtlıyor, neyi kanıtlamıyor
 
@@ -125,7 +118,7 @@ Hedef: iki koşu arasındaki farkı gösterebilmek.
 - [ ] Klasör ve bayrak eşitlemesi (okundu, yıldızlı, taşıma), sunucu tarafı kurallar, otomatik yanıt
 - [ ] Yük: art arda N mesaj, eşzamanlı gönderim, sıra korunumu
 - [ ] "Altın örnek" `.eml` yeniden oynatma (gönderen istemci gerçekçiliği)
-- [ ] L1 protokol adaptörü: ActiveSync (Z-Push) — sıradaki adım
+- [x] L1 protokol adaptörü: ActiveSync (Z-Push) — yazıldı, sahada doğrulanacak
 - [ ] L2 WebKit render + görsel fark
 
 ### Faz 3 — Ürünleştirme (kur · yapılandır · çalıştır)
@@ -161,6 +154,5 @@ Faz 1 tamamlandığında bu protokolün 1., 3. ve 5. adımları tek komut olur.
 
 ## Açık kararlar
 
-1. Z-Push kanalı için: sunucu adresi, test hesabında cihaz ilkesi (provisioning) zorunlu mu?
 2. Outlook masaüstü otomasyonu (Windows üzerinde arayüz otomasyonu) istenir mi, yoksa POP3 kanalı + manuel doğrulama yeterli mi?
 3. Outlook/O365 ve Gmail için OAuth2 gerekli mi (hesaplarda uygulama parolası kullanılabiliyor mu)?

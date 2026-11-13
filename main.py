@@ -35,7 +35,9 @@ from scenario_catalog import (
     SPEC_SCENARIOS, GROUP_SHORT, BuildContext, expand_scenario_filter,
     llm_check_prompt, manual_steps_for,
 )
-from verifier import verify, merge_verdicts, channel_checks, apply_channel_checks
+from verifier import (
+    verify, merge_verdicts, channel_checks, apply_channel_checks, eas_view_checks,
+)
 import manual_verify
 from message_templates import (
     get_template,
@@ -920,13 +922,17 @@ def _run_scenario(
         primary_raw = received.get("raw_bytes") or b""
         extra_checks: list = []
         for channel, channel_receiver in extra:
-            got = channel_receiver.wait_for_message(
-                expected_msg_id=send_meta["msg_id"], subject_prefix=subject_prefix,
-                wait_seconds=0, max_retries=min(retries, 3), retry_interval=retry_int)
+            kwargs = dict(expected_msg_id=send_meta["msg_id"], subject_prefix=subject_prefix,
+                          wait_seconds=0, max_retries=min(retries, 3), retry_interval=retry_int)
+            if getattr(channel_receiver, "accepts_hint", False) is True:
+                kwargs["subject_hint"] = run_id      # konudaki Run ID ile aday daralt
+            got = channel_receiver.wait_for_message(**kwargs)
             err = getattr(channel_receiver, "last_error", None)
             extra_checks += channel_checks(
                 channel, got.get("raw_bytes") if got else None, primary_raw, expect,
                 error=f"{channel.upper()} bağlantı hatası: {err}" if got is None and err else None)
+            if got and isinstance(got.get("eas_view"), dict):
+                extra_checks += eas_view_checks(got["eas_view"], primary_raw, expect)
         analysis = apply_channel_checks(analysis, extra_checks)
 
     status = "✅ PASS" if analysis.get("passed") else "❌ FAIL"
@@ -1128,8 +1134,16 @@ def _dry_run(config: dict, combinations: list) -> None:
                    and "pop3" in (getattr(c, "receive_channels", None) or [])
                    for c in combinations):
                 probes.append(("POP3", lambda: receiver_for(sc, "pop3")._connect().quit()))
+            if sc.get("eas_url") and any(
+                    (c.receiver_server == server_name
+                     and "activesync" in (getattr(c, "receive_channels", None) or []))
+                    or (c.sender_server == server_name
+                        and getattr(c, "send_channel", "") == "activesync")
+                    for c in combinations):
+                probes.append(("ActiveSync", lambda: receiver_for(sc, "activesync")._connect()))
             for proto, connect in probes:
                 host = (sc.get("smtp_host") if proto == "SMTP" else
+                        sc.get("eas_url") if proto == "ActiveSync" else
                         (sc.get("pop_host") or sc.get("imap_host")) if proto == "POP3"
                         else sc.get("imap_host"))
                 try:
@@ -1229,12 +1243,23 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
             try:
                 sender_config = get_server_config(config, combo.sender_server)
                 receiver_config = get_server_config(config, combo.receiver_server)
-                sender = MailSender(sender_config)
+                if getattr(combo, "send_channel", "smtp") == "activesync":
+                    from activesync import EasSender
+                    sender = EasSender(sender_config)
+                else:
+                    sender = MailSender(sender_config)
                 receiver = MailReceiver(receiver_config)
                 channels = getattr(combo, "receive_channels", None)
                 if isinstance(channels, list) and len(channels) > 1:
-                    receiver.extra_channels = [(ch, receiver_for(receiver_config, ch))
-                                               for ch in channels[1:]]
+                    extra = []
+                    for ch in channels[1:]:
+                        if ch == "activesync" and not receiver_config.get("eas_url"):
+                            logger.warning(
+                                f"{combo.receiver_server}: planda ActiveSync istemcisi var ama "
+                                "eas_url tanımlı değil — Z-Push kanalı bu koşuda OKUNMAYACAK.")
+                            continue
+                        extra.append((ch, receiver_for(receiver_config, ch)))
+                    receiver.extra_channels = extra
             except (ValueError, KeyError, TypeError) as e:
                 # Kombinasyon çalıştırılamıyor — senaryoları sessizce düşmesin,
                 # her biri FAIL satırı olarak rapora ve çıkış koduna yansısın.

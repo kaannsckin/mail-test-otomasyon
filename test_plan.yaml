@@ -11,7 +11,7 @@
 
 # Gerçek istemciler: hangi sunucudaki kutuya, hangi protokolle erişiyorlar?
 #   erisim: imap | pop3 | activesync | web
-#   (activesync = Z-Push; otomatik okuma henüz yok → yalnızca manuel doğrulama)
+#   (activesync = Z-Push; config.yaml'da eas_url tanımlıysa otomatik okunur)
 istemciler:
   outlook-masaustu:
     ad: "Outlook Masaüstü"
@@ -38,6 +38,8 @@ yollar:
   - {ad: "EMS → Gmail (dışarıya)",  gonderen: ems,     alan: gmail,   kademe: regresyon}
   - {ad: "Outlook/O365 → EMS",      gonderen: outlook, alan: ems,     kademe: regresyon}
   - {ad: "EMS → Outlook/O365",      gonderen: ems,     alan: outlook, kademe: tam}
+  # Z-Push üzerinden gönderim (iPad'in gönderim yolu) — eas_url gerektirir:
+  # - {ad: "EMS (Z-Push) → EMS", gonderen: ems, gonderim: activesync, alan: ems, kademe: regresyon}
 
 # Kademeler kümülatiftir: regresyon = duman + aşağıdakiler; tam = hepsi.
 kademeler:

@@ -423,9 +423,12 @@ class Pop3Receiver(MailReceiver):
 
 
 def receiver_for(server_config: dict, channel: str = "imap") -> MailReceiver:
-    """Erişim kanalına göre alıcı üretir (imap | pop3)."""
+    """Erişim kanalına göre alıcı üretir (imap | pop3 | activesync)."""
     if channel == "pop3":
         return Pop3Receiver(server_config)
     if channel == "imap":
         return MailReceiver(server_config)
+    if channel == "activesync":
+        from activesync import EasReceiver   # döngüsel içe aktarmayı önlemek için burada
+        return EasReceiver(server_config)
     raise ValueError(f"Otomatik okunamayan kanal: {channel}")
