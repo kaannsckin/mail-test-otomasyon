@@ -4,6 +4,7 @@ receiver.py — IMAP üzerinden mesajı polling ile bekler ve ham içeriği dön
 
 import imaplib
 import os
+import poplib
 import email
 import time
 import logging
@@ -13,7 +14,7 @@ from email.parser import BytesHeaderParser
 from typing import Optional
 
 from auth_manager import generate_totp, mfa_manager
-from mail_transport import imap_connect
+from mail_transport import imap_connect, pop3_connect
 
 logger = logging.getLogger(__name__)
 
@@ -332,3 +333,99 @@ class MailReceiver:
             else:
                 parts.append(text)
         return "".join(parts)
+
+
+class Pop3Receiver(MailReceiver):
+    """Aynı posta kutusunu POP3 ile okur (Outlook masaüstünün yaygın erişim yolu).
+
+    POP3'te sunucu tarafı arama yoktur: en yeni mesajların yalnızca başlıkları
+    (TOP) taranır, Message-ID eşleşince mesajın tamamı (RETR) indirilir.
+    Mesaj SİLİNMEZ (DELE gönderilmez) — IMAP kanalı aynı mesajı okuyabilsin.
+
+    Not: Bu posta kutusunu "sunucudan sil" ayarlı gerçek bir POP istemcisi de
+    kullanıyorsa mesajı testten önce indirip silebilir; test hesabını ayırın.
+    """
+    SCAN_LIMIT = 200
+
+    def __init__(self, server_config: dict):
+        self.config = server_config
+        self.host = server_config.get("pop_host") or server_config["imap_host"]
+        self.port = server_config.get("pop_port") or 995
+        self.username = str(server_config.get("pop_username")
+                            or server_config.get("username") or "")
+        self.password = str(server_config.get("password") or "")
+        self.auth_method = server_config.get("auth_method", "password")
+        self.totp_secret = str(server_config.get("totp_secret") or "")
+        self.last_error: Optional[BaseException] = None
+
+    @staticmethod
+    def is_auth_error(exc: Optional[BaseException]) -> bool:
+        if not isinstance(exc, poplib.error_proto):
+            return False
+        text = str(exc).lower()
+        return any(w in text for w in ("auth", "password", "login", "credential", "permission"))
+
+    def _connect(self) -> poplib.POP3:
+        pop = pop3_connect(self.config, timeout=30)
+        try:
+            secret = self.password
+            if self.auth_method in ("totp_password", "otp_only") and self.totp_secret:
+                code = generate_totp(self.totp_secret)
+                secret = code if self.auth_method == "otp_only" else self.password + code
+            pop.user(self.username)
+            pop.pass_(secret)
+        except Exception:
+            try:
+                pop.close()
+            except Exception:
+                pass
+            raise
+        return pop
+
+    def _find(self, pop, expected: str) -> Optional[bytes]:
+        count = pop.stat()[0]
+        parser = BytesHeaderParser()
+        for number in range(count, max(count - self.SCAN_LIMIT, 0), -1):
+            header = parser.parsebytes(b"\r\n".join(pop.top(number, 0)[1]))
+            if self._unfold(header.get("Message-ID", "")) == expected:
+                return b"\r\n".join(pop.retr(number)[1]) + b"\r\n"
+        return None
+
+    def wait_for_message(self, expected_msg_id: str, subject_prefix: str = "",
+                         wait_seconds: int = 20, max_retries: int = 5,
+                         retry_interval: int = 5) -> Optional[dict]:
+        expected = self._unfold(expected_msg_id)
+        self.last_error = None
+        time.sleep(wait_seconds)
+        for attempt in range(1, max_retries + 1):
+            pop = None
+            try:
+                pop = self._connect()
+                raw = self._find(pop, expected)
+                self.last_error = None
+                if raw is not None:
+                    logger.info(f"✅ Mesaj POP3'te bulundu (deneme {attempt}/{max_retries})")
+                    return self._extract_details(email.message_from_bytes(raw), raw, "pop3")
+            except Exception as e:  # noqa: BLE001 — her deneme bağımsız
+                self.last_error = e
+                logger.error(f"POP3 hatası (deneme {attempt}): {e}")
+                if self.is_auth_error(e):
+                    return None
+            finally:
+                if pop is not None:
+                    try:
+                        pop.quit()
+                    except Exception:
+                        pass
+            if attempt < max_retries:
+                time.sleep(retry_interval)
+        return None
+
+
+def receiver_for(server_config: dict, channel: str = "imap") -> MailReceiver:
+    """Erişim kanalına göre alıcı üretir (imap | pop3)."""
+    if channel == "pop3":
+        return Pop3Receiver(server_config)
+    if channel == "imap":
+        return MailReceiver(server_config)
+    raise ValueError(f"Otomatik okunamayan kanal: {channel}")

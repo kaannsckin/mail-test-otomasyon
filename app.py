@@ -711,8 +711,59 @@ def totp_preview():
     return jsonify({"ok": bool(code), "code": code, "remaining": totp_remaining_seconds()})
 
 # ── COMBINATIONS ────────────────────────────────────────────────
+def _active_plan():
+    """config.yaml → test.plan tanımlıysa (Plan, None); hatalıysa (None, hata);
+    plan kullanılmıyorsa (None, None)."""
+    from plan_model import PlanError, load_plan, resolve_plan_path
+    try:
+        raw = (_read_config().get("test") or {}).get("plan")
+    except ConfigError:
+        raw = None
+    if not raw:
+        return None, None
+    path = None
+    for base in (DATA_DIR, BASE_DIR):
+        if (Path(base) / str(raw)).is_file():
+            path = Path(base) / str(raw)
+            break
+    path = path or resolve_plan_path(str(raw))
+    if path is None:
+        return None, f"Test planı bulunamadı: {raw}"
+    try:
+        return load_plan(path), None
+    except PlanError as e:
+        return None, str(e)
+
+
+@app.route("/api/plan")
+def get_plan():
+    plan, error = _active_plan()
+    if error:
+        return jsonify({"ok": False, "active": True, "error": error})
+    if plan is None:
+        return jsonify({"ok": True, "active": False})
+    return jsonify({"ok": True, "active": True, "file": Path(plan.path).name, **plan.summary()})
+
+
 @app.route("/api/combinations", methods=["GET"])
 def get_combinations():
+    plan, plan_error = _active_plan()
+    if plan_error:
+        return jsonify({"ok": False, "error": plan_error})
+    if plan is not None:
+        tier = request.args.get("tier") or "tam"
+        impact = request.args.get("impact") or None
+        try:
+            combos = plan.combinations(tier, impact)
+        except ValueError as e:
+            return jsonify({"ok": False, "error": str(e)})
+        return jsonify({"ok": True, "plan": True, "csv": Path(plan.path).name, "combinations": [
+            {"index": i, "label": c.label, "receiver_server": c.receiver_server.upper(),
+             "receiver_client": c.receiver_client, "sender_server": c.sender_server.upper(),
+             "sender_client": c.sender_client, "scenarios": list(c.scenarios),
+             "step_count": len(c.scenarios), "tier": c.tier,
+             "channels": c.receive_channels, "clients": c.clients}
+            for i, c in enumerate(combos)]})
     try:
         from csv_parser import parse_csv
         csv_path = _get_csv_path()
@@ -928,7 +979,23 @@ def start_run():
             scenario and not is_valid_scenario_filter(scenario, _supported_scenarios()))):
         return jsonify({"ok": False, "error": "Geçersiz senaryo tipi"}), 400
 
+    tier, impact = body.get("tier") or None, body.get("impact") or None
+    if tier or impact:
+        plan, plan_error = _active_plan()
+        if plan is None:
+            return jsonify({"ok": False, "error": plan_error or
+                            "Kademe/etki seçimi için test planı gerekli (test.plan)"}), 400
+        from plan_model import TIERS
+        if tier and tier not in TIERS:
+            return jsonify({"ok": False, "error": "Geçersiz kademe"}), 400
+        if impact and impact not in plan.impact_keys():
+            return jsonify({"ok": False, "error": "Geçersiz etki seçimi"}), 400
+
     cmd = [sys.executable, str(BASE_DIR / "main.py"), "--config", str(CONFIG_PATH)]
+    if tier:
+        cmd += ["--tier", tier]
+    if impact:
+        cmd += ["--impact", impact]
     if combos:
         cmd += ["--combo", ",".join(str(c) for c in combos)]
     if scenario:
@@ -1171,24 +1238,27 @@ def manual_queue():
         if not manual_verify.is_eligible(r):
             continue
         analysis = r.get("analysis") if isinstance(r.get("analysis"), dict) else {}
-        entry = store.get(str(r["result_id"]))
-        items.append({
-            "id": str(r["result_id"]),
-            "combination": r.get("combination", ""),
-            "scenario_key": r.get("scenario_key", ""),
-            "scenario_label": scenario_label(str(r.get("scenario_key", ""))),
-            "scenario_type": r.get("scenario_type", ""),
-            "receiver_client": r.get("receiver_client", ""),
-            "receiver_server": r.get("receiver_server", ""),
-            "subject": r.get("subject", ""),
-            "test_time": r.get("test_time", ""),
-            "delivered": bool(r.get("received")),
-            "auto_status": manual_verify.auto_status(r),
-            "auto_summary": str(analysis.get("summary") or ""),
-            "auto_checks": [c for c in (analysis.get("checks") or []) if isinstance(c, dict)][:40],
-            "manual_steps": [str(s) for s in (r.get("manual_steps") or [])],
-            "manual": entry if isinstance(entry, dict) else None,
-        })
+        for slot_id, client in manual_verify.slots(r):
+            entry = store.get(slot_id)
+            items.append({
+                "id": slot_id,
+                "code": str(r["result_id"]),
+                "client": client,
+                "combination": r.get("combination", ""),
+                "scenario_key": r.get("scenario_key", ""),
+                "scenario_label": scenario_label(str(r.get("scenario_key", ""))),
+                "scenario_type": r.get("scenario_type", ""),
+                "receiver_client": (client or {}).get("name") or r.get("receiver_client", ""),
+                "receiver_server": r.get("receiver_server", ""),
+                "subject": r.get("subject", ""),
+                "test_time": r.get("test_time", ""),
+                "delivered": bool(r.get("received")),
+                "auto_status": manual_verify.auto_status(r),
+                "auto_summary": str(analysis.get("summary") or ""),
+                "auto_checks": [c for c in (analysis.get("checks") or []) if isinstance(c, dict)][:40],
+                "manual_steps": [str(s) for s in (r.get("manual_steps") or [])],
+                "manual": entry if isinstance(entry, dict) else None,
+            })
     return jsonify({"ok": True, "items": items, "run": data["run"],
                     "stats": manual_verify.agreement(data["results"], store)})
 
@@ -1197,11 +1267,17 @@ def manual_queue():
 def manual_submit():
     """Bir maddenin adım adım manuel sonucunu kaydeder ve raporları günceller."""
     body = _json_body()
-    result_id = str(body.get("id") or "")
+    slot_id = str(body.get("id") or "")
     json_path, store_file = _manual_paths()
     data = manual_verify.load_results_json(json_path)
-    result = next((r for r in data["results"]
-                   if str(r.get("result_id")) == result_id and manual_verify.is_eligible(r)), None)
+    result, client = None, None
+    for r in data["results"]:
+        if not manual_verify.is_eligible(r):
+            continue
+        match = next((s for s in manual_verify.slots(r) if s[0] == slot_id), None)
+        if match:
+            result, client = r, match[1]
+            break
     if result is None:
         return jsonify({"ok": False, "error": "Bu madde son koşunun sonuçlarında bulunamadı"}), 404
     steps = body.get("steps")
@@ -1209,11 +1285,12 @@ def manual_submit():
         return jsonify({"ok": False, "error": "steps bir liste olmalı"}), 400
     try:
         entry = manual_verify.build_entry(
-            result, [s if isinstance(s, dict) else {} for s in steps], str(body.get("note") or ""))
+            result, [s if isinstance(s, dict) else {} for s in steps],
+            str(body.get("note") or ""), client=client)
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     try:
-        store = manual_verify.save_entry(store_file, result_id, entry)
+        store = manual_verify.save_entry(store_file, slot_id, entry)
     except OSError as e:
         return jsonify({"ok": False, "error": f"Kayıt yazılamadı: {e}"}), 500
 
@@ -1222,8 +1299,7 @@ def manual_submit():
     report_error = None
     if not run_state["running"] and data["run"].get("finished"):
         from reporter import generate_csv_results, generate_html_report
-        manual = {str(r.get("result_id")): store[str(r.get("result_id"))]
-                  for r in data["results"] if str(r.get("result_id")) in store}
+        manual = manual_verify.for_results(store, data["results"])
         try:
             generate_html_report(data["results"], str(REPORTS_DIR / _report_html_name()),
                                  note=str(data["run"].get("note") or ""), manual=manual)

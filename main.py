@@ -27,14 +27,15 @@ from pathlib import Path
 from csv_parser import parse_csv, TestCombination, SUPPORTED_SCENARIOS
 from mail_transport import explain_connection_error, resolve_path
 from sender import MailSender
-from receiver import MailReceiver
+from receiver import MailReceiver, receiver_for
+from plan_model import PlanError, TIERS, load_plan, resolve_plan_path
 from analyzer import MailAnalyzer, NullAnalyzer
 from reporter import generate_html_report, generate_csv_results
 from scenario_catalog import (
     SPEC_SCENARIOS, GROUP_SHORT, BuildContext, expand_scenario_filter,
     llm_check_prompt, manual_steps_for,
 )
-from verifier import verify, merge_verdicts
+from verifier import verify, merge_verdicts, channel_checks, apply_channel_checks
 import manual_verify
 from message_templates import (
     get_template,
@@ -569,6 +570,15 @@ def _identify(result: dict, scenario_key: str, combo: TestCombination,
     result.setdefault("receiver_client", getattr(combo, "receiver_client", ""))
     result.setdefault("receiver_server", getattr(combo, "receiver_server", ""))
     result.setdefault("manual_steps", manual_steps_for(scenario_key))
+    # Plan kipinde manuel doğrulama İSTEMCİ başına sorulur. Senaryo istemciye
+    # bağlı değilse ya da alan sunucuda tanımlı istemci yoksa hiç sorulmaz.
+    clients = getattr(combo, "clients", None)
+    if isinstance(clients, list):
+        wanted = getattr(combo, "client_scenarios", None)
+        relevant = clients if (wanted is None or scenario_key in wanted) else []
+        result.setdefault("clients", relevant)
+        if not relevant:
+            result.setdefault("manual_scope", "none")
     return result
 
 
@@ -904,6 +914,21 @@ def _run_scenario(
         analysis = merge_verdicts(
             det_checks, None if isinstance(analyzer, NullAnalyzer) else analysis)
 
+    # İkincil kanallar (ör. POP3): aynı mesaj istemcinin protokolüyle de okunur.
+    extra = getattr(receiver, "extra_channels", None)
+    if received is not None and isinstance(extra, list) and extra:
+        primary_raw = received.get("raw_bytes") or b""
+        extra_checks: list = []
+        for channel, channel_receiver in extra:
+            got = channel_receiver.wait_for_message(
+                expected_msg_id=send_meta["msg_id"], subject_prefix=subject_prefix,
+                wait_seconds=0, max_retries=min(retries, 3), retry_interval=retry_int)
+            err = getattr(channel_receiver, "last_error", None)
+            extra_checks += channel_checks(
+                channel, got.get("raw_bytes") if got else None, primary_raw, expect,
+                error=f"{channel.upper()} bağlantı hatası: {err}" if got is None and err else None)
+        analysis = apply_channel_checks(analysis, extra_checks)
+
     status = "✅ PASS" if analysis.get("passed") else "❌ FAIL"
     logger.info(
         f"◼ Sonuç: {status} | {combo.label} / {scenario_key} ({variant}) "
@@ -958,6 +983,14 @@ def main():
                         help="Yalnızca bu senaryo(lar): plain_text · enc_base64,priority_high "
                              "· group:kodlama (gruplar: temel, kodlama, oncelik, adresleme, icerik)")
     parser.add_argument("--dry-run", action="store_true", help="Bağlantı testi, mail gönderme")
+    parser.add_argument("--plan", default=None,
+                        help="Test planı (test_plan.yaml). Verilirse CSV yerine plan kullanılır; "
+                             "config.yaml → test.plan ile de ayarlanabilir")
+    parser.add_argument("--tier", default=None, choices=TIERS,
+                        help="Plan kademesi: duman < regresyon < tam (varsayılan: tam)")
+    parser.add_argument("--impact", default=None,
+                        help="Ne güncellendi? Sunucu (ems|gmail|outlook) ya da plandaki istemci "
+                             "anahtarı — yalnızca etkilenen yollar koşar")
     parser.add_argument("--manual", action="store_true",
                         help="Her senaryodan sonra alıcı istemcideki manuel doğrulama "
                              "adımlarını terminalde sor (durum + not)")
@@ -980,7 +1013,35 @@ def main():
     logger.info("=" * 60)
 
     test_config = config.get("test") or {}
-    if args.csv:
+    plan = None
+    plan_raw = args.plan or (None if args.csv else test_config.get("plan"))
+    if plan_raw:
+        plan_path = resolve_plan_path(str(plan_raw))
+        if plan_path is None:
+            logger.error(f"Test planı bulunamadı: {plan_raw}")
+            sys.exit(EXIT_ERROR)
+        try:
+            plan = load_plan(plan_path)
+            combinations = plan.combinations(args.tier or "tam", args.impact)
+        except PlanError as e:
+            logger.error(f"Test planı hatalı: {e}")
+            sys.exit(EXIT_ERROR)
+        logger.info(f"Test planı: {plan_path.name} | kademe={args.tier or 'tam'} | "
+                    f"etki={args.impact or 'tümü'} | {len(combinations)} yol, "
+                    f"{sum(len(c.scenarios) for c in combinations)} mesaj")
+        if not combinations:
+            logger.error("Seçilen kademe/etki ile eşleşen yol yok.")
+            sys.exit(EXIT_ERROR)
+    elif args.tier or args.impact:
+        logger.error("--tier ve --impact yalnızca test planıyla (--plan / test.plan) kullanılır.")
+        sys.exit(EXIT_ERROR)
+    args.plan_info = ({"plan": Path(plan.path).name, "tier": args.tier or "tam",
+                       "impact": args.impact or "",
+                       "clients": [c.as_dict() for c in plan.clients.values()]}
+                      if plan else {})
+    if plan:
+        csv_path = ""
+    elif args.csv:
         explicit = Path(args.csv)
         if not explicit.exists() and not (Path(__file__).parent / explicit).exists():
             logger.error(f"CSV dosyası bulunamadı: {args.csv}")
@@ -995,9 +1056,10 @@ def main():
     # Test dosyalarını hazırla
     prepare_test_files()
 
-    # CSV oku
+    # CSV oku (plan kipinde kombinasyonlar plandan geldi)
     try:
-        combinations = parse_csv(csv_path)
+        if plan is None:
+            combinations = parse_csv(csv_path)
     except (OSError, ValueError, UnicodeDecodeError) as e:
         logger.error(f"CSV okunamadı ({csv_path}): {e}")
         sys.exit(EXIT_ERROR)
@@ -1059,9 +1121,17 @@ def _dry_run(config: dict, combinations: list) -> None:
                 failures += 1
                 logger.error(f"  ❌ {server_name}: {e}")
                 continue
-            for proto, connect in (("SMTP", lambda: MailSender(sc)._connect().quit()),
-                                   ("IMAP", lambda: MailReceiver(sc)._connect().logout())):
-                host = sc.get("smtp_host" if proto == "SMTP" else "imap_host")
+            probes = [("SMTP", lambda: MailSender(sc)._connect().quit()),
+                      ("IMAP", lambda: MailReceiver(sc)._connect().logout())]
+            # Plan kipi: bu sunucudan POP3 ile de okunacaksa onu da sına.
+            if any(c.receiver_server == server_name
+                   and "pop3" in (getattr(c, "receive_channels", None) or [])
+                   for c in combinations):
+                probes.append(("POP3", lambda: receiver_for(sc, "pop3")._connect().quit()))
+            for proto, connect in probes:
+                host = (sc.get("smtp_host") if proto == "SMTP" else
+                        (sc.get("pop_host") or sc.get("imap_host")) if proto == "POP3"
+                        else sc.get("imap_host"))
                 try:
                     connect()
                     logger.info(f"  ✅ {proto} OK: {server_name} ({host})")
@@ -1117,7 +1187,7 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
     manual_path = manual_verify.store_path(csv_path_out)
     run_info = {"started_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "analysis_provider": provider, "model": analyzer.model,
-                "finished": False, "note": ""}
+                "finished": False, "note": "", **(getattr(args, "plan_info", None) or {})}
     wanted = expand_scenario_filter(args.scenario)
     ask_manual = bool(getattr(args, "manual", False))
     if ask_manual and not sys.stdin.isatty():
@@ -1135,14 +1205,15 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
         except Exception as e:  # noqa: BLE001 — yan dosya koşuyu düşürmesin
             logger.warning(f"Sonuç JSON'u yazılamadı ({json_path}): {e}")
         if ask_manual and manual_verify.is_eligible(result) and result.get("received"):
-            try:
-                entry = manual_verify.prompt_cli(result)
-            except EOFError:
-                logger.warning("Girdi akışı kapandı — manuel doğrulama soruları durduruldu.")
-                ask_manual = False
-                return
-            if entry:
-                manual_verify.save_entry(manual_path, result["result_id"], entry)
+            for slot_id, client in manual_verify.slots(result):
+                try:
+                    entry = manual_verify.prompt_cli(result, client=client)
+                except EOFError:
+                    logger.warning("Girdi akışı kapandı — manuel doğrulama soruları durduruldu.")
+                    ask_manual = False
+                    return
+                if entry:
+                    manual_verify.save_entry(manual_path, slot_id, entry)
 
     try:
         for combo_idx, combo in indexed:
@@ -1160,6 +1231,10 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
                 receiver_config = get_server_config(config, combo.receiver_server)
                 sender = MailSender(sender_config)
                 receiver = MailReceiver(receiver_config)
+                channels = getattr(combo, "receive_channels", None)
+                if isinstance(channels, list) and len(channels) > 1:
+                    receiver.extra_channels = [(ch, receiver_for(receiver_config, ch))
+                                               for ch in channels[1:]]
             except (ValueError, KeyError, TypeError) as e:
                 # Kombinasyon çalıştırılamıyor — senaryoları sessizce düşmesin,
                 # her biri FAIL satırı olarak rapora ve çıkış koduna yansısın.
@@ -1234,9 +1309,7 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
     except Exception as e:  # noqa: BLE001
         logger.warning(f"Sonuç JSON'u yazılamadı ({json_path}): {e}")
     # Yalnızca bu koşunun sonuçlarına ait manuel kayıtlar rapora girer.
-    manual = manual_verify.load_store(manual_path)
-    manual = {r["result_id"]: manual[r["result_id"]] for r in all_results
-              if isinstance(r, dict) and r.get("result_id") in manual}
+    manual = manual_verify.for_results(manual_verify.load_store(manual_path), all_results)
     report_errors = []
     for kind, writer, path, kwargs in (
             ("HTML rapor", generate_html_report, html_path, {"note": note, "manual": manual}),

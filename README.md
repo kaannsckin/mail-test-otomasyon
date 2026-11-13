@@ -15,6 +15,8 @@ mail_automation/
 ├── scenario_catalog.py   # 15 katalog senaryosu: mesaj + beklenti + manuel adımlar
 ├── verifier.py           # Deterministik (bayt düzeyi) doğrulama
 ├── manual_verify.py      # Manuel doğrulama kayıtları, oto↔manuel uyum
+├── plan_model.py         # Test planı: yollar, istemciler, kademeler, etki seçimi
+├── test_plan.yaml        # Varsayılan test planı (düzenlenebilir)
 ├── receiver.py           # IMAP alım & MIME ayrıştırma
 ├── mail_transport.py     # SMTP/IMAP bağlantı + TLS ayarları (iç CA, 465 SSL)
 ├── analyzer.py           # Claude API analiz motoru
@@ -224,6 +226,48 @@ test:
   # Büyük ek senaryosu — sunucunun boyut sınırına göre ayarlayın
   large_attachment_mb: 5
 ```
+
+---
+
+## 🗺 Test Planı (yollar · istemciler · kademeler)
+
+Checklist CSV'si dört etiketi çarparak 18 kombinasyon üretir; istemci adı
+otomasyonda hiçbir şeyi değiştirmediği için aynı sunucu yolu defalarca koşar
+(tam koşu 468 mesaj). **Test planı** bunu ayırır ve `test_plan.yaml` ile
+yönetilir. Etkinleştirmek için `config.yaml` → `test.plan: "test_plan.yaml"`
+(ya da `python main.py --plan test_plan.yaml`).
+
+| Kavram | Anlamı |
+| --- | --- |
+| **Yol** | Gönderen sunucu → alan sunucu. Mesaj yol başına **bir kez** gönderilir |
+| **İstemci** | Bir sunucudaki kutuya belirli protokolle (`imap` / `pop3` / `activesync`) erişen gerçek uygulama |
+| **Kanal** | İstemcinin protokolü otomatik okunabiliyorsa (`imap`, `pop3`) mesaj o protokolle de okunur ve IMAP'tekiyle bayt düzeyinde karşılaştırılır |
+| **Kademe** | `duman` ⊂ `regresyon` ⊂ `tam` — hem yollar hem senaryolar kademelidir |
+| **Etki** | "Ne güncellendi?" — sunucu ya da istemci anahtarı; yalnızca etkilenen yollar koşar |
+
+Varsayılan plan: 5 yol (ağırlık EMS ↔ EMS), 3 istemci (Outlook Masaüstü/POP3 —
+kritik, Gmail Android/IMAP, iPad Mail/Z-Push). Duman 10, regresyon 76, tam 130 mesaj.
+
+```bash
+python main.py --tier duman                       # 2 yol × 5 senaryo, birkaç dakika
+python main.py --tier regresyon --impact ems      # EMS güncellendi: EMS'e dokunan yollar
+python main.py --impact outlook-masaustu          # Outlook güncellendi: EMS'e gelen yollar,
+                                                  # yalnızca görünümü istemciye bağlı senaryolar
+python main.py --tier duman --dry-run             # SMTP + IMAP + POP3 bağlantı testi
+```
+
+**POP3 kanalı** (Outlook masaüstünün yaygın yolu): sunucu bölümüne isteğe bağlı
+`pop_host` (varsayılan `imap_host`), `pop_port` (995), `pop_use_ssl` (true)
+yazılabilir. Araç mesajı POP3'te Message-ID ile bulur ve **silmez**. Aynı test
+kutusunu "sunucudan sil" ayarlı gerçek bir POP istemcisi de kullanıyorsa mesajı
+testten önce indirip silebilir — test hesabını ayrı tutun.
+
+Plan kipinde Manuel Doğrulama **istemci başına** sorulur: aynı mesaja
+Outlook'ta, Android'de ve iPad'de ayrı ayrı bakılır, her biri ayrı kaydedilir.
+Hangi senaryoların istemcide sorulacağını `istemci_senaryolari` belirler.
+
+> **Z-Push (ActiveSync) henüz otomatik okunmuyor.** iPad Mail şimdilik yalnızca
+> manuel doğrulanır; ActiveSync istemcisi yol haritasındaki bir sonraki adımdır.
 
 ---
 
@@ -518,7 +562,7 @@ python -m pytest
 python -m pytest --cov=. --cov-report=term-missing
 ```
 
-1018 test (+ 30 tarayıcı testi), **%94 satır kapsamı** (tarayıcı testleri hariç). GitHub Actions üzerinde her push/PR
+1069 test (+ 30 tarayıcı testi), **%94 satır kapsamı** (tarayıcı testleri hariç). GitHub Actions üzerinde her push/PR
 için Python 3.10/3.11/3.12 matrisinde otomatik çalışır
 (`.github/workflows/tests.yml`).
 
@@ -534,6 +578,7 @@ için Python 3.10/3.11/3.12 matrisinde otomatik çalışır
 | `test_analyzer_errors.py` | Claude/Gemini API hata yolları (401, 429, 5xx, timeout, refusal) |
 | `test_ui.py` | **Tarayıcı testleri** — gezinme, secret gizliliği, form, log akışı, 2FA modal |
 | `test_new_scenarios.py` | Takvim daveti (ICS/iTIP), i18n, zengin HTML, forward, çoklu ek |
+| `test_plan_model.py` | Test planı (kademe, etki, hatalı plan), POP3 kanalı, kanallar arası karşılaştırma, istemci başına manuel kayıt |
 | `test_catalog_scenarios.py` | 15 katalog senaryosu: sağlam mesajda PASS, benzetilmiş sunucu hasarında FAIL, meşru dönüşümde (8bit→QP, eklenen yasal uyarı) PASS; karar birleştirme, manuel doğrulama, LLM'siz kip |
 
 > S/MIME imzalama testleri sistemde `openssl` CLI yoksa otomatik atlanır.

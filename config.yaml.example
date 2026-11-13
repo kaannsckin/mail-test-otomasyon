@@ -21,6 +21,10 @@ ems:
   # ── TLS (kurum içi sunucular için) ───────────────────────────────
   # smtp_use_ssl: true                # 465 (doğrudan SSL). Port 465 ise otomatik.
   # imap_use_starttls: false          # 143 üzerinde STARTTLS
+  # ── POP3 (test planında POP3 kullanan istemci varsa; hepsi opsiyonel) ──
+  # pop_host: "ems.sirket.local"      # varsayılan: imap_host
+  # pop_port: 995
+  # pop_use_ssl: true
   tls_verify: true                    # Sertifika doğrulaması (kapatmak güvensiz — yalnızca test)
   tls_ca_file: ""                     # Self-signed / iç CA ise kurum CA sertifikası (PEM), ör. certs/kurum-ca.pem
 
@@ -67,6 +71,9 @@ test:
   test_attachment_path: "test_files/test_document.pdf"
   test_image_path: "test_files/test_image.png"
   csv_input: "mail_test_checklist.csv"
+  # Test planı: tanımlanırsa CSV yerine kullanılır (yollar · istemciler ·
+  # kademeler). Bkz. test_plan.yaml ve README → Test Planı.
+  # plan: "test_plan.yaml"
   report_output: "reports/test_report.html"
   results_csv: "reports/test_results.csv"
 

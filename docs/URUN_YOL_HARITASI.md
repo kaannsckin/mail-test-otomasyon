@@ -4,8 +4,33 @@ Amaç: bu projeyi, bir kurumun **kurup yapılandırıp çalıştırabileceği** 
 mesajlaşma ürünü ya da istemci güncellemelerinde "mesaj alma/gönderme
 bozulmadı" iddiasını **kanıtlayabileceği** bir ürüne dönüştürmek.
 
-Bu belge bir tartışma taslağıdır; sonundaki [açık kararlar](#açık-kararlar)
-netleştikçe fazların sırası değişebilir.
+Bu belge bir tartışma taslağıdır; fazların sırası değişebilir.
+
+## Alınan kararlar
+
+- **Ortam:** Android → Gmail uygulaması, IMAP + SMTP. iOS/iPadOS → Z-Push
+  (son sürüm, arkasında EMS IMAP). **Outlook masaüstü kritik**; çoğunluk
+  POP3 + SMTP, bir kısmı IMAP.
+- **Cihaz:** iPad Pro var (manuel doğrulama için yeterli); Mac yok → iOS
+  cihaz otomasyonu (L3) kapsam dışı.
+- **LLM:** hem LLM'li hem LLM'siz kip sunulur.
+- **Hedef:** kurum içi kullanım → çok kiracılı yapı, lisanslama, EN arayüz plandan çıktı.
+- **Kombinasyonlar:** 18 satırlık CSV yerine test planı (yol · istemci · kademe ·
+  etki) — uygulandı, bkz. README → Test Planı. Gmail ve Outlook/O365 dış
+  dünyayı temsil eder; ağırlık EMS ↔ EMS.
+
+## Sıradaki adım: Z-Push (ActiveSync) kanalı
+
+iPad mesajı EMS'ten doğrudan değil, Z-Push'ın yeniden biçimlendirdiği hâliyle
+alır ve Z-Push üzerinden gönderir. Araca bir ActiveSync istemcisi eklenince:
+
+- `activesync` otomatik okunan üçüncü kanal olur: aynı mesaj IMAP, POP3 ve
+  Z-Push'tan okunup karşılaştırılır ("IMAP'te sağlam, Z-Push'ta bozuk" görünür).
+- Gönderim de Z-Push üzerinden yapılabilir (iPad'in gönderim yolu).
+- Z-Push güncellemesi `--impact` ile tek başına sınanabilir.
+
+Ön koşul: test hesabı için Z-Push'ta cihaz ilkesi/provisioning ayarının ve
+sunucu adresinin bilinmesi.
 
 ---
 
@@ -86,8 +111,8 @@ Hedef: iki koşu arasındaki farkı gösterebilmek.
 - [ ] Gereksiz klasörü taraması; teslim süresi ölçümü ve eşik (SLA)
 - [ ] Kararsızlık yönetimi: geçici hatalarda yeniden deneme, "kararsız" etiketi
 - [ ] Test mesajlarını koşu sonunda temizleme (posta kutusu şişmesin)
-- [ ] Kombinasyon tekilleştirme: aynı sunucu yolu otomasyonda bir kez koşsun,
-      istemci çeşitlemesi yalnızca manuel/istemci katmanında çoğalsın
+- [x] Kombinasyon tekilleştirme: test planı (yol · istemci · kademe · etki)
+- [x] POP3 okuma kanalı (Outlook masaüstü yolu)
 
 ### Faz 2 — Kapsam ve istemci gerçekçiliği
 
@@ -100,7 +125,7 @@ Hedef: iki koşu arasındaki farkı gösterebilmek.
 - [ ] Klasör ve bayrak eşitlemesi (okundu, yıldızlı, taşıma), sunucu tarafı kurallar, otomatik yanıt
 - [ ] Yük: art arda N mesaj, eşzamanlı gönderim, sıra korunumu
 - [ ] "Altın örnek" `.eml` yeniden oynatma (gönderen istemci gerçekçiliği)
-- [ ] L1 protokol adaptörü (EAS/EWS/Graph — hangisi olduğu açık karar)
+- [ ] L1 protokol adaptörü: ActiveSync (Z-Push) — sıradaki adım
 - [ ] L2 WebKit render + görsel fark
 
 ### Faz 3 — Ürünleştirme (kur · yapılandır · çalıştır)
@@ -136,8 +161,6 @@ Faz 1 tamamlandığında bu protokolün 1., 3. ve 5. adımları tek komut olur.
 
 ## Açık kararlar
 
-1. iOS / Android istemciler EMS'e **hangi protokolle** bağlanıyor (ActiveSync, IMAP, özel uygulama)? L1 adaptörünün ne olacağını bu belirler.
-2. Elde test cihazı / Mac var mı? (L3'ün mümkün olup olmadığı)
-3. Mesaj içeriğinin dış LLM API'sine gitmesi kabul edilebilir mi, yoksa varsayılan LLM'siz kip mi olmalı?
-4. Hedef kitle: yalnızca kurum içi mi, başka kurumlara dağıtılacak ürün mü? (çok kullanıcı, lisans, EN arayüz önceliği)
-5. Checklist'teki 18 kombinasyon korunmalı mı, yoksa "sunucu yolu × istemci" olarak yeniden mi modellenmeli?
+1. Z-Push kanalı için: sunucu adresi, test hesabında cihaz ilkesi (provisioning) zorunlu mu?
+2. Outlook masaüstü otomasyonu (Windows üzerinde arayüz otomasyonu) istenir mi, yoksa POP3 kanalı + manuel doğrulama yeterli mi?
+3. Outlook/O365 ve Gmail için OAuth2 gerekli mi (hesaplarda uygulama parolası kullanılabiliyor mu)?

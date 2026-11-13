@@ -111,7 +111,27 @@ def is_eligible(result: dict) -> bool:
     """Manuel doğrulanabilir mi? Mesaj gönderilmiş olmalı (istemcide bakılacak
     bir şey var); atlanan ve hiç gönderilemeyen senaryolar hariç."""
     return (isinstance(result, dict) and bool(result.get("result_id"))
-            and not result.get("skipped") and isinstance(result.get("send_meta"), dict))
+            and not result.get("skipped") and isinstance(result.get("send_meta"), dict)
+            and result.get("manual_scope") != "none")
+
+
+def slots(result: dict) -> list:
+    """Bir sonucun manuel doğrulama yuvaları: (kayıt kimliği, istemci | None).
+
+    Plan kipinde aynı mesaja her istemcide ayrı bakılır → istemci başına bir
+    yuva (``<result_id>:<istemci>``). CSV kipinde tek yuva (``<result_id>``).
+    """
+    rid = str(result.get("result_id") or "")
+    clients = result.get("clients")
+    if isinstance(clients, list) and clients:
+        return [(f"{rid}:{c.get('key')}", c) for c in clients if isinstance(c, dict)]
+    return [(rid, None)]
+
+
+def for_results(store: dict, results: list) -> dict:
+    """Depodan yalnızca verilen sonuçlara ait kayıtları süzer."""
+    ids = {str(r.get("result_id")) for r in results or [] if isinstance(r, dict)}
+    return {k: v for k, v in (store or {}).items() if str(k).split(":", 1)[0] in ids}
 
 
 def overall_of(steps: list) -> str:
@@ -123,7 +143,8 @@ def overall_of(steps: list) -> str:
     return "na"
 
 
-def build_entry(result: dict, step_inputs: list, note: str = "") -> dict:
+def build_entry(result: dict, step_inputs: list, note: str = "",
+                client: Optional[dict] = None) -> dict:
     """Kullanıcı girdisinden kayıt üretir. Her adım için durum ZORUNLUDUR.
 
     Raises: ValueError — adım sayısı uyuşmuyor ya da geçersiz durum.
@@ -146,6 +167,7 @@ def build_entry(result: dict, step_inputs: list, note: str = "") -> dict:
         "auto_status": auto_status(result),
         "combination": result.get("combination", ""),
         "scenario_key": result.get("scenario_key", ""),
+        **({"client": client.get("key"), "client_name": client.get("name")} if client else {}),
     }
 
 
@@ -167,22 +189,23 @@ def agreement(results: list, store: dict) -> dict:
     for r in results or []:
         if not is_eligible(r):
             continue
-        stats["eligible"] += 1
-        entry = store.get(str(r.get("result_id")))
-        if not isinstance(entry, dict) or entry.get("overall") not in STATUSES:
-            stats["pending"] += 1
-            continue
-        stats["verified"] += 1
-        manual, auto = entry["overall"], auto_status(r)
-        if manual == "na":
-            continue
-        stats["manual_pass" if manual == "pass" else "manual_fail"] += 1
-        if (manual == "pass") == (auto == "PASS"):
-            stats["agree"] += 1
-        elif auto == "PASS":
-            stats["false_pass"] += 1      # araç geçti dedi, insan kaldı dedi
-        else:
-            stats["false_alarm"] += 1     # araç kaldı dedi, insan geçti dedi
+        for slot_id, _client in slots(r):
+            stats["eligible"] += 1
+            entry = store.get(slot_id)
+            if not isinstance(entry, dict) or entry.get("overall") not in STATUSES:
+                stats["pending"] += 1
+                continue
+            stats["verified"] += 1
+            manual, auto = entry["overall"], auto_status(r)
+            if manual == "na":
+                continue
+            stats["manual_pass" if manual == "pass" else "manual_fail"] += 1
+            if (manual == "pass") == (auto == "PASS"):
+                stats["agree"] += 1
+            elif auto == "PASS":
+                stats["false_pass"] += 1      # araç geçti dedi, insan kaldı dedi
+            else:
+                stats["false_alarm"] += 1     # araç kaldı dedi, insan geçti dedi
     compared = stats["agree"] + stats["false_pass"] + stats["false_alarm"]
     stats["agreement_rate"] = round(stats["agree"] / compared * 100, 1) if compared else None
     return stats
@@ -195,7 +218,8 @@ _KEYS = {"g": "pass", "k": "fail", "u": "na"}
 
 
 def prompt_cli(result: dict, input_fn: Optional[Callable[[str], str]] = None,
-               out: Callable[[str], None] = print) -> Optional[dict]:
+               out: Callable[[str], None] = print,
+               client: Optional[dict] = None) -> Optional[dict]:
     """Bir senaryonun manuel adımlarını terminalde tek tek sorar.
 
     Dönen değer kayıt sözlüğüdür; kullanıcı maddeyi atlarsa (a) None.
@@ -209,7 +233,9 @@ def prompt_cli(result: dict, input_fn: Optional[Callable[[str], str]] = None,
     out("─" * 72)
     out(f"MANUEL DOĞRULAMA · {result.get('combination', '?')} · "
         f"{result.get('scenario_type') or result.get('scenario_key')}")
-    out(f"  Alıcı istemcide konuda arayın: #{result.get('result_id')}")
+    where = (f"{client.get('name')} ({client.get('access')})" if client
+             else (result.get("receiver_client") or "Alıcı istemci"))
+    out(f"  İstemci: {where} — konuda arayın: #{result.get('result_id')}")
     if result.get("subject"):
         out(f"  Konu: {result['subject']}")
     summary = (result.get("analysis") or {}).get("summary", "")
@@ -230,6 +256,6 @@ def prompt_cli(result: dict, input_fn: Optional[Callable[[str], str]] = None,
         note = input_fn("      Not (boş bırakılabilir): ").strip()
         inputs.append({"status": _KEYS[answer], "note": note})
     overall_note = input_fn("\n  Madde için genel not (boş bırakılabilir): ").strip()
-    entry = build_entry(result, inputs, overall_note)
+    entry = build_entry(result, inputs, overall_note, client=client)
     out(f"  ✔ Kaydedildi: manuel sonuç {STATUS_LABELS[entry['overall']]}")
     return entry

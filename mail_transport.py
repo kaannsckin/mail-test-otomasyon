@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import imaplib
 import logging
+import poplib
 import os
 import smtplib
 import socket
@@ -248,6 +249,24 @@ def imap_connect(server_config: dict, timeout: float = DEFAULT_TIMEOUT,
     if _as_bool(server_config.get("imap_use_starttls"), False):
         imap.starttls(ssl_context=ssl_context_for(server_config))
     return imap
+
+
+def pop3_connect(server_config: dict, timeout: float = DEFAULT_TIMEOUT) -> poplib.POP3:
+    """POP3 bağlantısı kurar; giriş YAPMAZ.
+
+    Anahtarlar (hepsi opsiyonel): pop_host (varsayılan imap_host), pop_port
+    (995; SSL kapalıysa 110), pop_use_ssl (true), pop_use_starttls (false).
+    """
+    host = server_config.get("pop_host") or server_config["imap_host"]
+    use_ssl = _as_bool(server_config.get("pop_use_ssl"), True)
+    port = int(server_config.get("pop_port") or (995 if use_ssl else 110))
+    if use_ssl:
+        return poplib.POP3_SSL(host, port, timeout=timeout,
+                               context=ssl_context_for(server_config))
+    pop = poplib.POP3(host, port, timeout=timeout)
+    if _as_bool(server_config.get("pop_use_starttls"), False):
+        pop.stls(context=ssl_context_for(server_config))
+    return pop
 
 
 def explain_connection_error(exc: BaseException, server_config: Optional[dict] = None) -> Optional[str]:

@@ -93,8 +93,28 @@ def _manual_entry(manual, result) -> dict:
     """Sonucun manuel doğrulama kaydı (yoksa boş sözlük)."""
     if not isinstance(manual, dict) or not isinstance(result, dict):
         return {}
-    entry = manual.get(str(result.get("result_id") or ""))
-    return entry if isinstance(entry, dict) else {}
+    rid = str(result.get("result_id") or "")
+    if not rid:
+        return {}
+    entry = manual.get(rid)
+    if isinstance(entry, dict):
+        return entry
+    # Plan kipi: istemci başına ayrı kayıt ("<rid>:<istemci>") → tek hücrede birleştir.
+    parts = [e for k, e in manual.items()
+             if str(k).startswith(rid + ":") and isinstance(e, dict)]
+    if not parts:
+        return {}
+    overalls = [e.get("overall") for e in parts]
+    steps, notes = [], []
+    for e in parts:
+        name = _text(e.get("client_name") or e.get("client") or "?")
+        label = {"pass": "GEÇTİ", "fail": "KALDI", "na": "UYGULANAMAZ"}.get(e.get("overall"), "?")
+        notes.append(f"{name}: {label}" + (f" ({_text(e.get('note'))})" if e.get("note") else ""))
+        for s in (e.get("steps") if isinstance(e.get("steps"), list) else []):
+            if isinstance(s, dict):
+                steps.append({**s, "text": f"{name} · {_text(s.get('text'))}"})
+    return {"overall": "fail" if "fail" in overalls else "pass" if "pass" in overalls else "na",
+            "note": "; ".join(notes), "steps": steps}
 
 
 def _manual_note(entry: dict) -> str:

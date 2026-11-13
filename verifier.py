@@ -379,3 +379,58 @@ def merge_verdicts(det_checks: list, llm: Optional[dict]) -> dict:
         "recommendations": recommendations,
         "verdict_source": "deterministic",
     }
+
+
+# ────────────────────────────────────────────────────────────────────
+#  İkincil kanallar (ör. POP3): aynı mesaj başka protokolle okununca
+# ────────────────────────────────────────────────────────────────────
+def fingerprint(raw: bytes) -> list:
+    """Mesajın içerik parmak izi: yaprak parçaların (tür, çözülmüş içerik özeti).
+
+    Başlık sırası, katlama ve satır sonu gibi protokole göre meşru biçimde
+    değişen ayrıntılardan bağımsızdır; içerik değiştiyse değişir.
+    """
+    msg = email.message_from_bytes(raw or b"")
+    out = []
+    for part in _walk_top(msg):
+        if part.is_multipart():
+            continue
+        data = part.get_payload(decode=True) or b""
+        if part.get_content_maintype() == "text":
+            data = data.replace(b"\r\n", b"\n").strip(b"\n")
+        out.append((part.get_content_type(), hashlib.sha256(data).hexdigest()))
+    return out
+
+
+def channel_checks(channel: str, raw: Optional[bytes], primary_raw: bytes,
+                   expect: Optional[dict], error: Optional[str] = None) -> list:
+    """İkincil kanaldan okunan mesaj için kontroller (adları kanal önekli)."""
+    tag = channel.upper()
+    if raw is None:
+        return [_check(f"{tag} kanalı: teslim", False,
+                       error or f"Mesaj IMAP'te var ama {tag} ile okunamadı / bulunamadı")]
+    checks = [_check(f"{tag} kanalı: teslim", True, f"Mesaj {tag} ile okundu ({len(raw)} bayt)")]
+    same = fingerprint(raw) == fingerprint(primary_raw)
+    checks.append(_check(
+        f"{tag} kanalı: içerik IMAP ile aynı", same,
+        "Tüm parçalar IMAP'ten okunanla bayt düzeyinde aynı" if same else
+        f"{tag} ile okunan içerik IMAP'tekinden FARKLI — sunucu bu protokolde mesajı değiştiriyor"))
+    if expect:
+        for c in verify(expect, raw):
+            if c["name"].startswith(HARD) and not c["passed"]:
+                checks.append({**c, "name": c["name"].replace(HARD, f"{HARD}{tag} kanalı: ", 1)})
+    return checks
+
+
+def apply_channel_checks(analysis: dict, checks: list) -> dict:
+    """Kanal kontrollerini karara işler: kesin bir kanal hatası senaryoyu FAIL yapar."""
+    out = dict(analysis)
+    out["checks"] = list(analysis.get("checks") or []) + checks
+    failed = [c for c in checks if c["name"].startswith(HARD) and not c["passed"]]
+    if failed:
+        out["passed"] = False
+        out["issues"] = list(analysis.get("issues") or []) + [
+            f"{c['name']}: {c['detail']}" for c in failed]
+        out["summary"] = (str(analysis.get("summary") or "") + " | Kanal hatası: "
+                          + "; ".join(c["name"].replace(HARD, "") for c in failed)).strip(" |")
+    return out

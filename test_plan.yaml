@@ -1,0 +1,92 @@
+# ============================================================
+# test_plan.yaml — Test planı: yollar · istemciler · kademeler
+#
+# Etkinleştirmek için config.yaml → test.plan: "test_plan.yaml"
+# (ya da: python main.py --plan test_plan.yaml)
+#
+# Mesaj YOL başına bir kez gönderilir. Alan sunucudaki istemcilerin
+# protokolü otomatik okunabiliyorsa (imap, pop3) mesaj o kanaldan da okunup
+# doğrulanır. Ekrandaki görünüm Manuel Doğrulama'da istemci başına sorulur.
+# ============================================================
+
+# Gerçek istemciler: hangi sunucudaki kutuya, hangi protokolle erişiyorlar?
+#   erisim: imap | pop3 | activesync | web
+#   (activesync = Z-Push; otomatik okuma henüz yok → yalnızca manuel doğrulama)
+istemciler:
+  outlook-masaustu:
+    ad: "Outlook Masaüstü"
+    sunucu: ems
+    erisim: pop3            # çoğunluk POP3 + SMTP
+    kritik: true
+    surum: ""               # ör. "Outlook 2021 (16.0.x)" — raporda görünür
+  android-gmail:
+    ad: "Gmail (Android)"
+    sunucu: ems
+    erisim: imap
+    surum: ""
+  ipad-mail:
+    ad: "iPad Mail"
+    sunucu: ems
+    erisim: activesync      # Z-Push üzerinden
+    surum: ""
+
+# Yollar: gonderen/alan config.yaml'daki sunucu bölümleridir (ems|gmail|outlook).
+# Ağırlık kurum içi (EMS ↔ EMS); Gmail ve Outlook/O365 dış dünyayı temsil eder.
+yollar:
+  - {ad: "EMS → EMS (kurum içi)",   gonderen: ems,     alan: ems,     kademe: duman}
+  - {ad: "Gmail → EMS (dışarıdan)", gonderen: gmail,   alan: ems,     kademe: duman}
+  - {ad: "EMS → Gmail (dışarıya)",  gonderen: ems,     alan: gmail,   kademe: regresyon}
+  - {ad: "Outlook/O365 → EMS",      gonderen: outlook, alan: ems,     kademe: regresyon}
+  - {ad: "EMS → Outlook/O365",      gonderen: ems,     alan: outlook, kademe: tam}
+
+# Kademeler kümülatiftir: regresyon = duman + aşağıdakiler; tam = hepsi.
+kademeler:
+  duman:
+    - plain_text
+    - attachment
+    - inline_image
+    - enc_quoted_printable
+    - priority_high
+  regresyon:
+    - multi_attachment
+    - reply_chain
+    - forward
+    - html_table
+    - i18n
+    - calendar_invite
+    - enc_base64
+    - enc_8bit
+    - charset_iso8859_9
+    - header_encoding
+    - priority_low
+    - cc_reply_to
+    - smtp_transparency
+    - nested_multipart
+  tam:
+    - complex_html
+    - smime
+    - charset_windows_1254
+    - read_receipt
+    - custom_headers
+    - large_attachment
+    - html_links
+
+# İstemcide ELLE bakılacak senaryolar (görünümü istemciye bağlı olanlar).
+# Bu satırı silerseniz tüm senaryolar her istemci için sorulur.
+istemci_senaryolari:
+  - plain_text
+  - attachment
+  - inline_image
+  - reply_chain
+  - html_table
+  - complex_html
+  - i18n
+  - calendar_invite
+  - charset_iso8859_9
+  - header_encoding
+  - priority_high
+  - priority_low
+  - read_receipt
+  - cc_reply_to
+  - nested_multipart
+  - html_links

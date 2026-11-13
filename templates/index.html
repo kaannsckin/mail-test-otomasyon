@@ -654,6 +654,22 @@ input.has-value{border-color:rgba(0,255,148,.4)}
 
     <!-- RUNNER -->
     <div class="page" id="page-runner">
+      <div class="card" id="planCard" style="display:none">
+        <div class="card-header"><span class="card-title">🗺 Test Planı <span id="planFile" style="color:var(--muted);font-family:var(--mono);text-transform:none;letter-spacing:0"></span></span></div>
+        <div class="card-body">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Kademe</label>
+              <select id="planTier" onchange="loadCombinations()"></select>
+            </div>
+            <div class="form-group">
+              <label>Ne güncellendi? (etki)</label>
+              <select id="planImpact" onchange="loadCombinations()"></select>
+            </div>
+          </div>
+          <p style="font-size:12px;color:var(--muted);margin-top:12px;line-height:1.6" id="planHint"></p>
+        </div>
+      </div>
       <div class="card">
         <div class="card-header">
           <span class="card-title">🔀 Kombinasyon Seçimi</span>
@@ -1656,8 +1672,34 @@ function stopMFAPoll() { clearInterval(mfaPollInterval); closeMFAModal(); }
 // ── COMBINATIONS ───────────────────────────────────────────────────
 let allCombinations = [];
 
+// ── TEST PLANI ─────────────────────────────────────────────────────
+// test.plan tanımlıysa kombinasyonlar CSV yerine plandaki yollardır;
+// kademe ve "ne güncellendi" seçimi hangi yolların koşacağını belirler.
+let planActive = false;
+async function loadPlan() {
+  const res = await api('/api/plan');
+  planActive = !!(res.ok && res.active);
+  document.getElementById('planCard').style.display = (res.active ? 'block' : 'none');
+  if (!res.active) return;
+  if (!res.ok) { document.getElementById('planHint').innerHTML = '<span style="color:var(--danger)">Plan hatalı: ' + esc(res.error) + '</span>'; return; }
+  document.getElementById('planFile').textContent = '· ' + res.file;
+  document.getElementById('planTier').innerHTML = res.tiers.map(t =>
+    `<option value="${esc(t.key)}" ${t.key === 'tam' ? 'selected' : ''}>${esc(t.label)} — ${t.route_count} yol × ${t.scenario_count} senaryo</option>`).join('');
+  document.getElementById('planImpact').innerHTML = '<option value="">Tümü (etki filtresi yok)</option>' + res.impacts.map(i =>
+    `<option value="${esc(i.key)}">${i.kind === 'client' ? 'İstemci: ' : 'Sunucu: '}${esc(i.label)}</option>`).join('');
+  document.getElementById('planHint').innerHTML = 'İstemciler: ' + res.clients.map(c =>
+    `<b>${esc(c.name)}</b> (${esc(c.server.toUpperCase())} · ${esc(c.access)}${c.critical ? ' · <span style="color:var(--warn)">kritik</span>' : ''})`).join(' · ')
+    + '<br>Mesaj yol başına bir kez gönderilir; imap/pop3 kanallarından otomatik okunur, görünüm istemci başına Manuel Doğrulama\'da sorulur.';
+}
+function planQuery() {
+  if (!planActive) return {};
+  const q = {tier: document.getElementById('planTier').value};
+  if (document.getElementById('planImpact').value) q.impact = document.getElementById('planImpact').value;
+  return q;
+}
+
 async function loadCombinations() {
-  const res = await api('/api/combinations');
+  const res = await api('/api/combinations?' + new URLSearchParams(planQuery()));
   if (!res.ok) { toast(res.error, 'err'); return; }
   if (res.warning) toast('⚠️ ' + res.warning, 'err');
   allCombinations = res.combinations;
@@ -1670,8 +1712,8 @@ function renderComboGrid(combos) {
     <div class="combo-card ${selectedCombos.has(c.index)||selectedCombos.has('all')?'selected':''}"
          onclick="toggleCombo(${c.index},this)">
       <div class="combo-label">🔀 ${esc(c.label)}</div>
-      <div class="combo-meta">Alan: <b>${esc(c.receiver_server)}</b>/${esc(c.receiver_client)}<br>Gönderen: <b>${esc(c.sender_server)}</b>/${esc(c.sender_client)}</div>
-      <span class="combo-badge">${esc(c.step_count)} adım</span>
+      <div class="combo-meta">Alan: <b>${esc(c.receiver_server)}</b>/${esc(c.receiver_client)}<br>Gönderen: <b>${esc(c.sender_server)}</b>/${esc(c.sender_client)}${c.channels ? '<br>Okuma kanalları: <b>' + esc(c.channels.join(' + ')) + '</b>' : ''}</div>
+      <span class="combo-badge">${esc(c.step_count)} ${c.channels ? 'mesaj · ' + esc(c.tier) : 'adım'}</span>
     </div>`).join('');
 }
 
@@ -1728,7 +1770,7 @@ async function loadScenarios() {
 async function startRun() {
   // Formdaki kaydedilmemiş değişiklikler de koşuya yansısın: önce kaydet.
   if (!(await saveConfig(true))) return;
-  const body = { dry_run: document.getElementById('runMode').value === 'dry_run' };
+  const body = { dry_run: document.getElementById('runMode').value === 'dry_run', ...planQuery() };
   if (!selectedCombos.has('all') && selectedCombos.size > 0) body.combo = [...selectedCombos].sort((a,b)=>a-b);
   if (selectedScenario !== 'all') body.scenario = selectedScenario;
   const res = await api('/api/run/start', {
@@ -1923,8 +1965,8 @@ function mvRenderItem() {
       <div>${autoBadge}</div>
     </div>
     <div class="mv-find">
-      📱 <b>${esc(item.receiver_client || 'Alıcı istemci')}</b> uygulamasında (<b>${esc(item.receiver_server)}</b> hesabı) konusunda şu kod geçen mesajı açın:
-      <code>#${esc(item.id)}</code>
+      📱 <b>${esc(item.receiver_client || 'Alıcı istemci')}</b>${item.client ? ' <span style="color:var(--muted)">(' + esc(item.client.access) + (item.client.version ? ' · ' + esc(item.client.version) : '') + ')</span>' + (item.client.critical ? ' <span style="color:var(--warn);font-weight:700">KRİTİK</span>' : '') : ''} uygulamasında (<b>${esc(String(item.receiver_server).toUpperCase())}</b> hesabı) konusunda şu kod geçen mesajı açın:
+      <code>#${esc(item.code || item.id)}</code>
       <div style="font-size:11px;color:var(--muted);font-family:var(--mono);margin-top:4px">${esc(item.subject)}</div>
       ${item.delivered ? '' : '<div style="color:var(--warn);margin-top:6px">⚠️ Otomasyon bu mesajı IMAP\'te bulamadı — istemcide de görünmüyorsa adımları KALDI olarak işaretleyin.</div>'}
     </div>
@@ -1998,8 +2040,8 @@ function mvRenderList() {
     const mismatch = i.manual && st !== 'na' && ((st === 'pass') !== (i.auto_status === 'PASS'));
     return `<div class="mv-list-item ${i.id === mvCurrent ? 'current' : ''}" data-id="${esc(i.id)}" onclick="mvSelect(this.dataset.id)">
       <span class="mv-tag ${st}">${st === 'pending' ? 'BEKLİYOR' : MV_LABEL[st]}</span>
-      <span style="font-family:var(--mono);color:var(--muted)">#${esc(i.id)}</span>
-      <span style="flex:1">${esc(i.scenario_label)} <span style="color:var(--muted)">· ${esc(i.combination)}</span></span>
+      <span style="font-family:var(--mono);color:var(--muted)">#${esc(i.code || i.id)}</span>
+      <span style="flex:1">${esc(i.scenario_label)}${i.client ? ' <b style="color:var(--accent)">@ ' + esc(i.client.name) + '</b>' : ''} <span style="color:var(--muted)">· ${esc(i.combination)}</span></span>
       ${mismatch ? '<span class="mv-mismatch">⚠ oto ' + esc(i.auto_status) + '</span>' : '<span style="color:var(--muted);font-family:var(--mono);font-size:10px">oto ' + esc(i.auto_status) + '</span>'}
     </div>`;
   }).join('') || '<div style="padding:14px;color:var(--muted);font-size:12px">Bekleyen madde yok.</div>';
@@ -2080,7 +2122,7 @@ function toast(msg, type='info') {
 }
 
 // ── DASHBOARD ──────────────────────────────────────────────────────
-async function loadDashboard() { await loadCombinations(); await loadResults(); }
+async function loadDashboard() { await loadPlan(); await loadCombinations(); await loadResults(); }
 function refreshAll() { loadConfig(); loadDashboard(); toast('↻ Yenilendi','info'); }
 
 // ── INIT ───────────────────────────────────────────────────────────
