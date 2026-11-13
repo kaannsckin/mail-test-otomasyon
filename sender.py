@@ -581,6 +581,32 @@ class MailSender:
         }
 
     # ------------------------------------------------------------------ #
+    #  Spec tabanlı senaryolar (scenario_catalog.py)
+    # ------------------------------------------------------------------ #
+    def send_built(self, built, to_address: str, scenario: str) -> dict:
+        """Katalogdaki bir senaryonun hazır kurduğu mesajı gönderir.
+
+        Mesajın gövdesi/başlıkları senaryoya aittir; burada yalnızca zarf
+        başlıkları (Message-ID, Date) eklenir. Dönen ``expect`` sözlüğü
+        verifier.py'nin deterministik karşılaştırması içindir.
+        """
+        msg = built.msg
+        msg_id = make_msgid()
+        msg["Message-ID"] = msg_id
+        msg["Date"] = formatdate(localtime=True)
+        msg["X-Test-Automation"] = "mail-otomasyon-v1"
+        if "From" not in msg:
+            msg["From"] = self.from_address
+        if "To" not in msg:
+            msg["To"] = to_address
+
+        recipients = ", ".join([to_address, *built.extra_recipients])
+        sent_at = self._send(msg, recipients)
+        logger.info(f"[{scenario.upper()}] Gönderildi → {to_address} | msg_id={msg_id}")
+        return {"msg_id": msg_id, "sent_at": sent_at, "scenario": scenario,
+                **built.meta, "expect": built.expect}
+
+    # ------------------------------------------------------------------ #
     #  İç yardımcılar
     # ------------------------------------------------------------------ #
     def _send(self, msg, to_address: str) -> float:

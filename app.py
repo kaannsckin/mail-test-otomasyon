@@ -74,6 +74,11 @@ print(f"📁 Veri dizini: {DATA_DIR}")
 # (çözümlenmiş değer: DATA_DIR yazılamadığı için /tmp'ye düşülmüş olabilir).
 os.environ["DATA_DIR"] = str(DATA_DIR)
 from auth_manager import mfa_manager, generate_totp, totp_remaining_seconds  # noqa: E402
+import manual_verify  # noqa: E402
+from scenario_catalog import (  # noqa: E402
+    GROUP_LABELS, catalog as scenario_catalog_items, is_valid_scenario_filter,
+    scenario_label,
+)
 
 run_state = {
     "running": False,
@@ -918,8 +923,9 @@ def start_run():
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "Geçersiz kombinasyon seçimi"}), 400
     scenario = body.get("scenario")
-    if scenario is not None and (not isinstance(scenario, str)
-                                 or (scenario and scenario not in _supported_scenarios())):
+    # Tek anahtar, virgüllü liste ya da grup ('group:kodlama') kabul edilir.
+    if scenario is not None and (not isinstance(scenario, str) or (
+            scenario and not is_valid_scenario_filter(scenario, _supported_scenarios()))):
         return jsonify({"ok": False, "error": "Geçersiz senaryo tipi"}), 400
 
     cmd = [sys.executable, str(BASE_DIR / "main.py"), "--config", str(CONFIG_PATH)]
@@ -1132,6 +1138,103 @@ def latest_results():
     except (OSError, csv.Error) as e:
         return jsonify({"ok": False, "error": f"Sonuç dosyası okunamadı ({files[0].name}): {e}"})
     return jsonify({"ok": True, "results": rows, "file": files[0].name})
+
+# ── SENARYO KATALOĞU ────────────────────────────────────────────
+@app.route("/api/scenarios")
+def list_scenarios():
+    return jsonify({"ok": True, "scenarios": scenario_catalog_items(),
+                    "groups": [{"key": k, "label": v} for k, v in GROUP_LABELS.items()]})
+
+
+# ── MANUEL DOĞRULAMA ────────────────────────────────────────────
+def _manual_paths() -> tuple:
+    csv_path = REPORTS_DIR / _results_csv_name()
+    return manual_verify.results_json_path(csv_path), manual_verify.store_path(csv_path)
+
+
+def _report_html_name() -> str:
+    try:
+        raw = (_read_config().get("test") or {}).get("report_output")
+    except ConfigError:
+        raw = None
+    return Path(str(raw or "test_report.html")).name
+
+
+@app.route("/api/manual/queue")
+def manual_queue():
+    """Son koşunun manuel doğrulanabilir maddeleri + kayıtlı manuel sonuçlar."""
+    json_path, store_file = _manual_paths()
+    data = manual_verify.load_results_json(json_path)
+    store = manual_verify.load_store(store_file)
+    items = []
+    for r in data["results"]:
+        if not manual_verify.is_eligible(r):
+            continue
+        analysis = r.get("analysis") if isinstance(r.get("analysis"), dict) else {}
+        entry = store.get(str(r["result_id"]))
+        items.append({
+            "id": str(r["result_id"]),
+            "combination": r.get("combination", ""),
+            "scenario_key": r.get("scenario_key", ""),
+            "scenario_label": scenario_label(str(r.get("scenario_key", ""))),
+            "scenario_type": r.get("scenario_type", ""),
+            "receiver_client": r.get("receiver_client", ""),
+            "receiver_server": r.get("receiver_server", ""),
+            "subject": r.get("subject", ""),
+            "test_time": r.get("test_time", ""),
+            "delivered": bool(r.get("received")),
+            "auto_status": manual_verify.auto_status(r),
+            "auto_summary": str(analysis.get("summary") or ""),
+            "auto_checks": [c for c in (analysis.get("checks") or []) if isinstance(c, dict)][:40],
+            "manual_steps": [str(s) for s in (r.get("manual_steps") or [])],
+            "manual": entry if isinstance(entry, dict) else None,
+        })
+    return jsonify({"ok": True, "items": items, "run": data["run"],
+                    "stats": manual_verify.agreement(data["results"], store)})
+
+
+@app.route("/api/manual/submit", methods=["POST"])
+def manual_submit():
+    """Bir maddenin adım adım manuel sonucunu kaydeder ve raporları günceller."""
+    body = _json_body()
+    result_id = str(body.get("id") or "")
+    json_path, store_file = _manual_paths()
+    data = manual_verify.load_results_json(json_path)
+    result = next((r for r in data["results"]
+                   if str(r.get("result_id")) == result_id and manual_verify.is_eligible(r)), None)
+    if result is None:
+        return jsonify({"ok": False, "error": "Bu madde son koşunun sonuçlarında bulunamadı"}), 404
+    steps = body.get("steps")
+    if not isinstance(steps, list):
+        return jsonify({"ok": False, "error": "steps bir liste olmalı"}), 400
+    try:
+        entry = manual_verify.build_entry(
+            result, [s if isinstance(s, dict) else {} for s in steps], str(body.get("note") or ""))
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    try:
+        store = manual_verify.save_entry(store_file, result_id, entry)
+    except OSError as e:
+        return jsonify({"ok": False, "error": f"Kayıt yazılamadı: {e}"}), 500
+
+    # Raporları manuel sütunlarla yeniden üret (koşu sürüyorsa main.py bitişte
+    # zaten yazacak — yarım rapor üretip onunla yarışmayalım).
+    report_error = None
+    if not run_state["running"] and data["run"].get("finished"):
+        from reporter import generate_csv_results, generate_html_report
+        manual = {str(r.get("result_id")): store[str(r.get("result_id"))]
+                  for r in data["results"] if str(r.get("result_id")) in store}
+        try:
+            generate_html_report(data["results"], str(REPORTS_DIR / _report_html_name()),
+                                 note=str(data["run"].get("note") or ""), manual=manual)
+            generate_csv_results(data["results"], str(REPORTS_DIR / _results_csv_name()),
+                                 manual=manual)
+        except Exception as e:  # noqa: BLE001 — kayıt alındı; rapor hatası ayrıca bildirilir
+            report_error = str(e)
+    return jsonify({"ok": True, "entry": entry,
+                    "stats": manual_verify.agreement(data["results"], store),
+                    **({"report_error": report_error} if report_error else {})})
+
 
 @app.route("/")
 def index():

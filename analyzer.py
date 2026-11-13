@@ -93,6 +93,39 @@ def _failure(summary: str, issue: str, check_name: str = "Analiz") -> dict:
     }
 
 
+class NullAnalyzer:
+    """``analysis.provider: none`` — LLM çağrısı yapılmaz.
+
+    Katalog senaryolarında karar zaten deterministik kontrollere aittir
+    (verifier.py). Elle yazılmış ilk 11 senaryoda ise yalnızca TESLİM
+    doğrulanır; içerik kontrolü yapılmadığı sonuçta açıkça belirtilir.
+    Dış API'ye çıkışı olmayan (kapalı ağ) kurulumlar için.
+    """
+    provider = "none"
+    model = "yok"
+
+    def analyze(self, scenario_type: str, send_meta: dict,
+                received_msg: Optional[dict], combination: dict) -> dict:
+        if received_msg is None:
+            return {
+                "passed": False,
+                "checks": [{"name": "Mesaj Alımı", "passed": False,
+                            "detail": "Mesaj belirlenen sürede alınamadı (timeout)"}],
+                "summary": "Mesaj teslim edilemedi — timeout.",
+                "confidence": "HIGH",
+            }
+        return {
+            "passed": True,
+            "confidence": "LOW",
+            "checks": [{"name": "[Kesin] Teslim", "passed": True,
+                        "detail": "Mesaj alıcı kutusunda Message-ID ile bulundu"}],
+            "summary": "Mesaj teslim edildi. LLM analizi kapalı — bu senaryoda içerik "
+                       "kontrolü YAPILMADI (yalnızca teslim doğrulandı).",
+            "issues": [],
+            "recommendations": [],
+        }
+
+
 class MailAnalyzer:
     def __init__(self, api_key: str, model: Optional[str] = None,
                  provider: str = "claude", effort: Optional[str] = None):
@@ -169,7 +202,10 @@ class MailAnalyzer:
         parts_str = _dumps(received_msg.get("parts", [])[:5])
         attachments_str = _dumps(received_msg.get("attachments", []))
         inline_str = _dumps(received_msg.get("inline_images", []))
-        send_meta_str = _dumps({k: v for k, v in send_meta.items() if k != "raw_bytes"})
+        # 'expect' (gövdenin tam metni vb.) deterministik doğrulayıcı içindir;
+        # prompt'u şişirmesin.
+        send_meta_str = _dumps({k: v for k, v in send_meta.items()
+                                if k not in ("raw_bytes", "expect", "check_prompt")})
 
         scenario_checks = {
             "plain_text": """
@@ -295,7 +331,9 @@ Kontrol edilecekler:
         # Eski ad — CSV'de 'forward_chain' geçen kurulumlar için
         scenario_checks["forward_chain"] = scenario_checks["forward"]
 
-        checks = scenario_checks.get(scenario_type, "Genel mesaj iletim kontrolü yap.")
+        # Katalog (spec) senaryoları kontrol listesini send_meta ile getirir.
+        checks = scenario_checks.get(scenario_type) or send_meta.get("check_prompt") \
+            or "Genel mesaj iletim kontrolü yap."
 
         return f"""Sen bir mail protokolü test uzmanısın. Aşağıdaki MIME verisini analiz et ve her kontrol noktasını değerlendir.
 

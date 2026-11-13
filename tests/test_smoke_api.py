@@ -268,7 +268,7 @@ class TestCombinationsEndpoint:
         monkeypatch.setattr(app_module, "CONFIG_PATH", cfg_path)
         resp = flask_client.get("/api/combinations")
         for combo in resp.get_json()["combinations"]:
-            assert len(combo["scenarios"]) == 11
+            assert len(combo["scenarios"]) == 26
 
     def test_combinations_invalid_csv_path(self, flask_client, tmp_path, monkeypatch):
         import app as app_module

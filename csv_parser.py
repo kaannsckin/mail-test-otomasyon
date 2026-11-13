@@ -9,6 +9,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import List, Dict
 
+from scenario_catalog import SPEC_SCENARIOS
+
 logger = logging.getLogger(__name__)
 
 SCENARIO_TYPE_MAP = {
@@ -24,6 +26,8 @@ SCENARIO_TYPE_MAP = {
     "HTML Tablo Render Testi": "html_table",
     "Çoklu Eklenti (Multi Attachment)": "multi_attachment",
 }
+# Katalog (spec) senaryoları — scenario_catalog.py tek doğruluk kaynağıdır.
+SCENARIO_TYPE_MAP.update({spec.csv_name: key for key, spec in SPEC_SCENARIOS.items()})
 
 # Orkestratörün gerçekten çalıştırabildiği senaryolar. CSV'ye bu kümenin
 # dışında bir tip girilirse run_scenario "Bilinmeyen senaryo tipi" ile
@@ -32,7 +36,7 @@ SUPPORTED_SCENARIOS = frozenset({
     "plain_text", "attachment", "inline_image", "smime", "reply_chain",
     "calendar_invite", "i18n", "complex_html", "html_table", "forward",
     "forward_chain", "multi_attachment",
-})
+}) | frozenset(SPEC_SCENARIOS)
 
 
 @dataclass

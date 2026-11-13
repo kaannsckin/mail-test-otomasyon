@@ -663,7 +663,7 @@ class TestMainCli:
              patch.object(main_mod, "generate_csv_results"):
             rs.return_value = {"analysis": {"passed": True}}
             _run_cli(["--config", str(cli_env), "--combo", "0"])
-        assert rs.call_count == 11  # CSV'deki 11 senaryo tipi
+        assert rs.call_count == 26  # CSV'deki 26 senaryo tipi
 
     def test_scenario_filter_limits_run(self, cli_env):
         with patch.object(main_mod, "MailSender"), patch.object(main_mod, "MailReceiver"), \
@@ -685,7 +685,7 @@ class TestMainCli:
             rs.return_value = {"analysis": {"passed": True}}
             _run_cli(["--config", str(cli_env), "--combo", "0"])
         assert html.called and csvr.called
-        assert len(html.call_args[0][0]) == 11
+        assert len(html.call_args[0][0]) == 26
 
     def test_scenario_exception_does_not_abort_run(self, cli_env):
         calls = {"n": 0}
@@ -706,7 +706,7 @@ class TestMainCli:
         # Regresyon: patlayan senaryo eskiden rapordan SESSİZCE düşüyordu
         # ("126/126 PASS" ama 54 senaryo kayıp). Artık FAIL olarak raporlanır.
         results = html.call_args[0][0]
-        assert len(results) == 11
+        assert len(results) == 26
         failed = [r for r in results if r["analysis"]["passed"] is False]
         assert len(failed) == 1 and "beklenmeyen" in failed[0]["analysis"]["summary"]
         assert exc.value.code == main_mod.EXIT_TEST_FAILURES
@@ -729,7 +729,7 @@ class TestMainCli:
         assert exc.value.code == main_mod.EXIT_TEST_FAILURES
         results = html.call_args[0][0]
         assert csv_out.call_args[0][0] == results
-        assert len(results) == 11
+        assert len(results) == 26
         for r in results:
             assert r["analysis"]["passed"] is False
             assert "config hatası" in r["analysis"]["summary"]
@@ -781,7 +781,7 @@ class TestMainCli:
         assert "Hiçbir test sonucu üretilemedi" in caplog.text
 
     def test_pass_rate_excludes_skipped(self, cli_env, caplog):
-        # CSV'de kombinasyon başına 11 senaryo var: 6 PASS, 3 FAIL, 2 SKIP
+        # 'temel' grubunda 11 senaryo var: 6 PASS, 3 FAIL, 2 SKIP
         results = (
             [{"analysis": {"passed": True}}] * 6
             + [{"analysis": {"passed": False}}] * 3
@@ -794,7 +794,7 @@ class TestMainCli:
              patch.object(main_mod, "generate_html_report"), \
              patch.object(main_mod, "generate_csv_results"), \
              caplog.at_level("INFO"), pytest.raises(SystemExit) as exc:
-            _run_cli(["--config", str(cli_env), "--combo", "0"])
+            _run_cli(["--config", str(cli_env), "--combo", "0", "--scenario", "group:temel"])
         assert exc.value.code == main_mod.EXIT_TEST_FAILURES   # 3 FAIL var
         # Atlananlar paydaya girmemeli: 6/9 = %66.7 (11 değil)
         assert "Sonuç: 6/9 PASS (66.7%)" in caplog.text
@@ -902,7 +902,7 @@ class TestCrashRegressions:
             _run_cli(["--config", str(cli_env), "--combo", "0"])
         assert len(calls) == 1                      # yalnızca ilk senaryo denendi
         results = html.call_args[0][0]
-        assert len(results) == 11                   # kalanlar FAIL olarak raporlandı
+        assert len(results) == 26                   # kalanlar FAIL olarak raporlandı
         assert all(r["analysis"]["passed"] is False for r in results)
         assert "yeniden denenmedi" in results[1]["analysis"]["summary"]
         assert exc.value.code == main_mod.EXIT_TEST_FAILURES

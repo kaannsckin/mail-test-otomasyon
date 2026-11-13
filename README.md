@@ -11,7 +11,10 @@ Web arayüzü (Flask), 2FA/TOTP desteği ve otomatik MIME analizi içerir.
 mail_automation/
 ├── app.py                # Flask web arayüzü — buradan başlat
 ├── main.py               # CLI orkestratör (arayüz veya doğrudan çalıştırılabilir)
-├── sender.py             # SMTP gönderim (11 senaryo tipi)
+├── sender.py             # SMTP gönderim (11 temel senaryo + katalog mesajları)
+├── scenario_catalog.py   # 15 katalog senaryosu: mesaj + beklenti + manuel adımlar
+├── verifier.py           # Deterministik (bayt düzeyi) doğrulama
+├── manual_verify.py      # Manuel doğrulama kayıtları, oto↔manuel uyum
 ├── receiver.py           # IMAP alım & MIME ayrıştırma
 ├── mail_transport.py     # SMTP/IMAP bağlantı + TLS ayarları (iç CA, 465 SSL)
 ├── analyzer.py           # Claude API analiz motoru
@@ -26,6 +29,8 @@ mail_automation/
 ├── scripts/
 │   ├── e2e_smoke.py      # Gerçek sunucuya duman testi
 │   └── extend_checklist.py  # Checklist CSV'sini senaryolarla genişletir
+├── docs/
+│   └── URUN_YOL_HARITASI.md  # Ürünleştirme planı, istemci testi stratejisi
 ├── templates/
 │   └── index.html        # Web arayüzü
 ├── test_files/           # Otomatik oluşturulur
@@ -71,6 +76,7 @@ Eğer `5000` doluysa uygulama otomatik olarak bir sonraki boş porta geçer (ör
 | **Güvenlik & 2FA** | Her sunucu için kimlik doğrulama yöntemi ve TOTP ayarları |
 | **Test Çalıştır** | Kombinasyon ve senaryo seçimi, normal/dry-run modu |
 | **Canlı Loglar** | SSE ile gerçek zamanlı terminal çıktısı |
+| **Manuel Doğrulama** | Alıcı istemcide (iOS Mail, Outlook…) adım adım kontrol: her adım için durum + not |
 | **Sonuçlar** | PASS/FAIL tablosu, güven seviyesi, özet |
 | **Raporlar** | HTML raporu görüntüle, CSV indir |
 
@@ -132,8 +138,10 @@ Her sunucu için 4 kimlik doğrulama yöntemi desteklenir:
 
 ## 📊 Test Senaryoları
 
-Her kombinasyon için **11 senaryo** çalıştırılır (18 kombinasyon × 11 senaryo ×
-5 kontrol noktası = 990 adım):
+Her kombinasyon için **26 senaryo** tanımlıdır (18 kombinasyon × 26 senaryo ×
+5 kontrol noktası = 2340 adım): 11 temel senaryo ve 15 katalog senaryosu.
+
+### Temel senaryolar (LLM analizi)
 
 | Senaryo | MIME Yapısı | Ne Test Eder |
 | --- | --- | --- |
@@ -149,13 +157,50 @@ Her kombinasyon için **11 senaryo** çalıştırılır (18 kombinasyon × 11 se
 | `calendar_invite` | `text/calendar` + `application/ics` | iTIP `METHOD=REQUEST`, VEVENT bütünlüğü, `invite.ics` eki |
 | `smime` | `multipart/signed` | Dijital imza (sertifika yoksa otomatik atlanır) |
 
-**Senaryo alt kümesi çalıştırma** — tam koşu 990 adım olduğu için genelde
+### Katalog senaryoları (deterministik doğrulama)
+
+Bu senaryolar mesajı gönderirken bir **beklenti** kaydeder (gövdenin tam metni,
+eklerin SHA-256 özeti, korunması gereken başlıklar) ve alınan ham mesajı bununla
+**bayt düzeyinde** karşılaştırır. Karar LLM'e değil bu karşılaştırmaya aittir:
+aynı mesaj her koşuda aynı sonucu verir. LLM yalnızca yorum katar; farklı
+düşünürse karar değişmez, güven `MEDIUM`'a iner ve görüşü raporda gösterilir.
+
+| Grup | Senaryo | Ne Test Eder |
+| --- | --- | --- |
+| `kodlama` | `enc_quoted_printable` | QP gövde: `=` kaçışı, yumuşak satır sonu, satır sonu boşluğu |
+| `kodlama` | `enc_base64` | Base64 gövde, semboller (₺ € © ™) |
+| `kodlama` | `enc_8bit` | Ham 8bit UTF-8; üst bit kırpılması, 8bit → QP dönüşümü |
+| `kodlama` | `charset_iso8859_9` | Latin-5 gövde **ve** konu; Latin-1 sanılma hatası |
+| `kodlama` | `charset_windows_1254` | cp1254'e özgü karakterler (“ ” — … €) |
+| `kodlama` | `header_encoding` | RFC 2047 Q-kodlu, katlanmış uzun konu; virgüllü görünen ad; RFC 2231 uzun dosya adı |
+| `oncelik` | `priority_high` | Yüksek öncelik: `X-Priority`, `Importance`, `Priority`, `X-MSMail-Priority` |
+| `oncelik` | `priority_low` | Düşük öncelik başlıkları |
+| `oncelik` | `read_receipt` | Okundu bilgisi isteği (MDN) ve `Sensitivity` |
+| `adresleme` | `cc_reply_to` | Cc, gönderenden farklı Reply-To, Türkçe görünen adlar |
+| `adresleme` | `custom_headers` | `X-` başlıkları, `List-Id` / `List-Unsubscribe`, `Auto-Submitted` |
+| `icerik` | `smtp_transparency` | Nokta doldurma, `From ` satırı, 960 karakterlik satır, boş satırlar |
+| `icerik` | `large_attachment` | Büyük ikili ek (varsayılan 5 MB), SHA-256 ile bütünlük |
+| `icerik` | `nested_multipart` | `mixed › related › alternative`: HTML + gömülü görsel + PDF eki |
+| `icerik` | `html_links` | `href` değerlerinin değişmemesi (URL yeniden yazma tespiti) |
+
+Kontrol adlarındaki önekler: **`[Kesin]`** başarısızsa senaryo FAIL olur;
+**`[Bilgi]`** kararı değiştirmez, sunucunun meşru dönüşümünü kaydeder (ör.
+"8bit gönderildi, quoted-printable alındı") — sürümler arası fark izlemek için.
+
+**Senaryo alt kümesi çalıştırma** — tam koşu 468 mesaj olduğu için genelde
 filtreleyerek çalışmak istersiniz:
 
 ```bash
-python main.py --scenario calendar_invite       # yalnızca takvim daveti
-python main.py --combo 0 --scenario i18n        # tek kombinasyon + tek senaryo
+python main.py --scenario calendar_invite              # tek senaryo
+python main.py --combo 0 --scenario i18n               # tek kombinasyon + tek senaryo
+python main.py --scenario enc_base64,priority_high     # birden fazla senaryo
+python main.py --scenario group:kodlama                # bir grup (temel|kodlama|oncelik|adresleme|icerik)
+python main.py --combo 0 --scenario group:oncelik --manual   # her senaryodan sonra manuel adımları sor
 ```
+
+**LLM'siz kip** — dış API'ye çıkışı olmayan ağlar için `config.yaml`'da
+`analysis.provider: none`. Katalog senaryoları tam doğrulanır; temel 11
+senaryoda yalnızca teslim doğrulanır ve bu, sonuçta açıkça belirtilir.
 
 > **S/MIME:** Altyapıda dijital imza sertifikası tanımlı değilse otomatik olarak
 > atlanır (`config.yaml` → `test.smime_cert_path` / `test.smime_key_path`).
@@ -175,7 +220,44 @@ test:
   # Takvim daveti
   calendar_duration_minutes: 30
   calendar_location: "Çevrimiçi Toplantı"
+
+  # Büyük ek senaryosu — sunucunun boyut sınırına göre ayarlayın
+  large_attachment_mb: 5
 ```
+
+---
+
+## 👁 Manuel Doğrulama (istemci tarafı)
+
+Otomasyon mesajı SMTP ile gönderir ve IMAP ile geri okur; yani **sunucudaki**
+mesajı görür. Alıcı istemcinin (iOS Mail, Outlook, Gmail uygulaması) mesajı
+ekranda nasıl gösterdiğini göremez: öncelik simgesi çıkıyor mu, gömülü görsel
+gövdede mi, davet düğmeleri var mı… Bu soruları her senaryo için tanımlı
+**manuel adımlar** yanıtlar.
+
+**Web arayüzü → Manuel Doğrulama:** gönderilen her mesaj bir maddedir.
+Sihirbaz mesajı istemcide bulmanız için konu satırındaki kodu (`#a1b2c3d4`)
+gösterir, adımları tek tek sorar. Sonraki maddeye geçmek için **her adımın
+durumu (Geçti / Kaldı / Uygulanamaz) zorunludur**, not isteğe bağlıdır. Koşu
+sürerken de biten maddeler listeye düşer.
+
+**Terminal:** `python main.py --manual` her senaryodan sonra aynı adımları sorar.
+
+Kayıtlar `reports/manual_verification.json`'da tutulur; HTML rapora "Manuel
+Doğrulama" sütunu, CSV'ye `Manuel Sonuç`, `Manuel Not`, `Oto/Manuel Uyumu`
+sütunları olarak işlenir.
+
+**Aracın kendisini doğrulamak:** her manuel kayıt otomatik kararla karşılaştırılır.
+
+| Durum | Anlamı |
+| --- | --- |
+| `UYUMLU` | Otomasyon ve insan aynı kararı verdi |
+| `ARAÇ KAÇIRDI` | Otomatik PASS, manuel KALDI — otomasyonun göremediği hata (en önemli sayı) |
+| `YANLIŞ ALARM` | Otomatik FAIL, manuel GEÇTİ — kontrol fazla katı |
+
+Uyum oranı sürümler boyunca %100'e yakın kaldıkça manuel adım örneklemeye
+indirilebilir. İstemci testlerinin otomasyonu için seçenekler ve ürünleştirme
+planı: [`docs/URUN_YOL_HARITASI.md`](docs/URUN_YOL_HARITASI.md).
 
 ### Checklist CSV'sini genişletme
 
@@ -198,10 +280,14 @@ CSV'den Senaryo Oku
   → plain_text / attachment / multi_attachment / inline_image
   → reply_chain / forward / html_table / complex_html
   → i18n / calendar_invite / smime
+  → katalog senaryoları (mesaj + beklenti)
        ↓
   Receiver (IMAP polling)
   → ham MIME ayrıştırma
   → headers, parts, attachments, inline_images
+       ↓
+  Verifier (yalnızca katalog senaryoları)
+  → beklenti ↔ ham mesaj, bayt düzeyinde → [Kesin] / [Bilgi] kontroller
        ↓
   Analyzer (Claude API)
   → senaryo tipine özel prompt
@@ -211,6 +297,9 @@ CSV'den Senaryo Oku
   Reporter
   → reports/test_report.html  (görsel)
   → reports/test_results.csv  (Sheets uyumlu)
+  → reports/test_results.json (tam sonuç; Manuel Doğrulama bunu okur)
+       ↓
+  Manuel Doğrulama (isteğe bağlı) → raporlara manuel sütunlar
 ```
 
 ---
@@ -271,7 +360,7 @@ anthropic:
   effort: "medium"                # low | medium | high — analiz derinliği/maliyet
 
 analysis:
-  provider: "claude"              # claude | gemini — analiz için kullanılacak LLM
+  provider: "claude"              # claude | gemini | none (LLM'siz, yalnızca kesin kontroller)
 
 gemini:                           # yalnızca provider: gemini iken gerekli
   api_key: ""                     # https://aistudio.google.com/apikey
@@ -305,7 +394,7 @@ modu uyuşmazlığı, DNS, kimlik doğrulama) Türkçe açıklar.
 ### Analiz modeli ve maliyet
 
 Varsayılan model **Claude Opus 5.5** (`claude-opus-5-5`). Her senaryo bir API
-çağrısıdır; tam matris (18 kombinasyon × 11 senaryo) ~200 çağrı yapar. Yanıtlar
+çağrısıdır; tam matris (18 kombinasyon × 26 senaryo) ~470 çağrı yapar. Yanıtlar
 JSON şemasıyla (yapılandırılmış çıktı) alınır ve doğrulanır; geçersiz/eksik
 karar asla PASS sayılmaz. Daha ekonomik koşu için arayüzden Sonnet 5.5 ya da
 Haiku 5.5 seçilebilir veya `effort: low` kullanılabilir.
@@ -429,7 +518,7 @@ python -m pytest
 python -m pytest --cov=. --cov-report=term-missing
 ```
 
-696 test, **%97 satır kapsamı** (çekirdek modüller %92-100). GitHub Actions üzerinde her push/PR
+1018 test (+ 30 tarayıcı testi), **%94 satır kapsamı** (tarayıcı testleri hariç). GitHub Actions üzerinde her push/PR
 için Python 3.10/3.11/3.12 matrisinde otomatik çalışır
 (`.github/workflows/tests.yml`).
 
@@ -445,6 +534,7 @@ için Python 3.10/3.11/3.12 matrisinde otomatik çalışır
 | `test_analyzer_errors.py` | Claude/Gemini API hata yolları (401, 429, 5xx, timeout, refusal) |
 | `test_ui.py` | **Tarayıcı testleri** — gezinme, secret gizliliği, form, log akışı, 2FA modal |
 | `test_new_scenarios.py` | Takvim daveti (ICS/iTIP), i18n, zengin HTML, forward, çoklu ek |
+| `test_catalog_scenarios.py` | 15 katalog senaryosu: sağlam mesajda PASS, benzetilmiş sunucu hasarında FAIL, meşru dönüşümde (8bit→QP, eklenen yasal uyarı) PASS; karar birleştirme, manuel doğrulama, LLM'siz kip |
 
 > S/MIME imzalama testleri sistemde `openssl` CLI yoksa otomatik atlanır.
 
@@ -457,7 +547,7 @@ için arayüz gerçek bir tarayıcıda test edilir. Playwright kurulu değilse
 ```bash
 pip install playwright
 playwright install chromium
-python -m pytest tests/test_ui.py        # 29 test, ~30 sn
+python -m pytest tests/test_ui.py        # 30 test, ~30 sn
 ```
 
 Kapsanan kritik davranışlar:

@@ -82,10 +82,51 @@ def _status_of(result: dict) -> str:
     return "PASS" if passed else "FAIL"
 
 
-def generate_html_report(results: List[dict], output_path: str, note: str = ""):
+_MANUAL_BADGES = {
+    "pass": ("pass", "👁 GEÇTİ"),
+    "fail": ("fail", "👁 KALDI"),
+    "na": ("skip", "👁 UYGULANAMAZ"),
+}
+
+
+def _manual_entry(manual, result) -> dict:
+    """Sonucun manuel doğrulama kaydı (yoksa boş sözlük)."""
+    if not isinstance(manual, dict) or not isinstance(result, dict):
+        return {}
+    entry = manual.get(str(result.get("result_id") or ""))
+    return entry if isinstance(entry, dict) else {}
+
+
+def _manual_note(entry: dict) -> str:
+    parts = [_text(entry.get("note"))]
+    steps = entry.get("steps") if isinstance(entry.get("steps"), list) else []
+    for i, step in enumerate(steps, start=1):
+        if not isinstance(step, dict):
+            continue
+        if step.get("note") or step.get("status") == "fail":
+            label = {"pass": "GEÇTİ", "fail": "KALDI", "na": "UYGULANAMAZ"}.get(
+                step.get("status"), "?")
+            parts.append(f"[{i}. {label}] {_text(step.get('text'))}"
+                         + (f" — {_text(step.get('note'))}" if step.get("note") else ""))
+    return " | ".join(p for p in parts if p)
+
+
+def _agreement_label(status: str, entry: dict) -> str:
+    """Otomatik ve manuel karar uyumu — aracın kendi doğrulaması."""
+    overall = entry.get("overall")
+    if overall not in ("pass", "fail") or status == "SKIP":
+        return ""
+    if (overall == "pass") == (status == "PASS"):
+        return "UYUMLU"
+    return "ARAÇ KAÇIRDI" if status == "PASS" else "YANLIŞ ALARM"
+
+
+def generate_html_report(results: List[dict], output_path: str, note: str = "",
+                         manual: dict = None):
     """Test sonuçlarından profesyonel HTML rapor üretir.
 
     ``note`` doluysa (ör. koşu durduruldu) raporun başında uyarı olarak gösterilir.
+    ``manual``: result_id → manuel doğrulama kaydı (manual_verify.py).
     """
     note_html = (
         '<div style="margin:16px 0;padding:12px 16px;border-radius:8px;background:#fff4e5;'
@@ -137,6 +178,19 @@ def generate_html_report(results: List[dict], output_path: str, note: str = ""):
                 issues = [issues] if issues else []
             issues_html = "".join(f"<li>⚠️ {_esc(i)}</li>" for i in issues) if issues else ""
 
+            entry = _manual_entry(manual, r)
+            if entry.get("overall") in _MANUAL_BADGES:
+                m_class, m_label = _MANUAL_BADGES[entry["overall"]]
+                agree = _agreement_label(status, entry)
+                m_note = _manual_note(entry)
+                manual_html = (
+                    f'<span class="badge {m_class}">{m_label}</span>'
+                    + (f'<div class="agree agree-{"ok" if agree == "UYUMLU" else "bad"}">'
+                       f'{_esc(agree)}</div>' if agree else "")
+                    + (f'<div class="manual-note">{_esc(m_note)}</div>' if m_note else ""))
+            else:
+                manual_html = '<span class="manual-pending">—</span>'
+
             scenario_rows += f"""
             <tr class="{sc_class}-row">
               <td><span class="badge {sc_class}">{badge_label}</span></td>
@@ -150,6 +204,7 @@ def generate_html_report(results: List[dict], output_path: str, note: str = ""):
                 </details>
               </td>
               <td><span class="confidence confidence-{_esc(analysis.get('confidence', 'LOW')).lower()}">{_esc(analysis.get('confidence', '?'))}</span></td>
+              <td class="manual-cell">{manual_html}</td>
             </tr>"""
 
         combo_rows += f"""
@@ -164,12 +219,27 @@ def generate_html_report(results: List[dict], output_path: str, note: str = ""):
           <table class="results-table">
             <thead>
               <tr>
-                <th>Sonuç</th><th>Senaryo</th><th>Özet</th><th>Kontrol Detayı</th><th>Güven</th>
+                <th>Sonuç</th><th>Senaryo</th><th>Özet</th><th>Kontrol Detayı</th><th>Güven</th><th>Manuel Doğrulama</th>
               </tr>
             </thead>
             <tbody>{scenario_rows}</tbody>
           </table>
         </div>"""
+
+    m_entries = [(r, _manual_entry(manual, r)) for r in results]
+    m_entries = [(r, e) for r, e in m_entries if e.get("overall") in _MANUAL_BADGES]
+    m_labels = [_agreement_label(_status_of(r), e) for r, e in m_entries]
+    m_missed = m_labels.count("ARAÇ KAÇIRDI")
+    m_alarm = m_labels.count("YANLIŞ ALARM")
+    manual_cards = (
+        f'<div class="stat-card manual"><div class="val" style="color:#6366f1">'
+        f'{len(m_entries)}/{total}</div><div class="lbl">👁 Manuel Doğrulanan</div></div>'
+        f'<div class="stat-card manual"><div class="val" style="color:'
+        f'{"#ef4444" if m_missed else "#10b981"}">{m_missed}</div>'
+        f'<div class="lbl">Aracın Kaçırdığı (oto. PASS / manuel KALDI)</div></div>'
+        f'<div class="stat-card manual"><div class="val" style="color:#f59e0b">{m_alarm}</div>'
+        f'<div class="lbl">Yanlış Alarm (oto. FAIL / manuel GEÇTİ)</div></div>'
+    ) if m_entries else ""
 
     html_doc = f"""<!DOCTYPE html>
 <html lang="tr">
@@ -230,6 +300,13 @@ def generate_html_report(results: List[dict], output_path: str, note: str = ""):
   .confidence-medium {{ background: #fef3c7; color: #92400e; }}
   .confidence-low {{ background: #fee2e2; color: #991b1b; }}
   .confidence-n\\/a {{ background: #e2e8f0; color: #475569; }}
+  .stat-card.manual {{ border-left-color: #6366f1; }}
+  .manual-cell {{ max-width: 260px; font-size: 12px; }}
+  .manual-note {{ margin-top: 6px; color: #475569; line-height: 1.5; }}
+  .manual-pending {{ color: #94a3b8; }}
+  .agree {{ margin-top: 6px; font-size: 11px; font-weight: 700; }}
+  .agree-ok {{ color: #065f46; }}
+  .agree-bad {{ color: #991b1b; }}
   .pass-card .combo-header {{ background: #f0fdf4; }}
   .partial-card .combo-header {{ background: #fffbeb; }}
   .fail-card .combo-header {{ background: #fff5f5; }}
@@ -251,6 +328,7 @@ def generate_html_report(results: List[dict], output_path: str, note: str = ""):
   <div class="stat-card skip"><div class="val" style="color:#94a3b8">{skipped}</div><div class="lbl">⏭ Atlanan</div></div>
   <div class="stat-card rate"><div class="val" style="color:#f59e0b">{pass_rate}%</div><div class="lbl">Başarı Oranı</div></div>
   <div class="stat-card"><div class="val" style="font-size:20px">{len(by_combo)}</div><div class="lbl">Kombinasyon</div></div>
+  {manual_cards}
 </div>
 
 <div class="content">
@@ -264,16 +342,22 @@ def generate_html_report(results: List[dict], output_path: str, note: str = ""):
     logger.info(f"HTML rapor oluşturuldu: {output_path}")
 
 
-def generate_csv_results(results: List[dict], output_path: str):
-    """Test sonuçlarını CSV olarak kaydeder (Sheets'e aktarım için)."""
+def generate_csv_results(results: List[dict], output_path: str, manual: dict = None):
+    """Test sonuçlarını CSV olarak kaydeder (Sheets'e aktarım için).
+
+    Son dört sütun manuel doğrulama içindir; kayıt yoksa boş kalır."""
     with open(output_path, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f)
         writer.writerow([
             "Kombinasyon", "Senaryo Tipi", "Sonuç", "Güven Seviyesi",
-            "Özet", "Sorunlar", "Öneriler", "Test Zamanı"
+            "Özet", "Sorunlar", "Öneriler", "Test Zamanı",
+            "Run ID", "Manuel Sonuç", "Manuel Not", "Oto/Manuel Uyumu",
         ])
         for r in (_normalize(x) for x in results or []):
             analysis = r["analysis"]
+            entry = _manual_entry(manual, r)
+            manual_label = {"pass": "GEÇTİ", "fail": "KALDI", "na": "UYGULANAMAZ"}.get(
+                entry.get("overall"), "")
             writer.writerow([_csv_cell(v) for v in (
                 r["combination"],
                 r["scenario_type"],
@@ -283,5 +367,9 @@ def generate_csv_results(results: List[dict], output_path: str):
                 " | ".join(analysis["issues"]),
                 " | ".join(analysis["recommendations"]),
                 r["test_time"],
+                r.get("result_id") or "",
+                manual_label,
+                _manual_note(entry) if manual_label else "",
+                _agreement_label(_status_of(r), entry),
             )])
     logger.info(f"CSV sonuçları oluşturuldu: {output_path}")

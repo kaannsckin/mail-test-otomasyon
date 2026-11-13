@@ -84,8 +84,10 @@ def unfold_ics(ics: str) -> list[str]:
 class TestTemplateIntegrity:
 
     def test_every_supported_scenario_has_templates(self):
-        # smime şablon kullanmaz (gövde doğrudan üretilir)
-        needs_template = SUPPORTED_SCENARIOS - {"smime"}
+        # smime şablon kullanmaz (gövde doğrudan üretilir); katalog (spec)
+        # senaryoları mesajını scenario_catalog.py'de kendisi kurar.
+        from scenario_catalog import SPEC_SCENARIOS
+        needs_template = SUPPORTED_SCENARIOS - {"smime"} - set(SPEC_SCENARIOS)
         assert needs_template <= set(ALL_TEMPLATES), (
             f"Şablonsuz senaryolar: {sorted(needs_template - set(ALL_TEMPLATES))}"
         )
@@ -806,8 +808,11 @@ class TestAnalyzerPromptsForNewScenarios:
     @pytest.mark.parametrize("scenario", SUPPORTED_SCENARIOS - {"forward_chain"})
     def test_every_scenario_has_dedicated_checks(self, analyzer, scenario,
                                                  received_msg, combination_meta):
-        prompt = analyzer._build_prompt(scenario, {"msg_id": "<a@b>"},
-                                        received_msg, combination_meta)
+        # Katalog senaryoları kontrol listesini send_meta ile taşır (main.py ekler).
+        from scenario_catalog import llm_check_prompt
+        prompt = analyzer._build_prompt(
+            scenario, {"msg_id": "<a@b>", "check_prompt": llm_check_prompt(scenario)},
+            received_msg, combination_meta)
         assert "Genel mesaj iletim kontrolü yap." not in prompt, (
             f"{scenario} için özel kontrol listesi tanımlanmamış"
         )
@@ -876,7 +881,7 @@ class TestChecklistCsv:
 
     def test_all_combinations_have_all_scenarios(self, combos):
         for combo in combos:
-            assert len(combo.scenarios) == 11, f"{combo.label}: {len(combo.scenarios)}"
+            assert len(combo.scenarios) == 26, f"{combo.label}: {len(combo.scenarios)}"
 
     @pytest.mark.parametrize("scenario", NEW_SCENARIOS)
     def test_new_scenario_present_everywhere(self, combos, scenario):

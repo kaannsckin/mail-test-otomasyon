@@ -440,6 +440,8 @@ class TestCsvParser:
             "multi_attachment", "html_table", "complex_html", "i18n",
             "calendar_invite", "forward",
         }
+        from scenario_catalog import SPEC_SCENARIOS
+        expected |= set(SPEC_SCENARIOS)
         for combo in combos:
             found = set(combo.scenarios.keys())
             assert found == expected, (
@@ -460,8 +462,8 @@ class TestCsvParser:
         from csv_parser import parse_csv
         combos = parse_csv(str(project_root / "mail_test_checklist.csv"))
         total = sum(len(s.steps) for c in combos for s in c.scenarios.values())
-        # 18 kombinasyon × 11 senaryo × 5 adım
-        expected = len(combos) * 11 * 5
+        # 18 kombinasyon × 26 senaryo (11 temel + 15 katalog) × 5 adım
+        expected = len(combos) * 26 * 5
         assert total == expected, f"{expected} adım bekleniyor, {total} bulundu"
 
     def test_parse_csv_step_ids_are_unique_and_sequential(self, project_root):

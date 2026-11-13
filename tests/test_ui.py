@@ -142,7 +142,7 @@ class TestNavigation:
         assert ui.is_visible("#page-dashboard")
 
     @pytest.mark.parametrize("page_key", [
-        "config", "security", "runner", "logs", "results", "reports", "guide",
+        "config", "security", "runner", "logs", "manual", "results", "reports", "guide",
     ])
     def test_every_nav_item_opens_its_page(self, ui, page_key):
         ui.click(f'.nav-item[data-page="{page_key}"]')

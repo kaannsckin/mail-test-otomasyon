@@ -81,6 +81,10 @@ test:
   calendar_duration_minutes: 30
   calendar_location: "Çevrimiçi Toplantı"
 
+  # ── Büyük ek senaryosu (large_attachment) ────────────────────────
+  # Rastgele içerikli ikili ek; sunucunun mesaj boyutu sınırına göre ayarlayın.
+  large_attachment_mb: 5
+
   # ── S/MIME senaryosu — tanımlı değilse otomatik atlanır ──────────
   # smime_cert_path: "certs/test_cert.pem"
   # smime_key_path:  "certs/test_key.pem"
@@ -89,7 +93,9 @@ logging:
   level: "INFO"
   file: "logs/automation.log"
 
-# Analiz sağlayıcısı: claude (varsayılan) | gemini
+# Analiz sağlayıcısı: claude (varsayılan) | gemini | none
+# none: LLM çağrılmaz (kapalı ağ). Katalog senaryoları yine bayt düzeyinde
+# doğrulanır; temel 11 senaryoda yalnızca teslim doğrulanır.
 analysis:
   provider: "claude"
 

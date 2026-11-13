@@ -28,8 +28,14 @@ from csv_parser import parse_csv, TestCombination, SUPPORTED_SCENARIOS
 from mail_transport import explain_connection_error, resolve_path
 from sender import MailSender
 from receiver import MailReceiver
-from analyzer import MailAnalyzer
+from analyzer import MailAnalyzer, NullAnalyzer
 from reporter import generate_html_report, generate_csv_results
+from scenario_catalog import (
+    SPEC_SCENARIOS, GROUP_SHORT, BuildContext, expand_scenario_filter,
+    llm_check_prompt, manual_steps_for,
+)
+from verifier import verify, merge_verdicts
+import manual_verify
 from message_templates import (
     get_template,
     get_reply_original,
@@ -336,6 +342,8 @@ SCENARIO_LABELS: dict[str, str] = {
     "forward_chain":    "Mesaj İletme",
     "multi_attachment": "Çoklu Ek",
 }
+# Katalog (spec) senaryoları etiketlerini kendileri taşır.
+SCENARIO_LABELS.update({key: spec.label for key, spec in SPEC_SCENARIOS.items()})
 
 LENGTH_LABELS: dict[str, str] = {
     "short":  "Kısa",
@@ -434,6 +442,9 @@ def _resolve_multi_attachment_paths(test_config: dict) -> list[str]:
                 break
     return paths
 
+
+# Sonuç/rapor dosyalarına yazılmayan gönderim alanları (ham içerik, beklenti).
+_META_PRIVATE = ("raw_bytes", "expect", "check_prompt", "deterministic_checks")
 
 _BODY_CLOSE_RE = re.compile(r"</body\s*>", re.IGNORECASE)
 
@@ -541,7 +552,36 @@ def run_scenario(
     """Bir senaryo tipini end-to-end çalıştırır.
 
     ``combo_index`` mesaj şablonu rotasyonu (kısa/orta/uzun) için kullanılır.
+    Sonuca kimlik (``result_id`` = konu satırındaki Run ID), konu ve alıcı
+    istemcide elle bakılacak adımlar eklenir (Manuel Doğrulama için).
     """
+    ctx: dict = {}
+    result = _run_scenario(scenario_key, combo, combo_index, sender, receiver,
+                           analyzer, test_config, ctx)
+    return _identify(result, scenario_key, combo, ctx)
+
+
+def _identify(result: dict, scenario_key: str, combo: TestCombination,
+              ctx: dict | None = None) -> dict:
+    ctx = ctx or {}
+    result.setdefault("result_id", ctx.get("run_id") or uuid.uuid4().hex[:8])
+    result.setdefault("subject", ctx.get("subject", ""))
+    result.setdefault("receiver_client", getattr(combo, "receiver_client", ""))
+    result.setdefault("receiver_server", getattr(combo, "receiver_server", ""))
+    result.setdefault("manual_steps", manual_steps_for(scenario_key))
+    return result
+
+
+def _run_scenario(
+    scenario_key: str,
+    combo: TestCombination,
+    combo_index: int,
+    sender: MailSender,
+    receiver: MailReceiver,
+    analyzer: MailAnalyzer,
+    test_config: dict,
+    ctx: dict,
+) -> dict:
     subject_prefix = str(test_config.get("subject_prefix") or "[AUTO-TEST]")
     wait = max(0, _num(test_config.get("wait_seconds"), 15))   # negatif → ValueError (sleep)
     retries = max(1, _num(test_config.get("max_retries"), 3))
@@ -552,11 +592,17 @@ def run_scenario(
 
     to_address = receiver.config["test_address"]
     run_id = uuid.uuid4().hex[:8]
+    ctx["run_id"] = run_id
 
+    spec = SPEC_SCENARIOS.get(scenario_key)
     tmpl = get_template(scenario_key, combo_index)
-    length_label = LENGTH_LABELS.get(tmpl.length, tmpl.length)
+    # Katalog senaryolarında kısa/orta/uzun rotasyonu yok; konuya grup yazılır.
+    variant = spec.group if spec else tmpl.length
+    length_label = GROUP_SHORT[spec.group] if spec else LENGTH_LABELS.get(tmpl.length, tmpl.length)
 
-    if scenario_key == "attachment":
+    if spec is not None:
+        detail_tag = spec.detail_tag
+    elif scenario_key == "attachment":
         detail_tag = _attachment_tag(attachment_paths)
     elif scenario_key == "multi_attachment":
         multi_paths = _resolve_multi_attachment_paths(test_config)
@@ -586,6 +632,7 @@ def run_scenario(
     subject = _build_subject(
         subject_prefix, run_id, scenario_key, length_label, combo.label, detail_tag,
     )
+    ctx["subject"] = subject
     if scenario_key in HTML_SCENARIOS:
         html_body = resolve_html(tmpl.body)
         body = _stamp_html_run_id(html_body, run_id)
@@ -613,12 +660,21 @@ def run_scenario(
             check_name="Konfigürasyon")
 
     logger.info(
-        f"▶ Senaryo: {scenario_key} ({tmpl.length}) | "
+        f"▶ Senaryo: {scenario_key} ({variant}) | "
         f"Kombo: {combo.label} | run_id={run_id}"
     )
 
     try:
-        if scenario_key == "plain_text":
+        if spec is not None:
+            built = spec.build(BuildContext(
+                from_address=sender.from_address, to_address=to_address,
+                subject=subject, run_id=run_id, test_config=test_config,
+                image_path=image_path, attachment_paths=attachment_paths,
+            ))
+            send_meta = sender.send_built(built, to_address, scenario_key)
+            send_meta["check_prompt"] = llm_check_prompt(scenario_key)
+
+        elif scenario_key == "plain_text":
             send_meta = sender.send_plain_text(to_address, subject, body)
 
         elif scenario_key == "attachment":
@@ -826,20 +882,31 @@ def run_scenario(
             ([hint] if hint else []) + ["IMAP host/port/SSL ve kimlik bilgilerini kontrol edin"],
             check_name="Mesaj Alımı (IMAP)",
         )
-        result["send_meta"] = {k: v for k, v in send_meta.items() if k != "raw_bytes"}
+        result["send_meta"] = {k: v for k, v in send_meta.items() if k not in _META_PRIVATE}
         is_auth = getattr(receiver, "is_auth_error", None)
         if callable(is_auth) and is_auth(receive_error) is True:
             result["auth_failed_server"] = combo.receiver_server
         logger.info(f"◼ Sonuç: ❌ FAIL | {combo.label} / {scenario_key} | IMAP hatası")
         return result
 
+    # Katalog senaryoları: karar bayt düzeyindeki deterministik karşılaştırmaya
+    # aittir (her koşuda aynı sonuç); LLM yalnızca yorum/öneri katar.
+    expect = send_meta.get("expect") if isinstance(send_meta, dict) else None
+    det_checks = None
+    if expect and received is not None:
+        det_checks = verify(expect, received.get("raw_bytes") or b"")
+        send_meta["deterministic_checks"] = det_checks
+
     analysis = analyzer.analyze(
         scenario_key, send_meta, received, combination_meta
     )
+    if det_checks is not None:
+        analysis = merge_verdicts(
+            det_checks, None if isinstance(analyzer, NullAnalyzer) else analysis)
 
     status = "✅ PASS" if analysis.get("passed") else "❌ FAIL"
     logger.info(
-        f"◼ Sonuç: {status} | {combo.label} / {scenario_key} ({tmpl.length}) "
+        f"◼ Sonuç: {status} | {combo.label} / {scenario_key} ({variant}) "
         f"| confidence={analysis.get('confidence')}"
     )
 
@@ -850,9 +917,9 @@ def run_scenario(
             type("", (), {"scenario_type": scenario_key}),
         ).scenario_type if scenario_key in combo.scenarios else scenario_key,
         "scenario_key": scenario_key,
-        "message_length": tmpl.length,
+        "message_length": variant,
         "test_time": test_time,
-        "send_meta": {k: v for k, v in send_meta.items() if k not in ("raw_bytes",)},
+        "send_meta": {k: v for k, v in send_meta.items() if k not in _META_PRIVATE},
         "received": bool(received),
         "analysis": analysis,
     }
@@ -888,9 +955,12 @@ def main():
     parser.add_argument("--combo", type=_combo_list, default=None,
                         help="Yalnızca bu kombinasyon(lar)ı çalıştır (0-index): 3 veya 1,4,7")
     parser.add_argument("--scenario", default=None,
-                        help="Sadece belirtilen senaryo tipini çalıştır "
-                             "(plain_text|attachment|inline_image|smime|reply_chain)")
+                        help="Yalnızca bu senaryo(lar): plain_text · enc_base64,priority_high "
+                             "· group:kodlama (gruplar: temel, kodlama, oncelik, adresleme, icerik)")
     parser.add_argument("--dry-run", action="store_true", help="Bağlantı testi, mail gönderme")
+    parser.add_argument("--manual", action="store_true",
+                        help="Her senaryodan sonra alıcı istemcideki manuel doğrulama "
+                             "adımlarını terminalde sor (durum + not)")
     args = parser.parse_args()
 
     # Config yükle
@@ -1018,7 +1088,9 @@ def _dry_run(config: dict, combinations: list) -> None:
 def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
     # Analiz için LLM — analysis.provider: claude (varsayılan) | gemini
     provider = (str((config.get("analysis") or {}).get("provider") or "claude")).lower()
-    if provider == "gemini":
+    if provider in ("none", "yok", "off", "kapali", "kapalı"):
+        analyzer = NullAnalyzer()
+    elif provider == "gemini":
         gemini_cfg = config.get("gemini") or {}
         analyzer = MailAnalyzer(
             api_key=gemini_cfg.get("api_key", ""),
@@ -1039,6 +1111,39 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
     interrupted = False
     Path("reports").mkdir(exist_ok=True)
 
+    html_path = test_config.get("report_output", "reports/test_report.html")
+    csv_path_out = test_config.get("results_csv", "reports/test_results.csv")
+    json_path = manual_verify.results_json_path(csv_path_out)
+    manual_path = manual_verify.store_path(csv_path_out)
+    run_info = {"started_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "analysis_provider": provider, "model": analyzer.model,
+                "finished": False, "note": ""}
+    wanted = expand_scenario_filter(args.scenario)
+    ask_manual = bool(getattr(args, "manual", False))
+    if ask_manual and not sys.stdin.isatty():
+        logger.warning("--manual etkileşimli terminal ister; bu ortamda sorulmayacak "
+                       "(manuel doğrulamayı web arayüzünden yapabilirsiniz).")
+        ask_manual = False
+
+    def _record(result: dict) -> None:
+        """Sonucu ekler ve JSON'u günceller — koşu sürerken arayüzdeki Manuel
+        Doğrulama sihirbazı biten maddeleri görebilsin."""
+        nonlocal ask_manual
+        all_results.append(result)
+        try:
+            manual_verify.write_results_json(all_results, json_path, run_info)
+        except Exception as e:  # noqa: BLE001 — yan dosya koşuyu düşürmesin
+            logger.warning(f"Sonuç JSON'u yazılamadı ({json_path}): {e}")
+        if ask_manual and manual_verify.is_eligible(result) and result.get("received"):
+            try:
+                entry = manual_verify.prompt_cli(result)
+            except EOFError:
+                logger.warning("Girdi akışı kapandı — manuel doğrulama soruları durduruldu.")
+                ask_manual = False
+                return
+            if entry:
+                manual_verify.save_entry(manual_path, result["result_id"], entry)
+
     try:
         for combo_idx, combo in indexed:
             logger.info(f"\n{'='*60}")
@@ -1046,8 +1151,8 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
             logger.info(f"{'='*60}")
 
             scenarios_to_run = list(combo.scenarios.keys())
-            if args.scenario:
-                scenarios_to_run = [s for s in scenarios_to_run if s == args.scenario]
+            if wanted is not None:
+                scenarios_to_run = [s for s in scenarios_to_run if s in wanted]
 
             # Sender/Receiver kurulumu
             try:
@@ -1061,34 +1166,34 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
                 logger.error(f"Config hatası: {e} — kombinasyonun senaryoları FAIL sayılıyor.")
                 test_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 for sc_key in scenarios_to_run:
-                    all_results.append(_error_result(
+                    _record(_identify(_error_result(
                         combo, sc_key, test_time,
                         f"Kombinasyon çalıştırılamadı — config hatası: {e}",
                         f"Config hatası: {e}",
                         ["config.yaml'da bu kombinasyonun gönderici/alıcı sunucu "
                          "bölümlerini (smtp_host, imap_host, test_address) tamamlayın."],
-                        check_name="Konfigürasyon"))
+                        check_name="Konfigürasyon"), sc_key, combo))
                 continue
 
             for sc_key in scenarios_to_run:
                 test_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 if sc_key not in SUPPORTED_SCENARIOS:
                     logger.warning(f"Desteklenmeyen senaryo tipi atlandı: {sc_key}")
-                    all_results.append(_skipped_result(
+                    _record(_identify(_skipped_result(
                         combo, sc_key, test_time,
-                        f"CSV'deki senaryo tipi desteklenmiyor: {sc_key}"))
+                        f"CSV'deki senaryo tipi desteklenmiyor: {sc_key}"), sc_key, combo))
                     continue
                 blocked = [srv for srv in (combo.sender_server, combo.receiver_server)
                            if srv in auth_failed]
                 if blocked:
                     srv = blocked[0]
-                    all_results.append(_error_result(
+                    _record(_identify(_error_result(
                         combo, sc_key, test_time,
                         f"{srv} kimlik doğrulaması bu koşuda daha önce reddedildi — "
                         "hesap kilitlenmesin diye yeniden denenmedi.",
                         auth_failed[srv],
                         ["Şifre/uygulama şifresi/2FA ayarlarını düzeltip testi yeniden çalıştırın."],
-                        check_name="Kimlik Doğrulama"))
+                        check_name="Kimlik Doğrulama"), sc_key, combo))
                     continue
                 try:
                     result = run_scenario(
@@ -1101,12 +1206,14 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
                         f"Senaryo beklenmeyen bir hatayla yarıda kaldı: {type(e).__name__}: {e}",
                         f"{type(e).__name__}: {e}",
                         ["Logları inceleyin; tekrarlıyorsa hata kaydı açın."])
+                if isinstance(result, dict):
+                    _identify(result, sc_key, combo)
                 failed_srv = result.get("auth_failed_server") if isinstance(result, dict) else None
                 if failed_srv and failed_srv not in auth_failed:
                     auth_failed[failed_srv] = (result.get("analysis") or {}).get("summary", "")
                     logger.error(f"🔒 {failed_srv}: kimlik doğrulama reddedildi — bu sunucunun "
                                  "kalan senaryoları denenmeyecek.")
-                all_results.append(result)
+                _record(result)
                 time.sleep(3)
     except KeyboardInterrupt:
         interrupted = True
@@ -1117,14 +1224,23 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
         logger.warning("Hiçbir test sonucu üretilemedi.")
         sys.exit(EXIT_INTERRUPTED if interrupted else EXIT_ERROR)
 
-    html_path = test_config.get("report_output", "reports/test_report.html")
-    csv_path_out = test_config.get("results_csv", "reports/test_results.csv")
     note = ("Koşu kullanıcı tarafından DURDURULDU — bu rapor kısmi sonuçları içerir; "
             "çalıştırılmayan senaryolar listede yoktur.") if interrupted else ""
     # Rapor yazılamazsa sonuçlar kaybolur: koşu "başarılı" (çıkış 0) bitmemeli.
+    run_info.update({"finished": True, "note": note,
+                     "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+    try:
+        manual_verify.write_results_json(all_results, json_path, run_info)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Sonuç JSON'u yazılamadı ({json_path}): {e}")
+    # Yalnızca bu koşunun sonuçlarına ait manuel kayıtlar rapora girer.
+    manual = manual_verify.load_store(manual_path)
+    manual = {r["result_id"]: manual[r["result_id"]] for r in all_results
+              if isinstance(r, dict) and r.get("result_id") in manual}
     report_errors = []
-    for kind, writer, path, kwargs in (("HTML rapor", generate_html_report, html_path, {"note": note}),
-                                        ("CSV sonuç", generate_csv_results, csv_path_out, {})):
+    for kind, writer, path, kwargs in (
+            ("HTML rapor", generate_html_report, html_path, {"note": note, "manual": manual}),
+            ("CSV sonuç", generate_csv_results, csv_path_out, {"manual": manual})):
         try:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             writer(all_results, path, **kwargs)
