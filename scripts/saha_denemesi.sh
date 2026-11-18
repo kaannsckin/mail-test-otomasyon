@@ -113,8 +113,20 @@ else
 fi
 
 # ── 5. Duman koşusu ──────────────────────────────────────────────────
-step "5/6 EMS → EMS duman koşusu (referans)" \
-  python main.py "${COMMON[@]}" --tier duman --baseline "${LABEL_ARGS[@]}"
+step "5/6 EMS → EMS duman koşusu" \
+  python main.py "${COMMON[@]}" --tier duman "${LABEL_ARGS[@]}"
+# Yalnızca temiz koşu referans olur: sonraki sürümler bununla karşılaştırılır.
+if [[ "${SUMMARY[${#SUMMARY[@]}-1]}" == ✅* ]]; then
+  python -c "
+import run_history
+runs = run_history.list_runs('reports')
+if runs and run_history.set_baseline('reports', runs[0]['run_id']):
+    print('📌 Duman koşusu referans işaretlendi: ' + runs[0]['run_id'])
+" 2>&1 | tee -a "$OUT"
+else
+  echo "Duman koşusunda başarısız kontrol var — referans İŞARETLENMEDİ. Sonuçları inceleyip" \
+       "arayüzde (Geçmiş & Fark) uygun koşuyu referans yapın." | tee -a "$OUT"
+fi
 
 # ── 6. Kutu işlemleri ────────────────────────────────────────────────
 step "6/6 EMS → EMS kutu işlemleri" \

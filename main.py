@@ -1275,6 +1275,10 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
     run_info["labels"] = run_history.clean_labels(
         list(getattr(args, "label", None) or []) + list(test_config.get("labels") or []))
     run_info["servers"] = {}
+    # Fark yalnızca AYNI kapsamdaki koşular arasında anlamlıdır.
+    run_info["scope"] = {"plan": run_info.get("plan", ""), "tier": run_info.get("tier", ""),
+                         "impact": run_info.get("impact", ""), "scenario": args.scenario or "",
+                         "combo": list(args.combo) if args.combo else []}
     if test_config.get("evidence", True) not in (False, "false", "no", 0):
         test_config["_run_dir"] = str(run_dir)
     logger.info(f"Koşu: {run_dir.name}"
@@ -1436,7 +1440,13 @@ def _run_all(args, config: dict, test_config: dict, indexed: list) -> None:
             logger.info(f"📌 Bu koşu referans (baseline) olarak işaretlendi: {run_dir.name}")
         elif baseline:
             base = run_history.load_run(reports_dir, baseline)
-            if base:
+            base_scope = ((base or {}).get("manifest") or {}).get("scope")
+            if base and base_scope is not None and base_scope != run_info["scope"]:
+                logger.info(f"Δ Referans koşunun ({baseline}) kapsamı farklı "
+                            f"({base_scope} ≠ {run_info['scope']}) — fark hesaplanmadı. "
+                            "Aynı plan/kademe/senaryo/kombinasyonla koşun ya da arayüzden "
+                            "karşılaştırın.")
+            elif base:
                 diff = run_history.diff_runs(base, run_history.load_run(reports_dir, run_dir.name))
                 run_history._write_json(run_dir / "diff_vs_baseline.json", diff)
                 logger.info("Δ " + run_history.diff_summary(diff))

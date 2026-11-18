@@ -310,3 +310,16 @@ class TestEndpoints:
     def test_run_start_rejects_bad_labels(self, flask_client):
         assert flask_client.post("/api/run/start", json={"labels": "EMS"}).status_code == 400
         assert flask_client.post("/api/run/start", json={"labels": [1]}).status_code == 400
+
+
+class TestScopeGuard:
+
+    def test_diff_skipped_when_scope_differs(self, cfg, caplog):
+        path, reports = cfg
+        plan_cli(["--config", str(path), *ARGS, "--baseline"], Loopback())
+        with caplog.at_level("INFO"):
+            plan_cli(["--config", str(path), "--tier", "duman", "--combo", "0",
+                      "--scenario", "priority_high"], Loopback())
+        assert "kapsamı farklı" in caplog.text and "YENİ HATA" not in caplog.text
+        newest = run_history.list_runs(reports)[0]["run_id"]
+        assert not (run_history.runs_dir(reports) / newest / "diff_vs_baseline.json").exists()
