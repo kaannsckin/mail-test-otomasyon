@@ -43,3 +43,6 @@ mnt/
 
 # OS
 Thumbs.db
+
+# Saha denemesi çıktıları (konu satırları ve adresler içerir)
+saha_sonuc_*.txt
