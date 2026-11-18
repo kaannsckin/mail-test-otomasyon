@@ -73,6 +73,17 @@ if [ ! -f config.yaml ]; then
 else
   echo "config.yaml var, kullanılıyor (baştan sormak için: python scripts/saha_kurulum.py --yeniden)"
 fi
+# Şifrede görünmez karakter (ör. ok tuşu) varsa bağlanmadan önce yeniden sor
+if ! python -c "
+import sys, yaml
+from mail_transport import credential_problem
+cfg = yaml.safe_load(open('config.yaml', encoding='utf-8')) or {}
+problems = [f'{n}: {p}' for n in ('ems', 'gmail') for p in [credential_problem(cfg.get(n) or {})] if p]
+print('\n'.join(problems)); sys.exit(1 if problems else 0)
+"; then
+  echo "Şifre yeniden soruluyor..."
+  python scripts/saha_kurulum.py --sifre || exit 1
+fi
 # Sonuç dosyasına ayarların ŞİFRESİZ özeti
 python - >> "$OUT" 2>&1 <<'EOF'
 import yaml

@@ -324,3 +324,40 @@ def explain_connection_error(exc: BaseException, server_config: Optional[dict] =
         return ("Sunucuya ağ yolu yok (Network is unreachable). Platform giden mail "
                 "portlarını engelliyor olabilir — /api/diagnostics/network ile kontrol edin.")
     return None
+
+
+# ────────────────────────────────────────────────────────────────────
+#  Kimlik bilgisi ve adres doğrulama
+# ────────────────────────────────────────────────────────────────────
+def control_chars(value) -> list:
+    """Metindeki görünmez kontrol karakterleri (ör. ok tuşunun ürettiği ESC).
+
+    Gizli şifre girişinde ok tuşuna basmak ya da terminalden yapıştırmak
+    şifreye '\\x1b[D' gibi diziler ekler; sunucu bunu yanlış şifre sayar.
+    """
+    return sorted({f"\\x{ord(c):02x}" for c in str(value or "") if ord(c) < 32 or ord(c) == 127})
+
+
+def credential_problem(server_config: dict) -> Optional[str]:
+    """Bağlanmadan önce yakalanabilen kimlik bilgisi hatası (yoksa None)."""
+    for key, label in (("password", "Şifre"), ("username", "Kullanıcı adı")):
+        bad = control_chars(server_config.get(key))
+        if bad:
+            return (f"{label} görünmez kontrol karakteri içeriyor ({', '.join(bad)}) — büyük "
+                    "olasılıkla şifre yazılırken ok tuşuna basıldı ya da yapıştırma sırasında "
+                    "eklendi. Şifreyi yeniden girin: python scripts/saha_kurulum.py --sifre")
+    return None
+
+
+def normalize_eas_url(raw: str) -> str:
+    """'posta.kurum.gov.tr' → 'https://posta.kurum.gov.tr/Microsoft-Server-ActiveSync'."""
+    url = str(raw or "").strip()
+    if not url:
+        return ""
+    if "://" not in url:
+        url = "https://" + url
+    scheme, rest = url.split("://", 1)
+    host, _, path = rest.partition("/")
+    if not path.strip("/"):
+        path = "Microsoft-Server-ActiveSync"
+    return f"{scheme.lower()}://{host}/{path.lstrip('/')}"

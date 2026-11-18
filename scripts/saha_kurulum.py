@@ -17,6 +17,10 @@ from pathlib import Path
 
 import yaml
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
+from mail_transport import control_chars, normalize_eas_url  # noqa: E402
+
 REPO = Path(__file__).resolve().parent.parent
 EXAMPLE = REPO / "config.yaml.example"
 
@@ -38,6 +42,11 @@ def ask_yes(prompt: str, default: bool) -> bool:
 def ask_secret(prompt: str) -> str:
     while True:
         value = getpass.getpass(f"  {prompt}: ")
+        bad = control_chars(value)
+        if bad:
+            print(f"    Şifrede görünmez karakter var ({', '.join(bad)}) — ok tuşu ya da yapıştırma "
+                  "kaynaklı olabilir. Lütfen yeniden yazın (ok tuşlarını kullanmadan).")
+            continue
         if value:
             return value
         print("    (zorunlu)")
@@ -60,12 +69,55 @@ def server_section(base: dict, title: str, host_hint: str) -> dict:
     return cfg
 
 
+def ask_mfa(cfg: dict) -> None:
+    """Hesapta iki adımlı doğrulama varsa yöntemi sorar."""
+    if not ask_yes("Bu hesapta iki adımlı doğrulama (OTP / doğrulama kodu) açık mı?", False):
+        cfg["auth_method"] = "password"
+        cfg["totp_secret"] = ""
+        return
+    print("    Otomatik koşu için doğrulama uygulamasındaki Base32 gizli anahtar gerekir;")
+    print("    yoksa test hesabında iki adımlı doğrulamanın kapatılması önerilir.")
+    secret = getpass.getpass("  TOTP gizli anahtarı (Base32, görünmez; yoksa boş): ").strip().replace(" ", "")
+    cfg["auth_method"] = "totp_password"
+    cfg["mfa_method"] = "totp"
+    cfg["totp_secret"] = secret
+
+
+def fix_passwords(target: Path) -> None:
+    if not target.exists():
+        print(f"config.yaml yok: {target} — önce: python scripts/saha_kurulum.py")
+        sys.exit(1)
+    config = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
+    for name in ("ems", "gmail"):
+        section = config.get(name) or {}
+        if not section.get("username") or (name == "gmail" and not section.get("password")):
+            continue
+        print(f"\n── {name.upper()} ({section.get('username')}) ──")
+        section["password"] = ask_secret("Şifre (görünmez)")
+        if name == "ems":
+            ask_mfa(section)
+            if section.get("eas_url"):
+                section["eas_url"] = normalize_eas_url(section["eas_url"])
+        config[name] = section
+    target.write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    try:
+        os.chmod(target, 0o600)
+    except OSError:
+        pass
+    print(f"\n✔ Güncellendi: {target}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=str(REPO / "config.yaml"))
     parser.add_argument("--yeniden", action="store_true", help="config.yaml varsa da baştan sor")
+    parser.add_argument("--sifre", action="store_true",
+                        help="Yalnızca şifreleri (ve iki adımlı doğrulamayı) yeniden sor")
     args = parser.parse_args()
     target = Path(args.config)
+    if args.sifre:
+        fix_passwords(target)
+        return
     if target.exists() and not args.yeniden:
         print(f"config.yaml zaten var, korunuyor: {target}")
         return
@@ -76,6 +128,7 @@ def main() -> None:
 
     ems = server_section(config["ems"], "EMS (test edilen sunucu)", "")
     ems["label"] = "EMS"
+    ask_mfa(ems)
     print("\n── EMS sertifikası ──")
     ca = ask("Kurum iç CA sertifikası (PEM) dosya yolu — yoksa boş bırakın", "")
     if ca:
@@ -96,7 +149,9 @@ def main() -> None:
     eas = ask("Z-Push adresi (ör. https://posta.kurum.gov.tr/Microsoft-Server-ActiveSync) — "
               "boşsa Z-Push atlanır", "")
     if eas:
-        ems["eas_url"] = eas
+        ems["eas_url"] = normalize_eas_url(eas)
+        if ems["eas_url"] != eas:
+            print(f"    → {ems['eas_url']}")
         eas_user = ask("Z-Push kullanıcı adı farklıysa (ör. e-posta yerine kısa ad)", "")
         if eas_user:
             ems["eas_username"] = eas_user

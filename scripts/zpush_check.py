@@ -73,6 +73,11 @@ def load_server(args) -> dict:
         sys.exit(1)
     if not cfg.get("password"):
         cfg["password"] = getpass.getpass(f"{cfg['username']} şifresi: ")
+    from mail_transport import credential_problem
+    problem = credential_problem(cfg)
+    if problem:
+        print(f"HATA: {problem}")
+        sys.exit(1)
     return cfg
 
 

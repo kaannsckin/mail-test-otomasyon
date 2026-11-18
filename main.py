@@ -25,7 +25,7 @@ from pathlib import Path
 
 # Proje modülleri
 from csv_parser import parse_csv, TestCombination, SUPPORTED_SCENARIOS
-from mail_transport import explain_connection_error, resolve_path
+from mail_transport import credential_problem, explain_connection_error, resolve_path
 from sender import MailSender
 from receiver import MailReceiver, receiver_for
 from plan_model import PlanError, TIERS, load_plan, resolve_plan_path
@@ -134,6 +134,10 @@ def get_server_config(config: dict, server_name: str) -> dict:
     key = SERVER_KEY_MAP.get(server_name.lower())
     if not key or key not in config:
         raise ValueError(f"Bilinmeyen sunucu: {server_name}. config.yaml'da tanımlı değil.")
+    problem = credential_problem(config[key] or {})
+    if problem:
+        # Bozuk şifreyle bağlanmak hem anlamsız hem kurumsal hesabı kilitleyebilir.
+        raise ValueError(f"{server_name}: {problem}")
     return config[key]
 
 

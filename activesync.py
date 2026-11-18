@@ -38,7 +38,7 @@ from urllib.parse import urlencode
 
 import httpx
 
-from mail_transport import ssl_context_for
+from mail_transport import normalize_eas_url, ssl_context_for
 from receiver import MailReceiver
 from sender import SMTP_POLICY, MailSender
 
@@ -274,7 +274,7 @@ def default_device_id(username: str) -> str:
 
 class EasClient:
     def __init__(self, server_config: dict, transport=None, timeout: float = 60.0):
-        url = str(server_config.get("eas_url") or "").strip()
+        url = normalize_eas_url(server_config.get("eas_url"))
         if not url:
             raise ValueError("ActiveSync için sunucu bölümünde eas_url tanımlı değil "
                              "(ör. https://posta.kurum.gov.tr/Microsoft-Server-ActiveSync)")
