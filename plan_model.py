@@ -26,7 +26,7 @@ from typing import Optional
 import yaml
 
 from csv_parser import SUPPORTED_SCENARIOS, TestCombination, TestScenario
-from scenario_catalog import catalog, scenario_label
+from scenario_catalog import SPEC_SCENARIOS, catalog, scenario_label
 
 TIERS = ("duman", "regresyon", "tam")
 TIER_LABELS = {"duman": "Duman (hızlı)", "regresyon": "Regresyon", "tam": "Tam"}
@@ -70,6 +70,7 @@ class Plan:
     routes: list = field(default_factory=list)
     tier_scenarios: dict = field(default_factory=dict)   # kademe → o kademede EKLENEN senaryolar
     client_scenarios: Optional[list] = None              # None → tüm senaryolar istemcide sorulur
+    mailbox_servers: tuple = ("ems",)                    # kutu işlemleri yalnız bu sunucuların kutularında
     path: str = ""
 
     # ── sorgular ─────────────────────────────────────────────────────
@@ -124,9 +125,12 @@ class Plan:
                 if impact and impact not in (route.sender, route.receiver):
                     continue
                 clients = self.clients_on(route.receiver)
-            keys = scenarios
+            # Kutu işlemleri (taşıma, silme...) alıcı kutuyu değiştirir; yalnızca test
+            # edilen sunucunun kutularında anlamlı (Gmail'de klasör taşımak EMS'i sınamaz).
+            keys = [s for s in scenarios if not (SPEC_SCENARIOS.get(s) and SPEC_SCENARIOS[s].mailbox
+                                                 and route.receiver not in self.mailbox_servers)]
             if only_client is not None and self.client_scenarios is not None:
-                keys = [s for s in scenarios if s in self.client_scenarios]
+                keys = [s for s in keys if s in self.client_scenarios]
             combos.append(self._combination(route, keys, clients))
         return combos
 
@@ -251,6 +255,11 @@ def parse_plan(data, path: str = "") -> Plan:
     if not plan.scenarios_for("tam"):
         raise PlanError("kademeler altında hiç senaryo tanımlı değil")
 
+    if data.get("kutu_sunuculari") is not None:
+        raw = data["kutu_sunuculari"]
+        if not isinstance(raw, list):
+            raise PlanError("kutu_sunuculari: sunucu listesi olmalı")
+        plan.mailbox_servers = tuple(_server(s, "kutu_sunuculari") for s in raw)
     if data.get("istemci_senaryolari") is not None:
         plan.client_scenarios = _scenario_list(data["istemci_senaryolari"], "istemci_senaryolari")
     return plan

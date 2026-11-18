@@ -72,6 +72,7 @@ class ScenarioSpec:
     build: Callable[[BuildContext], BuiltMessage]
     steps: tuple             # checklist adımları (ilki gönderim eylemi)
     manual_steps: tuple      # alıcı istemcide elle bakılacaklar
+    mailbox: bool = False    # teslimden sonra kutu işlemleri (mailbox_ops.py) çalışır
 
 
 GROUP_LABELS = {
@@ -80,11 +81,12 @@ GROUP_LABELS = {
     "oncelik": "Öncelik ve Bayraklar",
     "adresleme": "Adresleme ve Başlıklar",
     "icerik": "İçerik ve Taşıma",
+    "kutu": "Posta Kutusu İşlemleri",
 }
 
 # Konu satırında kullanılan kısa grup adı.
 GROUP_SHORT = {"temel": "Temel", "kodlama": "Kodlama", "oncelik": "Öncelik",
-               "adresleme": "Adresleme", "icerik": "İçerik"}
+               "adresleme": "Adresleme", "icerik": "İçerik", "kutu": "Kutu"}
 
 # Elle yazılmış ilk 11 senaryo (sender.py) — yalnızca gruplama/etiket için.
 LEGACY_SCENARIOS = {
@@ -552,6 +554,30 @@ def _build_html_links(ctx: BuildContext) -> BuiltMessage:
 
 
 # ────────────────────────────────────────────────────────────────────
+#  Posta kutusu işlemleri (mesaj sade; asıl iş mailbox_ops.py'de)
+# ────────────────────────────────────────────────────────────────────
+def mailbox_tokens(run_id: str) -> dict:
+    """Arama senaryosunun aradığı sözcükler. Run ID'li sözcükler eski koşuların
+    mesajlarıyla karışmaz; 'Öğretmenoğlu' konu satırında (detail_tag) geçer."""
+    return {"subject_ascii": run_id, "subject_tr": "Öğretmenoğlu",
+            "body_tr": f"çığır{run_id}", "body_tr_upper": f"ÇIĞIR{run_id.upper()}"}
+
+
+def _build_mailbox_message(ctx: BuildContext) -> BuiltMessage:
+    tokens = mailbox_tokens(ctx.run_id)
+    body = _stamp(
+        "Merhaba,\n\n"
+        "Bu mesaj posta kutusu işlemlerini sınar: arama, okundu/bayrak eşitlemesi, "
+        "klasöre taşıma, silme ve taslak. İşlemler sunucuda yapılır, sonuç diğer "
+        "kanallarda (IMAP, POP3, Z-Push) denetlenir.\n"
+        f"Arama sözcüğü: {tokens['body_tr']}\n"
+        f"Karakter sınaması: {TR_CHARS}", ctx.run_id)
+    msg = text_part(body)
+    _set_common(msg, ctx)
+    return BuiltMessage(msg, {"subject": ctx.subject, "body_text": body})
+
+
+# ────────────────────────────────────────────────────────────────────
 #  Katalog
 # ────────────────────────────────────────────────────────────────────
 _M_OPEN = "Mesaj alıcı istemcide gelen kutusunda görünüyor ve açılıyor mu?"
@@ -753,6 +779,96 @@ _SPECS = [
          "Bağlantılar tıklanabilir mi ve tıklayınca DOĞRU adres mi açılıyor?",
          "E-posta bağlantısı yeni ileti penceresini konu 'Test Konusu' ile açıyor mu?",
          "Telefon bağlantısı arama ekranını açıyor mu? (masaüstünde 'Uygulanamaz')"),
+    ),
+    ScenarioSpec(
+        "mbx_search", "Kutu: Sunucu Tarafı Arama", "Kutu Arama",
+        "kutu", "Öğretmenoğlu araması", _build_mailbox_message,
+        ("Arama sözcükleri içeren mesaj gönder",
+         "Konu araması (ASCII ve Türkçe) mesajı buluyor mu?",
+         "Gövde araması (Türkçe sözcük) mesajı buluyor mu?",
+         "Gönderen adresine göre arama mesajı buluyor mu?",
+         "Büyük harfle Türkçe arama (ı/I) sonuç veriyor mu?"),
+        (_M_OPEN,
+         "İstemcinin arama kutusunda 'Öğretmenoğlu' aranınca bu mesaj çıkıyor mu?",
+         "Gövdedeki 'çığır' ile başlayan sözcük aranınca mesaj çıkıyor mu? "
+         "(POP3 istemcide yerel arama — sunucuyu sınamaz)"),
+        mailbox=True,
+    ),
+    ScenarioSpec(
+        "mbx_read_sync", "Kutu: Okundu Eşitlemesi", "Okundu Eşitlemesi",
+        "kutu", "IMAP ↔ Z-Push", _build_mailbox_message,
+        ("Mesaj gönder, IMAP'te okundu işaretle",
+         "Okundu işareti IMAP'te kalıcı mı?",
+         "IMAP'te okunan mesaj iPad'de (Z-Push) okundu görünüyor mu?",
+         "iPad'de okunmadı yapılan mesaj IMAP'te okunmamış mı?",
+         "POP3 indirmesi okundu durumunu değiştiriyor mu?"),
+        ("Mesaj istemcide OKUNMUŞ (kalın değil) görünüyor mu? (araç son durumda okundu bırakır)",
+         "Gelen kutusunun okunmamış sayısı diğer istemcilerle tutarlı mı?"),
+        mailbox=True,
+    ),
+    ScenarioSpec(
+        "mbx_flag_sync", "Kutu: Bayrak Eşitlemesi", "Bayrak Eşitlemesi",
+        "kutu", "\\Flagged ↔ Z-Push", _build_mailbox_message,
+        ("Mesaj gönder, IMAP'te bayrakla (yıldızla)",
+         "Bayrak IMAP'te kalıcı mı?",
+         "Bayrak iPad'e (Z-Push) gidiyor mu?",
+         "Bayraklı mesaj diğer istemcilerde bayraklı görünüyor mu?",
+         "Gövde ve konu değişmeden kaldı mı?"),
+        ("Mesaj istemcide BAYRAKLI (bayrak / yıldız simgesi) görünüyor mu? "
+         "(POP3 istemcide 'Uygulanamaz')",
+         "Bayraklı öğeler görünümünde / filtresinde mesaj listeleniyor mu?"),
+        mailbox=True,
+    ),
+    ScenarioSpec(
+        "mbx_move", "Kutu: Klasöre Taşıma", "Klasöre Taşıma",
+        "kutu", "INBOX → MTO-Test", _build_mailbox_message,
+        ("Mesaj gönder, test klasörüne taşı",
+         "Mesaj hedef klasörde, içeriği aynı mı?",
+         "Mesaj gelen kutusundan kalktı mı?",
+         "iPad'in gelen kutusundan kalktı mı?",
+         "iPad'de hedef klasörde görünüyor mu?"),
+        ("Mesaj gelen kutusunda DEĞİL, 'MTO-Test' klasöründe mi görünüyor? "
+         "(POP3 istemcide 'Uygulanamaz')",
+         "'MTO-Test' klasörü istemcinin klasör listesinde görünüyor mu?"),
+        mailbox=True,
+    ),
+    ScenarioSpec(
+        "mbx_trash", "Kutu: Silme (Çöp Kutusu)", "Silme / Çöp",
+        "kutu", "INBOX → Çöp", _build_mailbox_message,
+        ("Mesaj gönder, Çöp / Silinmiş Öğeler'e taşı",
+         "Sunucuda Çöp klasörü tanımlı mı?",
+         "Mesaj Çöp klasöründe, içeriği aynı mı?",
+         "Mesaj gelen kutusundan ve iPad'in gelen kutusundan kalktı mı?",
+         "iPad'de Silinmiş Öğeler'de görünüyor mu?"),
+        ("Mesaj istemcinin Çöp / Silinmiş Öğeler klasöründe mi? (POP3 istemcide 'Uygulanamaz')",
+         "Mesaj gelen kutusunda artık görünmüyor, değil mi?"),
+        mailbox=True,
+    ),
+    ScenarioSpec(
+        "mbx_draft", "Kutu: Taslak Eşitlemesi", "Taslak Eşitlemesi",
+        "kutu", "Taslaklar ↔ Z-Push", _build_mailbox_message,
+        ("Sunucunun Taslaklar klasörüne taslak kaydet",
+         "Taslak sunucuda içeriği değişmeden duruyor mu?",
+         "\\Draft bayrağı korunuyor mu?",
+         "Taslak iPad'in Taslaklar klasöründe görünüyor mu?",
+         "Taslaklar klasörü sunucuda tanımlı mı?"),
+        ("Taslaklar klasöründe '[TASLAK] #<kod>' taslağı görünüyor mu? (POP3 istemcide 'Uygulanamaz')",
+         "Taslak açılıp düzenlenebiliyor mu?"),
+        mailbox=True,
+    ),
+    ScenarioSpec(
+        "mbx_folders", "Kutu: Klasör Yapısı ve Kota", "Kutu Yapısı",
+        "kutu", "özel klasörler + kota", _build_mailbox_message,
+        ("Mesaj gönder, kutunun klasör yapısını oku",
+         "Gönderilmiş, Taslaklar ve Çöp klasörleri tanımlı mı?",
+         "Sunucu özel klasörleri bayrakla (SPECIAL-USE) bildiriyor mu?",
+         "iPad standart klasörlerin tamamını görüyor mu?",
+         "Kota doluluğu güvenli düzeyde mi?"),
+        ("İstemcinin klasör listesinde Gönderilmiş / Taslaklar / Çöp / Gereksiz Türkçe "
+         "adlarıyla ve doğru simgelerle görünüyor mu?",
+         "İstemciden gönderilen bir mesaj sunucunun Gönderilmiş klasörüne düşüyor mu? "
+         "(POP3 istemcide yerel klasör — 'Uygulanamaz')"),
+        mailbox=True,
     ),
 ]
 

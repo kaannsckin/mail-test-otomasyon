@@ -48,14 +48,14 @@ class TestPlanModel:
     def test_tiers_are_cumulative(self, plan):
         duman, regresyon, tam = (plan.scenarios_for(t) for t in ("duman", "regresyon", "tam"))
         assert set(duman) < set(regresyon) < set(tam)
-        assert len(tam) == 26                       # tüm senaryolar tam kademede
+        assert len(tam) == 33                       # tüm senaryolar tam kademede
         assert len(set(tam)) == len(tam)
 
     def test_tier_limits_routes_and_scenarios(self, plan):
         sizes = {t: (len(c), sum(len(x.scenarios) for x in c))
                  for t in ("duman", "regresyon", "tam")
                  for c in [plan.combinations(t)]}
-        assert sizes == {"duman": (2, 10), "regresyon": (4, 76), "tam": (5, 130)}
+        assert sizes == {"duman": (2, 10), "regresyon": (4, 85), "tam": (5, 151)}
 
     def test_message_sent_once_per_route_not_per_client(self, plan):
         # EMS'te üç istemci var ama EMS'e giden yol tek kombinasyondur.
@@ -113,6 +113,7 @@ class TestPlanModel:
     def test_minimal_plan_defaults_to_all_scenarios(self):
         plan = parse_plan({"yollar": [{"gonderen": "ems", "alan": "gmail"}]})
         (combo,) = plan.combinations()
+        # Alıcı Gmail: 7 kutu senaryosu yalnız test edilen sunucuda (varsayılan ems) koşar
         assert combo.label == "EMS → GMAIL" and len(combo.scenarios) == 26
         assert plan.client_scenarios is None
 

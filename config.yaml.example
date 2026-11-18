@@ -97,6 +97,9 @@ test:
   # evidence: true                    # ham mesajları (.eml) kanıt olarak sakla
   # evidence_max_mb: 2                # üzerindeki mesajların yalnızca özeti saklanır
 
+  # ── Kutu işlemleri (mbx_*) — alıcı kutuyu değiştirir, test hesabı kullanın ──
+  # mailbox_test_folder: "MTO-Test"   # taşıma senaryosunun hedef klasörü (yoksa oluşturulur)
+
   # ── Büyük ek senaryosu (large_attachment) ────────────────────────
   # Rastgele içerikli ikili ek; sunucunun mesaj boyutu sınırına göre ayarlayın.
   large_attachment_mb: 5

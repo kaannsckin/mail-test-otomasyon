@@ -33,8 +33,9 @@ makinesi POC sonrasında ayrılacak; yakın zamanda sunucu geçişi yok.
 Kapsam genişleme sırası:
 
 1. [x] **Koşu geçmişi, kanıt, sürümler arası fark** — diğer her şeyin temeli
-2. [ ] **Posta kutusu işlemleri**: klasör, taşıma, silme, arama, kota; kanallar
-       arası durum eşitlemesi (iPad'de okundu → Outlook'ta okundu)
+2. [x] **Posta kutusu işlemleri**: arama, okundu/bayrak eşitlemesi (iki yönlü),
+       taşıma, silme, taslak, klasör yapısı, kota; Junk tespiti. Kalan: iPad'den
+       silme/taşıma (ActiveSync → IMAP yönü), kurallar, otomatik yanıt
 3. [ ] **Web istemcisi testleri**: giriş, yazma, yanıtlama, ek, arama (tarayıcı otomasyonu)
 4. [ ] **Outlook ajanı** (Windows): Outlook'un mesajı nasıl ayrıştırdığını nesne
        modeli üzerinden okur — kritik istemcide manuel yükü kaldırır
@@ -70,8 +71,7 @@ Dürüstçe söylenmesi gereken dört boşluk:
    bunların ~260'ı otomasyon için tekrardır.
 2. ~~Kanıt saklanmıyor.~~ Giderildi: koşu geçmişi, ham mesaj kanıtı ve
    referans koşuyla fark eklendi (README → Koşu Geçmişi).
-3. **Yalnızca INBOX'a bakılıyor.** Gereksiz (Junk) klasörüne düşen mesaj
-   "teslim edilmedi — timeout" olarak raporlanıyor.
+3. ~~Yalnızca INBOX'a bakılıyor.~~ Giderildi: Junk/Spam klasörleri de taranır.
 4. **Kimlik doğrulama yalnızca parola tabanlı.** Gmail ve Microsoft 365 temel
    kimlik doğrulamayı aşamalı olarak kapatıyor; OAuth2 (XOAUTH2) olmadan bu
    iki sunucu ürün kullanıcılarının çoğunda bağlanamayacak.
@@ -124,7 +124,8 @@ Hedef: iki koşu arasındaki farkı gösterebilmek.
       için "yeni FAIL / düzelen / değişen [Bilgi] satırları (ör. sunucu artık
       8bit'i QP'ye çeviriyor) / başlık farkı" raporu
 - [ ] İmzalanabilir rapor (PDF + özet dosyası) — denetim kanıtı
-- [ ] Gereksiz klasörü taraması; teslim süresi ölçümü ve eşik (SLA)
+- [x] Gereksiz klasörü taraması
+- [ ] Teslim süresi ölçümü ve eşik (SLA)
 - [ ] Kararsızlık yönetimi: geçici hatalarda yeniden deneme, "kararsız" etiketi
 - [ ] Test mesajlarını koşu sonunda temizleme (posta kutusu şişmesin)
 - [x] Kombinasyon tekilleştirme: test planı (yol · istemci · kademe · etki)
@@ -138,7 +139,8 @@ Hedef: iki koşu arasındaki farkı gösterebilmek.
 - [ ] S/MIME şifreli mesaj, PGP/MIME; imza doğrulamasını araç içinde yapma
 - [ ] Yanıt/iletme zincirlerinde gerçek istemci alıntı biçimleri; `format=flowed`
 - [ ] Takvim: güncelleme / iptal (`METHOD:CANCEL`), yinelenen etkinlik, saat dilimi
-- [ ] Klasör ve bayrak eşitlemesi (okundu, yıldızlı, taşıma), sunucu tarafı kurallar, otomatik yanıt
+- [x] Klasör ve bayrak eşitlemesi (okundu, bayrak, taşıma, silme, taslak)
+- [ ] Sunucu tarafı kurallar, otomatik yanıt
 - [ ] Yük: art arda N mesaj, eşzamanlı gönderim, sıra korunumu
 - [ ] "Altın örnek" `.eml` yeniden oynatma (gönderen istemci gerçekçiliği)
 - [x] L1 protokol adaptörü: ActiveSync (Z-Push) — yazıldı, sahada doğrulanacak

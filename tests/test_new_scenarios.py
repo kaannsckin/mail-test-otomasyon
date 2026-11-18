@@ -881,7 +881,7 @@ class TestChecklistCsv:
 
     def test_all_combinations_have_all_scenarios(self, combos):
         for combo in combos:
-            assert len(combo.scenarios) == 26, f"{combo.label}: {len(combo.scenarios)}"
+            assert len(combo.scenarios) == 33, f"{combo.label}: {len(combo.scenarios)}"
 
     @pytest.mark.parametrize("scenario", NEW_SCENARIOS)
     def test_new_scenario_present_everywhere(self, combos, scenario):

@@ -598,6 +598,25 @@ def _identify(result: dict, scenario_key: str, combo: TestCombination,
     return result
 
 
+def _mailbox_checks(scenario_key, receiver, sender, send_meta, run_id, channel_hits,
+                    test_config, retries, retry_int) -> list:
+    from mailbox_ops import MailboxContext, run_mailbox_checks
+    eas, eas_sid = None, None
+    if "activesync" in channel_hits:
+        eas, got = channel_hits["activesync"]
+        imap_id = str((got or {}).get("imap_id") or "")
+        eas_sid = imap_id[4:] if imap_id.startswith("eas:") else None
+    pop3 = channel_hits.get("pop3")
+    ctx = MailboxContext(
+        server_config=receiver.config, message_id=send_meta["msg_id"], run_id=run_id,
+        from_address=str(getattr(sender, "from_address", "") or ""),
+        connect=receiver._connect, eas=eas, eas_server_id=eas_sid,
+        pop3_read=bool(pop3 and pop3[1]),
+        test_folder=str(test_config.get("mailbox_test_folder") or "MTO-Test"),
+        retries=min(max(1, retries), 6), interval=retry_int)
+    return run_mailbox_checks(scenario_key, ctx)
+
+
 def _run_scenario(
     scenario_key: str,
     combo: TestCombination,
@@ -898,6 +917,22 @@ def _run_scenario(
     if received is not None and isinstance(received.get("raw_bytes"), bytes):
         ctx.setdefault("evidence", {})["imap"] = received["raw_bytes"]
 
+    junk = getattr(receiver, "junk_folder", None) if received is None else None
+    if isinstance(junk, str) and junk:
+        logger.info(f"◼ Sonuç: ❌ FAIL | {combo.label} / {scenario_key} | Junk klasörüne düştü")
+        result = _error_result(
+            combo, scenario_key, test_time,
+            f"Mesaj teslim edildi ama gelen kutusuna değil '{junk}' klasörüne düştü "
+            "(spam filtresi) — kullanıcı mesajı gelen kutusunda göremez.",
+            f"Mesaj '{junk}' klasöründe bulundu",
+            ["Spam filtresi kurallarını ve gönderen itibarını (SPF/DKIM/DMARC) kontrol edin.",
+             "Test göndericisini alıcı sunucuda güvenilir listeye almak sorunu gizler; "
+             "önce mesajın neden spam sayıldığını inceleyin."],
+            check_name="Teslim (Gelen Kutusu)")
+        result["send_meta"] = {k: v for k, v in send_meta.items() if k not in _META_PRIVATE}
+        result["junk_folder"] = junk
+        return result
+
     receive_error = getattr(receiver, "last_error", None) if received is None else None
     if isinstance(receive_error, BaseException):
         # Mesaj gelmiş olabilir ama kontrol edilemedi — "teslim edilemedi
@@ -935,6 +970,7 @@ def _run_scenario(
 
     # İkincil kanallar (ör. POP3): aynı mesaj istemcinin protokolüyle de okunur.
     extra = getattr(receiver, "extra_channels", None)
+    channel_hits: dict = {}                          # kanal → (alıcı, okunan mesaj)
     if received is not None and isinstance(extra, list) and extra:
         primary_raw = received.get("raw_bytes") or b""
         extra_checks: list = []
@@ -944,6 +980,7 @@ def _run_scenario(
             if getattr(channel_receiver, "accepts_hint", False) is True:
                 kwargs["subject_hint"] = run_id      # konudaki Run ID ile aday daralt
             got = channel_receiver.wait_for_message(**kwargs)
+            channel_hits[channel] = (channel_receiver, got)
             err = getattr(channel_receiver, "last_error", None)
             if got and isinstance(got.get("raw_bytes"), bytes):
                 ctx.setdefault("evidence", {})[channel] = got["raw_bytes"]
@@ -953,6 +990,12 @@ def _run_scenario(
             if got and isinstance(got.get("eas_view"), dict):
                 extra_checks += eas_view_checks(got["eas_view"], primary_raw, expect)
         analysis = apply_channel_checks(analysis, extra_checks)
+
+    # Kutu işlemleri: kanal okumalarından SONRA çalışır (mesajı taşıyabilir/silebilir).
+    if spec is not None and spec.mailbox and received is not None:
+        analysis = apply_channel_checks(analysis, _mailbox_checks(
+            scenario_key, receiver, sender, send_meta, run_id, channel_hits, test_config,
+            retries, retry_int))
 
     status = "✅ PASS" if analysis.get("passed") else "❌ FAIL"
     logger.info(

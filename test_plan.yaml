@@ -64,6 +64,9 @@ kademeler:
     - cc_reply_to
     - smtp_transparency
     - nested_multipart
+    - mbx_search
+    - mbx_read_sync
+    - mbx_move
   tam:
     - complex_html
     - smime
@@ -72,6 +75,15 @@ kademeler:
     - custom_headers
     - large_attachment
     - html_links
+    - mbx_flag_sync
+    - mbx_trash
+    - mbx_draft
+    - mbx_folders
+
+# Kutu işlemleri (mbx_*: okundu/bayrak, taşıma, silme, taslak) alıcı kutuyu
+# DEĞİŞTİRİR; yalnızca buradaki sunucuların kutularında çalışır.
+# Test hesaplarını kullanın.
+kutu_sunuculari: [ems]
 
 # İstemcide ELLE bakılacak senaryolar (görünümü istemciye bağlı olanlar).
 # Bu satırı silerseniz tüm senaryolar her istemci için sorulur.
@@ -92,3 +104,10 @@ istemci_senaryolari:
   - cc_reply_to
   - nested_multipart
   - html_links
+  - mbx_search
+  - mbx_read_sync
+  - mbx_flag_sync
+  - mbx_move
+  - mbx_trash
+  - mbx_draft
+  - mbx_folders

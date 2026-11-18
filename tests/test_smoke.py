@@ -462,8 +462,8 @@ class TestCsvParser:
         from csv_parser import parse_csv
         combos = parse_csv(str(project_root / "mail_test_checklist.csv"))
         total = sum(len(s.steps) for c in combos for s in c.scenarios.values())
-        # 18 kombinasyon × 26 senaryo (11 temel + 15 katalog) × 5 adım
-        expected = len(combos) * 26 * 5
+        # 18 kombinasyon × 33 senaryo (11 temel + 22 katalog) × 5 adım
+        expected = len(combos) * 33 * 5
         assert total == expected, f"{expected} adım bekleniyor, {total} bulundu"
 
     def test_parse_csv_step_ids_are_unique_and_sequential(self, project_root):

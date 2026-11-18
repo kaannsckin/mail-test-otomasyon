@@ -18,6 +18,8 @@ mail_automation/
 ├── plan_model.py         # Test planı: yollar, istemciler, kademeler, etki seçimi
 ├── activesync.py         # Z-Push (ActiveSync) istemcisi: okuma + gönderme
 ├── run_history.py        # Koşu geçmişi, kanıt paketi, referans koşu, fark
+├── mailbox_ops.py        # Kutu işlemleri: arama, okundu/bayrak, taşıma, silme, taslak
+├── imap_folders.py       # IMAP klasör adları (UTF-7), özel klasör bulma, Junk taraması
 ├── test_plan.yaml        # Varsayılan test planı (düzenlenebilir)
 ├── receiver.py           # IMAP alım & MIME ayrıştırma
 ├── mail_transport.py     # SMTP/IMAP bağlantı + TLS ayarları (iç CA, 465 SSL)
@@ -144,8 +146,9 @@ Her sunucu için 4 kimlik doğrulama yöntemi desteklenir:
 
 ## 📊 Test Senaryoları
 
-Her kombinasyon için **26 senaryo** tanımlıdır (18 kombinasyon × 26 senaryo ×
-5 kontrol noktası = 2340 adım): 11 temel senaryo ve 15 katalog senaryosu.
+Her kombinasyon için **33 senaryo** tanımlıdır (18 kombinasyon × 33 senaryo ×
+5 kontrol noktası = 2970 adım): 11 temel senaryo, 15 mesaj ve 7 kutu işlemi
+senaryosu.
 
 ### Temel senaryolar (LLM analizi)
 
@@ -188,6 +191,13 @@ düşünürse karar değişmez, güven `MEDIUM`'a iner ve görüşü raporda gö
 | `icerik` | `large_attachment` | Büyük ikili ek (varsayılan 5 MB), SHA-256 ile bütünlük |
 | `icerik` | `nested_multipart` | `mixed › related › alternative`: HTML + gömülü görsel + PDF eki |
 | `icerik` | `html_links` | `href` değerlerinin değişmemesi (URL yeniden yazma tespiti) |
+| `kutu` | `mbx_search` | Sunucu tarafı arama: konu (ASCII/Türkçe), gövde, gönderen; büyük harf Türkçe ı/I |
+| `kutu` | `mbx_read_sync` | Okundu eşitlemesi: IMAP → iPad (Z-Push), iPad → IMAP; POP3 indirmesinin etkisi |
+| `kutu` | `mbx_flag_sync` | Bayrak (`\Flagged`) kalıcılığı ve iPad'e eşitlenmesi |
+| `kutu` | `mbx_move` | Klasöre taşıma (`MTO-Test`); iPad'in gelen kutusundan kalkıp hedef klasörde görünmesi |
+| `kutu` | `mbx_trash` | Silme → Çöp / Silinmiş Öğeler (Türkçe klasör adları dahil); iPad'de görünmesi |
+| `kutu` | `mbx_draft` | Taslağın sunucuya kaydı, `\Draft` bayrağı, iPad'in Taslaklar klasöründe görünmesi |
+| `kutu` | `mbx_folders` | Gönderilmiş/Taslaklar/Çöp/Gereksiz klasörleri, SPECIAL-USE, kota, iPad'in klasör listesi |
 
 Kontrol adlarındaki önekler: **`[Kesin]`** başarısızsa senaryo FAIL olur;
 **`[Bilgi]`** kararı değiştirmez, sunucunun meşru dönüşümünü kaydeder (ör.
@@ -352,6 +362,37 @@ Kanıt ayarları (`config.yaml` → `test`): `evidence: false` kanıtı kapatır
 
 > Kanıt dosyaları test mesajlarının tam içeriğidir ve `reports/` altında düz
 > dosya olarak durur; eski koşular kendiliğinden silinmez.
+
+---
+
+## 📂 Posta Kutusu İşlemleri ve Kanallar Arası Eşitleme
+
+`kutu` grubundaki senaryolar mesaj teslim edildikten sonra kullanıcının kutuda
+yaptığı işlemleri sunucuda yapar ve sonucun **diğer kanallarda** görünüp
+görünmediğini denetler. Örnek: Outlook (IMAP) mesajı okudu → iPad'de (Z-Push)
+okundu görünüyor mu; iPad'de okunmadı yapıldı → IMAP'te okunmamış mı. Z-Push
+değişiklikleri IMAP'ten periyodik okuduğu için kontroller `max_retries` ×
+`retry_interval` kadar bekler ve geçen süreyi raporlar.
+
+```bash
+python main.py --plan test_plan.yaml --scenario group:kutu --combo 0
+```
+
+> ⚠️ **Kutu işlemleri alıcı kutuyu değiştirir**: okundu/bayrak işaretler,
+> mesajı `MTO-Test` klasörüne (`test.mailbox_test_folder`) ve Çöp'e taşır,
+> Taslaklar'a taslak ekler. Yalnızca **test hesaplarında** kullanın. Düz
+> `EXPUNGE` hiçbir zaman gönderilmez (kutudaki başka silinmiş mesajları da
+> kalıcı olarak yok ederdi); sunucu `UIDPLUS` desteklemiyorsa taşınan mesaj
+> kaynakta `\Deleted` işaretli bırakılır.
+
+Test planında kutu işlemleri yalnızca `kutu_sunuculari` (varsayılan `[ems]`)
+listesindeki sunucuların kutularında çalışır; Gmail/O365 hesaplarında klasör
+taşımak EMS'i değil onları sınardı.
+
+**Gereksiz (Junk) klasörü:** Gelen kutusunda bulunamayan mesaj artık Junk/Spam
+klasörlerinde de aranır (SPECIAL-USE `\Junk` ya da "Junk", "Spam", "Gereksiz
+E-posta" gibi adlar). Bulunursa sonuç "timeout" yerine **"Mesaj teslim edildi
+ama 'Junk' klasörüne düştü"** olur.
 
 ---
 
@@ -646,7 +687,7 @@ python -m pytest
 python -m pytest --cov=. --cov-report=term-missing
 ```
 
-1124 test (+ 31 tarayıcı testi), **%94 satır kapsamı** (tarayıcı testleri hariç). GitHub Actions üzerinde her push/PR
+1186 test (+ 31 tarayıcı testi), **%94 satır kapsamı** (tarayıcı testleri hariç). GitHub Actions üzerinde her push/PR
 için Python 3.10/3.11/3.12 matrisinde otomatik çalışır
 (`.github/workflows/tests.yml`).
 
@@ -662,6 +703,7 @@ için Python 3.10/3.11/3.12 matrisinde otomatik çalışır
 | `test_analyzer_errors.py` | Claude/Gemini API hata yolları (401, 429, 5xx, timeout, refusal) |
 | `test_ui.py` | **Tarayıcı testleri** — gezinme, secret gizliliği, form, log akışı, 2FA modal |
 | `test_new_scenarios.py` | Takvim daveti (ICS/iTIP), i18n, zengin HTML, forward, çoklu ek |
+| `test_mailbox_ops.py` | Kutu işlemleri ve eşitleme: bellek içi IMAP + IMAP üzerine kurulu sahte Z-Push; sunucu hataları benzetimi; Junk tespiti |
 | `test_run_history.py` | Koşu geçmişi, kanıt, referans koşu, fark (iki "sürüm" arası uçtan uca) |
 | `test_activesync.py` | Z-Push istemcisi: WBXML kodlama, cihaz ilkesi, eşitleme, mesaj çekme/gönderme (sahte sunucu), görünüm kontrolleri |
 | `test_plan_model.py` | Test planı (kademe, etki, hatalı plan), POP3 kanalı, kanallar arası karşılaştırma, istemci başına manuel kayıt |
@@ -712,7 +754,7 @@ python scripts/e2e_smoke.py --to alici@ornek.com --scenarios plain_text --dry-ru
 | `wrong version number` / 465'te bekleme | TLS modu–port uyuşmazlığı: 465 → `smtp_use_ssl: true`, 587 → STARTTLS |
 | IMAP timeout | `wait_seconds` değerini artır (varsayılan: 15) |
 | "IMAP kontrol edilemedi" | Mesaj gitmiş olabilir ama alıcı kutusuna bağlanılamadı — IMAP host/port/SSL/şifre |
-| Mesaj bulunamıyor | Eşleştirme Message-ID ile yapılır; sunucu mesajı spam/başka klasöre almış olabilir |
+| Mesaj bulunamıyor | Eşleştirme Message-ID ile yapılır; Junk/Spam klasörleri de taranır. Başka bir klasöre (sunucu kuralı) taşınmış olabilir |
 | Arayüz 403 "yalnızca localhost" | `UI_PASSWORD` ayarlayın (ağdan/konteynerden erişim) |
 | Claude API 401 | API key'i Konfigürasyon sayfasından güncelle |
 | 2FA modal açılmıyor | Tarayıcı popup engelleyicisini kapat |

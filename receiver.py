@@ -14,6 +14,7 @@ from email.parser import BytesHeaderParser
 from typing import Optional
 
 from auth_manager import generate_totp, mfa_manager
+from imap_folders import find_in_junk
 from mail_transport import imap_connect, pop3_connect
 
 logger = logging.getLogger(__name__)
@@ -156,6 +157,7 @@ class MailReceiver:
         expected = self._unfold(expected_msg_id)
         core_id = expected.strip("<>")
         self.last_error = None
+        self.junk_folder = None
         logger.info(f"Mesaj bekleniyor | msg_id={expected} | max_wait={wait_seconds}s")
         time.sleep(wait_seconds)  # İlk bekleme — mesajın gelmesi için
 
@@ -200,7 +202,31 @@ class MailReceiver:
             logger.warning(f"❌ Mesaj kontrol edilemedi (IMAP hatası: {self.last_error}) | msg_id={expected}")
         else:
             logger.warning(f"❌ Mesaj {max_retries} denemede bulunamadı | msg_id={expected}")
+            self.junk_folder = self._look_in_junk(expected)
         return None
+
+    def _look_in_junk(self, expected: str) -> Optional[str]:
+        """Gelen kutusunda olmayan mesaj gereksiz (Junk/Spam) klasörüne mi düştü?
+
+        Eskiden bu durum "teslim edilemedi — timeout" diye raporlanıyordu; oysa
+        mesaj teslim edilmiş, yalnızca kullanıcının göremeyeceği yere gitmişti.
+        """
+        imap = None
+        try:
+            imap = self._connect()
+            folder = find_in_junk(imap, expected)
+        except Exception as e:  # noqa: BLE001 — yalnızca teşhis; asıl sonucu bozmasın
+            logger.debug(f"Gereksiz klasörü taranamadı: {e}")
+            return None
+        finally:
+            if imap is not None:
+                try:
+                    imap.logout()
+                except Exception:
+                    pass
+        if folder:
+            logger.warning(f"⚠️ Mesaj gelen kutusunda değil, '{folder}' klasöründe bulundu (spam filtresi)")
+        return folder
 
     def _extract_details(self, msg: email.message.Message, raw: bytes, imap_id: str) -> dict:
         """Mesajdan tüm test için gerekli bilgileri çıkarır."""

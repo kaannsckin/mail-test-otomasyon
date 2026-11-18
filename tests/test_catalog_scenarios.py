@@ -36,7 +36,8 @@ from scenario_catalog import (  # noqa: E402
 from sender import MailSender  # noqa: E402
 from verifier import merge_verdicts, verify  # noqa: E402
 
-SPEC_KEYS = sorted(SPEC_SCENARIOS)
+# Kutu senaryoları sahte IMAP sunucusu ister → tests/test_mailbox_ops.py
+SPEC_KEYS = sorted(k for k, v in SPEC_SCENARIOS.items() if not v.mailbox)
 
 
 # ── Loopback düzeneği ────────────────────────────────────────────────

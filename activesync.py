@@ -70,7 +70,7 @@ _PAGES = {
         0x10: "DisplayName", 0x11: "DisplayTo", 0x12: "Importance", 0x13: "MessageClass",
         0x14: "Subject", 0x15: "Read", 0x16: "To", 0x17: "Cc", 0x18: "From",
         0x19: "ReplyTo", 0x22: "MeetingRequest", 0x32: "Sensitivity", 0x35: "ThreadTopic", 0x36: "MIMEData",
-        0x37: "MIMETruncated", 0x38: "MIMESize", 0x39: "InternetCPID", 0x3A: "Flag",
+        0x37: "MIMETruncated", 0x38: "MIMESize", 0x39: "InternetCPID", 0x3A: "Flag", 0x3B: "Status",
         0x3C: "ContentClass"}),
     7: ("FolderHierarchy", {
         0x05: "Folders", 0x06: "Folder", 0x07: "DisplayName", 0x08: "ServerId",
@@ -288,8 +288,9 @@ class EasClient:
         self.version = str(server_config.get("eas_version") or "")
         self.policy_key = "0"
         self.inbox_id: Optional[str] = None
-        self.sync_key = "0"
-        self.items: dict = {}                 # ServerId → Sync ile gelen alanlar
+        self.folders: list = []
+        # Klasör başına eşitleme durumu: CollectionId → {"key": SyncKey, "items": {ServerId: alanlar}}
+        self._collections: dict = {}
         kwargs = {"timeout": timeout, "transport": transport} if transport is not None else {
             "timeout": timeout, "verify": ssl_context_for(server_config)}
         self.http = httpx.Client(**kwargs)
@@ -387,12 +388,33 @@ class EasClient:
         if inbox is None:
             raise EasError("FolderSync: gelen kutusu (Type=2) bulunamadı")
         self.inbox_id = inbox["id"]
+        self.folders = folders
         return folders
 
-    # ── Sync: gelen kutusundaki son mesajların ALANLARI ──────────────
-    def _sync_request(self, with_options: bool, filter_type: str) -> bytes:
-        collection = [Node("AirSync:SyncKey", data=self.sync_key),
-                      Node("AirSync:CollectionId", data=self.inbox_id)]
+    # ── Sync: bir klasördeki son mesajların ALANLARI ─────────────────
+    def _state(self, collection_id: str) -> dict:
+        return self._collections.setdefault(collection_id, {"key": "0", "items": {}})
+
+    # Gelen kutusu kısayolları (geriye uyumluluk: EasReceiver ve testler kullanır)
+    @property
+    def sync_key(self) -> str:
+        return self._state(self.inbox_id)["key"] if self.inbox_id else "0"
+
+    @property
+    def items(self) -> dict:
+        return self._state(self.inbox_id)["items"] if self.inbox_id else {}
+
+    def folder_id(self, folder_type: str) -> Optional[str]:
+        """EAS klasör türüne göre kimlik: 2 gelen, 3 taslak, 4 silinmiş, 5 gönderilmiş."""
+        if not self.folders:
+            self.folder_sync()
+        folder = next((f for f in self.folders if f["type"] == str(folder_type)), None)
+        return folder["id"] if folder else None
+
+    def _sync_request(self, collection_id: str, with_options: bool, filter_type: str,
+                      commands: Optional[list] = None) -> bytes:
+        collection = [Node("AirSync:SyncKey", data=self._state(collection_id)["key"]),
+                      Node("AirSync:CollectionId", data=collection_id)]
         if with_options:
             collection += [
                 Node("AirSync:DeletesAsMoves"), Node("AirSync:GetChanges"),
@@ -402,47 +424,111 @@ class EasClient:
                      # Düz metin önizleme yeterli: tam içerik ItemOperations ile çekilir.
                      Node("AirSyncBase:BodyPreference", Node("AirSyncBase:Type", data="1"),
                           Node("AirSyncBase:TruncationSize", data="256")))]
+        if commands:
+            collection.append(Node("AirSync:Commands", *commands))
         return wbxml_encode(Node("AirSync:Sync", Node(
             "AirSync:Collections", Node("AirSync:Collection", *collection))))
 
-    def sync_inbox(self, filter_type: str = "2", max_rounds: int = 50) -> int:
-        """Gelen kutusunu eşitler (filter_type 2 = son 3 gün); yeni öğe sayısını
-        döndürür. Eşitleme anahtarı nesnede tutulur → sonraki çağrı yalnızca
-        yeni gelenleri getirir."""
-        if self.inbox_id is None:
-            self.folder_sync()
+    def _apply_commands(self, state: dict, col: Node) -> int:
+        """Sunucunun gönderdiği Add/Change/Delete komutlarını yerel duruma işler."""
         added = 0
+        commands = col.find("AirSync:Commands") or Node("x")
+        for add in commands.findall("AirSync:Add"):
+            data = add.find("AirSync:ApplicationData") or Node("x")
+            state["items"][add.value("AirSync:ServerId")] = self._item_fields(data)
+            added += 1
+        for change in commands.findall("AirSync:Change"):
+            item = state["items"].get(change.value("AirSync:ServerId"))
+            if item is not None:
+                item.update(self._changed_fields(change.find("AirSync:ApplicationData") or Node("x")))
+        for gone in commands.findall("AirSync:Delete") + commands.findall("AirSync:SoftDelete"):
+            state["items"].pop(gone.value("AirSync:ServerId"), None)
+        return added
+
+    def sync_collection(self, collection_id: str, filter_type: str = "2",
+                        max_rounds: int = 50, commands: Optional[list] = None) -> int:
+        """Bir klasörü eşitler (filter_type 2 = son 3 gün); yeni öğe sayısını
+        döndürür. Eşitleme anahtarı saklanır → sonraki çağrı yalnızca
+        değişiklikleri (yeni, değişen, silinen) getirir.
+
+        ``commands`` verilirse (ör. okundu işareti) ilk uygun turda sunucuya gönderilir.
+        """
+        state = self._state(collection_id)
+        added = 0
+        pending = list(commands or [])
         for _ in range(max_rounds):
-            initial = self.sync_key == "0"
-            root = self._post("Sync", self._sync_request(not initial, filter_type))
+            initial = state["key"] == "0"
+            send = pending if not initial else None
+            root = self._post("Sync", self._sync_request(collection_id, not initial,
+                                                         filter_type, send))
+            if send:
+                pending = []
             if root is None:
+                if pending:
+                    continue                       # ilk tur anahtar aldı; komutu şimdi gönder
                 return added                       # boş yanıt = değişiklik yok
             col = root.find("AirSync:Collections/AirSync:Collection")
             status = (col.value("AirSync:Status") if col is not None
                       else root.value("AirSync:Status")) or "1"
             if status == "3":                      # eşitleme anahtarı geçersiz → baştan
                 logger.warning("ActiveSync eşitleme anahtarı geçersiz; baştan eşitleniyor.")
-                self.sync_key, self.items = "0", {}
+                state["key"], state["items"] = "0", {}
                 continue
             if status == "12":                     # klasör yapısı değişti
                 self.folder_sync()
-                self.sync_key = "0"
+                state["key"], state["items"] = "0", {}
                 continue
             if status != "1" or col is None:
                 raise EasError(f"Sync başarısız: durum={status}")
-            self.sync_key = col.value("AirSync:SyncKey") or self.sync_key
-            for add in (col.find("AirSync:Commands") or Node("x")).findall("AirSync:Add"):
-                data = add.find("AirSync:ApplicationData") or Node("x")
-                self.items[add.value("AirSync:ServerId")] = self._item_fields(data)
-                added += 1
-            for gone in (col.find("AirSync:Commands") or Node("x")).findall("AirSync:Delete"):
-                self.items.pop(gone.value("AirSync:ServerId"), None)
-            if not initial and col.find("AirSync:MoreAvailable") is None:
+            for response in (col.find("AirSync:Responses") or Node("x")).children:
+                if response.value("AirSync:Status") not in ("", "1"):
+                    raise EasError(f"Sync: sunucu {response.name.split(':')[-1]} komutunu "
+                                   f"reddetti (durum={response.value('AirSync:Status')})")
+            state["key"] = col.value("AirSync:SyncKey") or state["key"]
+            added += self._apply_commands(state, col)
+            if not initial and not pending and col.find("AirSync:MoreAvailable") is None:
                 return added
         return added
 
+    def sync_inbox(self, filter_type: str = "2", max_rounds: int = 50) -> int:
+        if self.inbox_id is None:
+            self.folder_sync()
+        return self.sync_collection(self.inbox_id, filter_type, max_rounds)
+
+    def set_read(self, server_id: str, read: bool, collection_id: Optional[str] = None) -> None:
+        """Mesajı okundu/okunmadı işaretler — iPad'de mesaja dokunmanın karşılığı."""
+        if self.inbox_id is None:
+            self.folder_sync()
+        cid = collection_id or self.inbox_id
+        change = Node("AirSync:Change", Node("AirSync:ServerId", data=server_id),
+                      Node("AirSync:ApplicationData", Node("Email:Read", data="1" if read else "0")))
+        self.sync_collection(cid, commands=[change])
+        item = self._state(cid)["items"].get(server_id)
+        if item is not None:
+            item["read"] = "1" if read else "0"
+
     @staticmethod
-    def _item_fields(data: Node) -> dict:
+    def _flag_status(data: Node) -> Optional[str]:
+        flag = data.find("Email:Flag")
+        if flag is None:
+            return None
+        return flag.value("Email:Status") or "0"     # boş <Flag/> = bayrak kaldırıldı
+
+    @classmethod
+    def _changed_fields(cls, data: Node) -> dict:
+        """Change komutunda yalnızca DEĞİŞEN alanlar gelir."""
+        out = {}
+        if data.find("Email:Read") is not None:
+            out["read"] = data.value("Email:Read")
+        flag = cls._flag_status(data)
+        if flag is not None:
+            out["flag"] = flag
+        if data.find("Email:Importance") is not None:
+            out["importance"] = data.value("Email:Importance")
+        return out
+
+    @classmethod
+    def _item_fields(cls, data: Node) -> dict:
         """Telefonun mesaj listesinde/başlığında gösterdiği alanlar."""
         attachments = [{"name": a.value("AirSyncBase:DisplayName"),
                         "size": a.value("AirSyncBase:EstimatedDataSize"),
@@ -456,15 +542,17 @@ class EasClient:
                 "importance": data.value("Email:Importance"),
                 "date_received": data.value("Email:DateReceived"),
                 "message_class": data.value("Email:MessageClass"),
+                "read": data.value("Email:Read"),
+                "flag": cls._flag_status(data) or "0",
                 "has_meeting_request": data.find("Email:MeetingRequest") is not None,
                 "attachments": attachments}
 
     # ── ItemOperations: tek mesajın içeriği ──────────────────────────
-    def _fetch(self, server_id: str, options: list) -> Node:
+    def _fetch(self, server_id: str, options: list, collection_id: Optional[str] = None) -> Node:
         root = self._post("ItemOperations", wbxml_encode(Node(
             "ItemOperations:ItemOperations", Node(
                 "ItemOperations:Fetch", Node("ItemOperations:Store", data="Mailbox"),
-                Node("AirSync:CollectionId", data=self.inbox_id),
+                Node("AirSync:CollectionId", data=collection_id or self.inbox_id),
                 Node("AirSync:ServerId", data=server_id),
                 Node("ItemOperations:Options", *options)))))
         fetch = root.find("ItemOperations:Response/ItemOperations:Fetch") if root else None
@@ -474,11 +562,11 @@ class EasClient:
             raise EasError(f"ItemOperations Fetch başarısız: durum={status}")
         return fetch.find("ItemOperations:Properties") or Node("x")
 
-    def fetch_mime(self, server_id: str) -> bytes:
+    def fetch_mime(self, server_id: str, collection_id: Optional[str] = None) -> bytes:
         """Mesajın özgün MIME hâli (IMAP'tekiyle karşılaştırmak için)."""
         props = self._fetch(server_id, [
             Node("AirSync:MIMESupport", data="2"),
-            Node("AirSyncBase:BodyPreference", Node("AirSyncBase:Type", data="4"))])
+            Node("AirSyncBase:BodyPreference", Node("AirSyncBase:Type", data="4"))], collection_id)
         body = props.find("AirSyncBase:Body/AirSyncBase:Data")
         if body is None or not body.data:
             raise EasError("Sunucu MIME gövdesi döndürmedi (BodyPreference Type=4)")
